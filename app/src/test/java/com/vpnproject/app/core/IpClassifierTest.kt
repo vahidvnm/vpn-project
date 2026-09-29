@@ -23,4 +23,20 @@ class IpClassifierTest {
         assertFalse(IpClassifier.isPublicIpv4("999.1.1.1"))
         assertFalse(IpClassifier.isIpv4Literal("vpn.example.com"))
     }
+
+    @Test
+    fun classifiesPublicIpv6Literals() {
+        assertTrue(IpClassifier.isIpv6Literal("2606:4700:d0::a29f:c001"))
+        assertTrue(IpClassifier.isPublicIpv6("2606:4700:d0::a29f:c001"))
+        assertTrue(IpClassifier.isPublicIpv6("[2606:4700:d0::a29f:c001]"))
+    }
+
+    @Test
+    fun rejectsReservedOrInvalidIpv6() {
+        assertFalse(IpClassifier.isPublicIpv6("::1"))
+        assertFalse(IpClassifier.isPublicIpv6("fc00::1"))
+        assertFalse(IpClassifier.isPublicIpv6("fe80::1"))
+        assertFalse(IpClassifier.isPublicIpv6("2001:db8::1"))
+        assertFalse(IpClassifier.isIpv6Literal("vpn.example.com"))
+    }
 }

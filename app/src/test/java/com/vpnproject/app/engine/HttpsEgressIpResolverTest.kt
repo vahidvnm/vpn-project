@@ -23,6 +23,13 @@ class HttpsEgressIpResolverTest {
     }
 
     @Test
+    fun extractsFirstPublicIpWhenPrivateIpAppearsEarlier() {
+        val resolver = HttpsEgressIpResolver(endpoints = emptyList())
+
+        assertEquals("8.8.4.4", resolver.extractIpv4("private=10.0.0.1 public=8.8.4.4"))
+    }
+
+    @Test
     fun rejectsPrivateIpFromResponse() {
         val resolver = HttpsEgressIpResolver(endpoints = emptyList())
 

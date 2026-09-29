@@ -210,7 +210,7 @@ class MainActivity : Activity() {
             putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting WireGuard engine.\n${selection.note}\n\nThe engine uses WireGuard public-key authentication. Full handshake/egress verification is the next sub-step, so this is not yet marked as verified connected."
+        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Tap Refresh WireGuard status after a few seconds."
     }
 
     private fun stopWireGuardEngine() {
@@ -302,7 +302,11 @@ class MainActivity : Activity() {
             val discovery = endpointDiscovery.discover(endpoint)
             if (discovery.fromCache) lines += "DNS: cache hit"
             if (discovery.resolved.isEmpty()) {
-                lines += "No public IPv4 candidate found."
+                lines += if (discovery.errors.any { it.contains("public IPv6 literal") }) {
+                    "Public IPv6 literal endpoint; IPv4 pinning is not needed. The WireGuard engine can try the original endpoint."
+                } else {
+                    "No public IPv4 candidate found."
+                }
                 discovery.errors.take(MAX_ERRORS_PER_ENDPOINT).forEach { lines += "DNS note: $it" }
                 continue
             }

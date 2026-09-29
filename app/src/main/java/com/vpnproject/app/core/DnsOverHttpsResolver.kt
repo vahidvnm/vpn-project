@@ -15,8 +15,20 @@ interface DohTransport {
 
 class HttpUrlConnectionDohTransport : DohTransport {
     override fun queryA(provider: DohProvider, hostname: String, timeoutMs: Int): String {
+        val errors = mutableListOf<String>()
+        for (endpointUrl in provider.endpointUrls) {
+            try {
+                return queryUrl(endpointUrl, provider, hostname, timeoutMs)
+            } catch (e: Exception) {
+                errors += "${endpointUrl.hostForLog()}: ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+        throw IOException(errors.joinToString("; ").ifBlank { "No DoH endpoint answered." })
+    }
+
+    private fun queryUrl(endpointUrl: String, provider: DohProvider, hostname: String, timeoutMs: Int): String {
         val encodedName = URLEncoder.encode(hostname, "UTF-8")
-        val url = URL("${provider.endpointUrl}?name=$encodedName&type=A")
+        val url = URL("$endpointUrl?name=$encodedName&type=A")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = timeoutMs
@@ -36,11 +48,19 @@ class HttpUrlConnectionDohTransport : DohTransport {
             if (code !in 200..299) {
                 throw IOException("HTTP $code from ${provider.displayName}")
             }
+            if (!body.looksLikeJsonDns()) {
+                throw IOException("unexpected DoH response from ${provider.displayName}")
+            }
             body
         } finally {
             connection.disconnect()
         }
     }
+
+    private fun String.looksLikeJsonDns(): Boolean =
+        contains("\"Status\"") || contains("\"Answer\"") || contains("\"Question\"")
+
+    private fun String.hostForLog(): String = runCatching { URL(this).host }.getOrDefault(this)
 }
 
 class DnsOverHttpsResolver(
@@ -55,6 +75,11 @@ class DnsOverHttpsResolver(
     private val nowEpochMs: () -> Long = { System.currentTimeMillis() }
 ) {
     fun resolveA(hostname: String): DnsLookupResult {
+        val trimmedLiteral = hostname.trim().trim('"', '\'').trim('[', ']').trimEnd('.')
+        if (IpClassifier.isIpv6Literal(trimmedLiteral)) {
+            return literalIpv6Result(trimmedLiteral)
+        }
+
         val normalized = normalizeHostname(hostname)
         if (normalized.isBlank()) {
             return DnsLookupResult(hostname, emptyList(), listOf("Hostname is empty."))
@@ -157,6 +182,18 @@ class DnsOverHttpsResolver(
             )
         )
     }
+
+    private fun literalIpv6Result(ip: String): DnsLookupResult = DnsLookupResult(
+        hostname = ip,
+        addresses = emptyList(),
+        errors = listOf(
+            if (IpClassifier.isPublicIpv6(ip)) {
+                "$ip is a public IPv6 literal. IPv4 pinning is not needed; the WireGuard engine can try the original IPv6 endpoint."
+            } else {
+                "$ip is not a public routable IPv6 endpoint."
+            }
+        )
+    )
 
     private fun sanitizeTtl(value: Long): Long = min(max(value, MIN_TTL_SECONDS), MAX_TTL_SECONDS)
 

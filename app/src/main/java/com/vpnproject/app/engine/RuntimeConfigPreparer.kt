@@ -3,6 +3,7 @@ package com.vpnproject.app.engine
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.EndpointDiscovery
 import com.vpnproject.app.core.ImportedConfig
+import com.vpnproject.app.core.IpClassifier
 import com.vpnproject.app.core.PinnedConfigRenderer
 
 class RuntimeConfigPreparer(
@@ -14,6 +15,36 @@ class RuntimeConfigPreparer(
         }
         val endpoint = config.endpoints.firstOrNull()
             ?: throw IllegalArgumentException("WireGuard config has no Endpoint to resolve or pin.")
+
+        if (IpClassifier.isPublicIpv4(endpoint.host)) {
+            return RuntimeConfigSelection(
+                configText = config.originalText,
+                originalHost = endpoint.host,
+                selectedEndpointHost = endpoint.host,
+                port = endpoint.port,
+                note = "Using imported public IPv4 endpoint ${endpoint.host}:${endpoint.port}; DNS pinning is not needed.",
+                wasPinned = false
+            )
+        }
+
+        if (IpClassifier.isPublicIpv6(endpoint.host)) {
+            return RuntimeConfigSelection(
+                configText = config.originalText,
+                originalHost = endpoint.host,
+                selectedEndpointHost = endpoint.host,
+                port = endpoint.port,
+                note = "Using imported public IPv6 endpoint [${endpoint.host}]:${endpoint.port}; DNS pinning is not needed. If the mobile network has no IPv6 path, try an IPv4 WireGuard endpoint.",
+                wasPinned = false
+            )
+        }
+
+        if (IpClassifier.isIpv4Literal(endpoint.host) || IpClassifier.isIpv6Literal(endpoint.host)) {
+            throw IllegalArgumentException(
+                "Endpoint ${endpoint.host}:${endpoint.port} is not a public routable IP address. " +
+                    "Use an official public endpoint from the provider."
+            )
+        }
+
         val discovery = endpointDiscovery.discover(endpoint)
         val selected = discovery.resolved.firstOrNull()
             ?: throw IllegalArgumentException(
@@ -24,9 +55,10 @@ class RuntimeConfigPreparer(
         return RuntimeConfigSelection(
             configText = rendered,
             originalHost = endpoint.host,
-            pinnedIp = selected.ip,
+            selectedEndpointHost = selected.ip,
             port = endpoint.port,
-            note = "Pinned ${endpoint.host}:${endpoint.port} to ${selected.ip}:${endpoint.port} before starting WireGuard."
+            note = "Pinned ${endpoint.host}:${endpoint.port} to ${selected.ip}:${endpoint.port} before starting WireGuard.",
+            wasPinned = true
         )
     }
 }
@@ -34,7 +66,8 @@ class RuntimeConfigPreparer(
 data class RuntimeConfigSelection(
     val configText: String,
     val originalHost: String,
-    val pinnedIp: String,
+    val selectedEndpointHost: String,
     val port: Int,
-    val note: String
+    val note: String,
+    val wasPinned: Boolean
 )

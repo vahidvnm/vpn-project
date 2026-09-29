@@ -1,6 +1,9 @@
 package com.vpnproject.app.core
 
-/** IPv4 helpers used by the pinner before any network code is trusted. */
+import java.net.Inet6Address
+import java.net.InetAddress
+
+/** IP helpers used by pinners/resolvers before any network code is trusted. */
 object IpClassifier {
     fun isIpv4Literal(value: String): Boolean = parseIpv4(value) != null
 
@@ -14,6 +17,13 @@ object IpClassifier {
         return isReserved(parts)
     }
 
+    fun isIpv6Literal(value: String): Boolean = parseIpv6(value) != null
+
+    fun isPublicIpv6(value: String): Boolean {
+        val bytes = parseIpv6(value) ?: return false
+        return isGlobalUnicastIpv6(bytes) && !isDocumentationIpv6(bytes)
+    }
+
     private fun parseIpv4(value: String): IntArray? {
         val pieces = value.trim().split('.')
         if (pieces.size != 4) return null
@@ -25,6 +35,17 @@ object IpClassifier {
             out[index] = n
         }
         return out
+    }
+
+    private fun parseIpv6(value: String): ByteArray? {
+        val trimmed = value.trim().trim('[', ']').substringBefore('%')
+        if (!trimmed.contains(':')) return null
+        return try {
+            val address = InetAddress.getByName(trimmed)
+            if (address is Inet6Address) address.address else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun isReserved(parts: IntArray): Boolean {
@@ -49,4 +70,15 @@ object IpClassifier {
             else -> false
         }
     }
+
+    private fun isGlobalUnicastIpv6(bytes: ByteArray): Boolean {
+        val first = bytes[0].toInt() and 0xFF
+        return (first and 0xE0) == 0x20 // 2000::/3
+    }
+
+    private fun isDocumentationIpv6(bytes: ByteArray): Boolean =
+        (bytes[0].toInt() and 0xFF) == 0x20 &&
+            (bytes[1].toInt() and 0xFF) == 0x01 &&
+            (bytes[2].toInt() and 0xFF) == 0x0D &&
+            (bytes[3].toInt() and 0xFF) == 0xB8 // 2001:db8::/32
 }

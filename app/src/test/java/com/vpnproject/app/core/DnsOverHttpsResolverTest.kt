@@ -7,6 +7,13 @@ import org.junit.Test
 
 class DnsOverHttpsResolverTest {
     @Test
+    fun dohProvidersPreferIpLiteralEndpointsToAvoidPoisonedSystemDns() {
+        assertTrue(DohProvider.CLOUDFLARE.endpointUrl.contains("1.1.1.1"))
+        assertTrue(DohProvider.GOOGLE.endpointUrl.contains("8.8.8.8"))
+        assertTrue(DohProvider.QUAD9.endpointUrl.contains("9.9.9.9"))
+    }
+
+    @Test
     fun parsesPublicARecordsAndFiltersReservedAnswers() {
         val resolver = DnsOverHttpsResolver(
             transport = FakeDohTransport(
@@ -70,6 +77,18 @@ class DnsOverHttpsResolverTest {
 
         assertTrue(result.addresses.isEmpty())
         assertTrue(result.errors.single().contains("reserved"))
+    }
+
+    @Test
+    fun reportsPublicIpv6LiteralAsNoIpv4PinningNeeded() {
+        val transport = FakeDohTransport(emptyMap())
+        val resolver = DnsOverHttpsResolver(transport = transport)
+
+        val result = resolver.resolveA("[2606:4700:d0::a29f:c001]")
+
+        assertTrue(result.addresses.isEmpty())
+        assertTrue(result.errors.single().contains("public IPv6 literal"))
+        assertEquals(0, transport.calls.size)
     }
 
     @Test

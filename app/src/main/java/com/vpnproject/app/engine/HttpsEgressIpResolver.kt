@@ -46,12 +46,18 @@ class HttpsEgressIpResolver(
             return cloudflareTrace
         }
 
-        return IPV4_REGEX.find(body)?.value?.takeIf { IpClassifier.isPublicIpv4(it) }
+        return IPV4_REGEX.findAll(body)
+            .map { it.value }
+            .firstOrNull { IpClassifier.isPublicIpv4(it) }
     }
 
     private companion object {
         val DEFAULT_ENDPOINTS = listOf(
+            "https://1.1.1.1/cdn-cgi/trace",
             "https://api.ipify.org",
+            "https://checkip.amazonaws.com",
+            "https://icanhazip.com",
+            "https://ifconfig.me/ip",
             "https://www.cloudflare.com/cdn-cgi/trace"
         )
         const val MAX_RESPONSE_CHARS = 2_048

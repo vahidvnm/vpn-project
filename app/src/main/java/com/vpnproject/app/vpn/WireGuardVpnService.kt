@@ -143,6 +143,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
             try {
                 stopVerification()
                 stopRebind()
+                stopExistingTunnelForRestart()
                 val parsedConfig = Config.parse(configText.byteInputStream(Charsets.UTF_8))
                 val tunnelHandle = WireGuardTunnelHandle(tunnelName) { state ->
                     when (state) {
@@ -332,6 +333,18 @@ class WireGuardVpnService : GoBackend.VpnService() {
         thread.isDaemon = true
         rebindThread = thread
         thread.start()
+    }
+
+    private fun stopExistingTunnelForRestart() {
+        unregisterNetworkCallback()
+        val goBackend = backend
+        val tunnelHandle = tunnel
+        if (goBackend != null && tunnelHandle != null) {
+            runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
+        }
+        backend = null
+        tunnel = null
+        currentConfig = null
     }
 
     private fun stopWireGuardTunnel() {

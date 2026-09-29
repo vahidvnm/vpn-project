@@ -6,6 +6,7 @@ import com.vpnproject.app.core.DohProvider
 import com.vpnproject.app.core.DohTransport
 import com.vpnproject.app.core.EndpointDiscovery
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,9 +41,66 @@ class RuntimeConfigPreparerTest {
         val selection = preparer.prepareWireGuard(imported)
 
         assertEquals("wg.example.com", selection.originalHost)
-        assertEquals("8.8.8.8", selection.pinnedIp)
+        assertEquals("8.8.8.8", selection.selectedEndpointHost)
         assertEquals(51820, selection.port)
+        assertTrue(selection.wasPinned)
         assertTrue(selection.configText.contains("Endpoint = 8.8.8.8:51820"))
         assertTrue(selection.note.contains("wg.example.com:51820"))
     }
+
+    @Test
+    fun keepsPublicIpv4LiteralWireGuardEndpointWithoutDoh() {
+        val text = """
+            [Interface]
+            PrivateKey = example
+            Address = 10.0.0.2/32
+
+            [Peer]
+            PublicKey = peer
+            AllowedIPs = 0.0.0.0/0
+            Endpoint = 149.88.97.122:51820
+        """.trimIndent()
+        val imported = ConfigImporter.parse(text)
+        val preparer = RuntimeConfigPreparer(failingEndpointDiscovery())
+
+        val selection = preparer.prepareWireGuard(imported)
+
+        assertEquals("149.88.97.122", selection.selectedEndpointHost)
+        assertFalse(selection.wasPinned)
+        assertEquals(text, selection.configText)
+        assertTrue(selection.note.contains("DNS pinning is not needed"))
+    }
+
+    @Test
+    fun keepsPublicIpv6LiteralWireGuardEndpointWithoutDoh() {
+        val text = """
+            [Interface]
+            PrivateKey = example
+            Address = 10.0.0.2/32
+
+            [Peer]
+            PublicKey = peer
+            AllowedIPs = 0.0.0.0/0
+            Endpoint = [2606:4700:d0::a29f:c001]:51820
+        """.trimIndent()
+        val imported = ConfigImporter.parse(text)
+        val preparer = RuntimeConfigPreparer(failingEndpointDiscovery())
+
+        val selection = preparer.prepareWireGuard(imported)
+
+        assertEquals("2606:4700:d0::a29f:c001", selection.selectedEndpointHost)
+        assertFalse(selection.wasPinned)
+        assertEquals(text, selection.configText)
+        assertTrue(selection.note.contains("public IPv6 endpoint"))
+    }
+
+    private fun failingEndpointDiscovery(): EndpointDiscovery = EndpointDiscovery(
+        DnsOverHttpsResolver(
+            transport = object : DohTransport {
+                override fun queryA(provider: DohProvider, hostname: String, timeoutMs: Int): String =
+                    error("Resolver should not be called for literal endpoints")
+            },
+            providers = listOf(DohProvider.CLOUDFLARE)
+        )
+    )
 }

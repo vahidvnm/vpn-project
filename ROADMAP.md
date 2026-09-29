@@ -106,6 +106,7 @@ Android App
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 - [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
 - [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
+- [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی تا وضعیت `VERIFIED` رسید؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
 
 ## فازها
 
@@ -230,7 +231,7 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] بررسی اولیه WireGuard Android tunnel library / GoBackend.
   - [x] تصمیم اولیه license: dependency رسمی `com.wireguard.android:tunnel` با Apache-2.0 مناسب‌تر از گزینه‌های GPL برای شروع MVP است؛ license پروژه اصلی هنوز باید جداگانه انتخاب شود.
   - [x] افزودن dependency رسمی و سرویس foreground-aware برای WireGuard.
-  - [x] اجرای config pinned: قبل از start، endpoint دامنه‌ای با DoH به public IPv4 تبدیل و config runtime ساخته می‌شود.
+  - [x] اجرای config pinned: قبل از start، endpoint دامنه‌ای با DoH به public IPv4 تبدیل و config runtime ساخته می‌شود؛ endpointهای literal public IPv4/IPv6 بدون resolve دوباره با همان config اصلی اجرا می‌شوند.
   - [x] verification اولیه: بعد از `Tunnel.State.UP`، RX/TX statistics و public HTTPS egress IP بررسی می‌شود؛ فقط در صورت موفقیت وضعیت `VERIFIED` ثبت می‌شود.
   - [x] rebind پایه روی تغییر شبکه: `ConnectivityManager` تغییر Wi‑Fi/mobile/capabilities را می‌گیرد، underlying network را refresh می‌کند، WireGuard را rebind می‌کند و verification را دوباره اجرا می‌کند.
   - [ ] تشخیص دقیق‌تر handshake/peer-level telemetry اگر API کافی بدهد؛ فعلاً معیار عملی RX/TX + egress است.
@@ -428,6 +429,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - اولین engine واقعی برای MVP، WireGuard Android GoBackend است. چون WireGuard عموماً UDP است، برای ایران همچنان باید fallbackهای OpenVPN TCP/chain/rescue را بعداً اضافه کنیم.
 - معیار فعلی اتصال verified برای WireGuard این است: engine در حالت UP باشد، RX/TX stats حرکت کند، و یک HTTPS public egress IP endpoint پاسخ public IPv4 بدهد. اگر فقط UP باشد، UI نباید Connected قطعی نشان دهد.
 - WireGuard service حالا روی تغییر شبکه، underlying network را refresh می‌کند و verification را دوباره اجرا می‌کند؛ اگر این rebind شکست بخورد، مرحله بعدی restart/backoff و انتخاب IP جایگزین است.
+- تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
 
 ## تصمیم‌های باز
 
