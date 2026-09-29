@@ -102,6 +102,7 @@ Android App
 - [ ] انتخاب license پروژه.
 - [ ] انتخاب stack نهایی Android و native core.
 - [x] ساخت skeleton اپ با Activity، VpnService placeholder و مدل‌های core اولیه.
+- [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
 
 ## فازها
 
@@ -128,9 +129,9 @@ Android App
 
 هدف: اپ بتواند config کاربر را بفهمد، نه اینکه هنوز حتماً VPN کامل وصل کند.
 
-- [ ] Import فایل `.ovpn`.
-- [ ] Import فایل WireGuard `.conf`.
-- [ ] مدل داخلی مشترک برای endpointها:
+- [x] Import فایل `.ovpn` در UI اولیه و parser پایه.
+- [x] Import فایل WireGuard `.conf` در UI اولیه و parser پایه.
+- [x] مدل داخلی مشترک برای endpointها:
 
 ```text
 ProviderProfile
@@ -141,20 +142,20 @@ HealthResult
 PinnedConfig
 ```
 
-- [ ] Parser ساده OpenVPN:
-  - [ ] `remote host port proto`
-  - [ ] `proto`
-  - [ ] `port`
-  - [ ] `auth-user-pass`
-  - [ ] `verify-x509-name`
-  - [ ] certificate/key blocks بدون دستکاری
-- [ ] Parser ساده WireGuard:
-  - [ ] `[Interface]`
-  - [ ] `[Peer]`
-  - [ ] `Endpoint`
-  - [ ] `PublicKey`
-  - [ ] `AllowedIPs`
-- [ ] Renderer برای config موقت pinned.
+- [x] Parser ساده OpenVPN:
+  - [x] `remote host port proto`
+  - [x] `proto`
+  - [x] `port`
+  - [x] `auth-user-pass`
+  - [x] `verify-x509-name`
+  - [x] certificate/key blocks بدون دستکاری در renderer موقت حفظ می‌شوند
+- [x] Parser ساده WireGuard:
+  - [x] `[Interface]`
+  - [x] `[Peer]`
+  - [x] `Endpoint`
+  - [x] `PublicKey` به‌عنوان بخش config حفظ می‌شود؛ فعلاً validation رمزنگاری نداریم
+  - [x] `AllowedIPs` به‌عنوان بخش config حفظ می‌شود؛ فعلاً policy ندارد
+- [x] Renderer برای config موقت pinned.
 - [ ] ذخیره امن config metadata.
 
 **خروجی فاز:** کاربر config وارد می‌کند و اپ endpointها را استخراج و نمایش می‌دهد.
@@ -371,7 +372,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] ساخت skeleton Android.
 - [ ] انتخاب license.
 - [ ] انتخاب اولین engine: OpenVPN یا WireGuard.
-- [ ] پیاده‌سازی import/parser config.
+- [x] پیاده‌سازی import/parser config پایه.
 
 ### بعدی
 
