@@ -21,6 +21,22 @@ class PinnedConfigRendererTest {
     }
 
     @Test
+    fun rendersMatchingOpenVpnRemotePortWhenSameHostAppearsMoreThanOnce() {
+        val text = """
+            client
+            remote vpn.example.com 1194 udp
+            remote vpn.example.com 443 tcp
+        """.trimIndent() + "\n"
+        val config = ConfigImporter.parse(text)
+        val tcpEndpoint = config.endpoints.first { it.port == 443 }
+
+        val rendered = PinnedConfigRenderer.render(config, tcpEndpoint, "8.8.8.8")
+
+        assertTrue(rendered.contains("remote vpn.example.com 1194 udp\n"))
+        assertTrue(rendered.contains("remote 8.8.8.8 443 tcp\n"))
+    }
+
+    @Test
     fun rendersPinnedWireGuardConfig() {
         val text = """
             [Interface]

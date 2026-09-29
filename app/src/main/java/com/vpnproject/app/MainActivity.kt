@@ -34,6 +34,8 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private var importedConfig: ImportedConfig? = null
     private var pendingVpnAction = PendingVpnAction.NONE
+    private var pendingOpenVpnConfigText: String? = null
+    private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
@@ -60,7 +62,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned config, resolve/pin public IPs, then start the first real engine: WireGuard userspace."
+            text = "Import a user-owned config, resolve/pin public IPs, start WireGuard where UDP works, or prepare OpenVPN TCP fallback configs."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -68,7 +70,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 4: WireGuard engine integration started. OpenVPN engine is still pending license/implementation review."
+            text = "Phase 4: WireGuard works where UDP is reachable. For Iran filtering, prepare OpenVPN TCP/443 fallback configs next."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -89,6 +91,11 @@ class MainActivity : Activity() {
         root.addView(Button(this).apply {
             text = "Resolve & probe imported endpoints"
             setOnClickListener { resolveAndProbeImportedConfig() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Save pinned OpenVPN TCP config"
+            setOnClickListener { prepareAndSaveOpenVpnConfig() }
         })
 
         root.addView(Button(this).apply {
@@ -140,6 +147,14 @@ class MainActivity : Activity() {
                     status.text = "No config selected."
                 }
             }
+            EXPORT_OPENVPN_REQUEST -> {
+                val uri = data?.data
+                if (resultCode == RESULT_OK && uri != null) {
+                    writePendingOpenVpnConfig(uri)
+                } else {
+                    status.text = "OpenVPN export was cancelled."
+                }
+            }
         }
     }
 
@@ -175,6 +190,61 @@ class MainActivity : Activity() {
         }
         startService(intent)
         status.text = "Stop requested for bootstrap VPN."
+    }
+
+    private fun prepareAndSaveOpenVpnConfig() {
+        val config = importedConfig
+        if (config == null) {
+            status.text = "Import an OpenVPN config first."
+            return
+        }
+        if (config.kind != ConfigKind.OPENVPN) {
+            status.text = "This action is for OpenVPN configs. Imported config is ${config.kind}."
+            return
+        }
+
+        status.text = "Preparing pinned OpenVPN config. For Iran, official OpenVPN TCP/443 profiles are usually more useful than WireGuard UDP."
+        Thread {
+            val result = runCatching { runtimeConfigPreparer.prepareOpenVpn(config) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { selection -> promptSaveOpenVpnConfig(selection, config) },
+                    onFailure = { error ->
+                        status.text = "OpenVPN pinned config failed: ${error.message ?: error.javaClass.simpleName}"
+                    }
+                )
+            }
+        }.start()
+    }
+
+    private fun promptSaveOpenVpnConfig(selection: RuntimeConfigSelection, config: ImportedConfig) {
+        pendingOpenVpnConfigText = selection.configText
+        pendingOpenVpnConfigName = safeOpenVpnExportName(config.name)
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/x-openvpn-profile"
+            putExtra(Intent.EXTRA_TITLE, pendingOpenVpnConfigName)
+        }
+        status.text = "Prepared OpenVPN handoff config.\n${selection.note}\n\nSave it, then open/import it in an official OpenVPN-compatible Android client while internal OpenVPN engine licensing is pending."
+        startActivityForResult(intent, EXPORT_OPENVPN_REQUEST)
+    }
+
+    private fun writePendingOpenVpnConfig(uri: Uri) {
+        val text = pendingOpenVpnConfigText
+        if (text == null) {
+            status.text = "No prepared OpenVPN config is waiting to be saved."
+            return
+        }
+        try {
+            contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                writer.write(text)
+            } ?: throw ConfigParseException("Could not open selected output file.")
+            status.text = "Pinned OpenVPN config saved as $pendingOpenVpnConfigName. Import it in an OpenVPN client and prefer TCP/443 profiles when available."
+        } catch (e: Exception) {
+            status.text = "OpenVPN export failed: ${e.message ?: e.javaClass.simpleName}"
+        } finally {
+            pendingOpenVpnConfigText = null
+        }
     }
 
     private fun prepareAndStartWireGuardEngine() {
@@ -258,9 +328,9 @@ class MainActivity : Activity() {
             val warnings = if (config.warnings.isEmpty()) "" else
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
             val nextStep = if (config.kind == ConfigKind.WIREGUARD) {
-                "\n\nNext: tap Start WireGuard engine from imported config."
+                "\n\nNext: tap Start WireGuard engine from imported config. If UDP is blocked, try an official OpenVPN TCP/443 config instead."
             } else {
-                "\n\nNext: use Resolve & probe now; OpenVPN engine is still pending."
+                "\n\nNext: tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
                 "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
@@ -355,6 +425,16 @@ class MainActivity : Activity() {
         ?.takeIf { it.isNotBlank() }
         ?: "vpn-project-wg"
 
+    private fun safeOpenVpnExportName(name: String?): String {
+        val base = name
+            ?.substringBeforeLast('.')
+            ?.replace(Regex("[^A-Za-z0-9_=+.-]"), "-")
+            ?.take(40)
+            ?.takeIf { it.isNotBlank() }
+            ?: "vpn-project-openvpn"
+        return "$base-pinned.ovpn"
+    }
+
     private fun displayName(uri: Uri): String? {
         if (uri.scheme == "content") {
             contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -376,6 +456,7 @@ class MainActivity : Activity() {
     private companion object {
         const val VPN_PERMISSION_REQUEST = 1001
         const val IMPORT_CONFIG_REQUEST = 1002
+        const val EXPORT_OPENVPN_REQUEST = 1003
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
     }

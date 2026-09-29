@@ -94,6 +94,38 @@ class RuntimeConfigPreparerTest {
         assertTrue(selection.note.contains("public IPv6 endpoint"))
     }
 
+    @Test
+    fun preparesPinnedOpenVpnTcpConfigForExternalHandoff() {
+        val imported = ConfigImporter.parse(
+            """
+                client
+                proto udp
+                remote udp.example.com 1194 udp
+                remote tcp.example.com 443 tcp
+            """.trimIndent()
+        )
+        val preparer = RuntimeConfigPreparer(
+            EndpointDiscovery(
+                DnsOverHttpsResolver(
+                    transport = object : DohTransport {
+                        override fun queryA(provider: DohProvider, hostname: String, timeoutMs: Int): String =
+                            """{"Answer":[{"type":1,"TTL":60,"data":"9.9.9.9"}]}"""
+                    },
+                    providers = listOf(DohProvider.CLOUDFLARE),
+                    nowEpochMs = { 1_000L }
+                )
+            )
+        )
+
+        val selection = preparer.prepareOpenVpn(imported)
+
+        assertEquals("tcp.example.com", selection.originalHost)
+        assertEquals("9.9.9.9", selection.selectedEndpointHost)
+        assertTrue(selection.wasPinned)
+        assertTrue(selection.configText.contains("remote 9.9.9.9 443 tcp"))
+        assertTrue(selection.note.contains("OpenVPN TCP"))
+    }
+
     private fun failingEndpointDiscovery(): EndpointDiscovery = EndpointDiscovery(
         DnsOverHttpsResolver(
             transport = object : DohTransport {

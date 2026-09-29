@@ -50,9 +50,9 @@ class WireGuardConnectionVerifier(
                 statsMoved && !egressVerified ->
                     "WireGuard traffic moved, but no public egress IP endpoint answered."
                 !statsMoved && egressVerified ->
-                    "Public egress IP answered, but WireGuard statistics did not move enough yet."
+                    "Public egress IP answered, but WireGuard statistics did not move. WireGuard/UDP may be blocked or the endpoint handshake failed."
                 else ->
-                    "No verified WireGuard traffic or public egress IP yet."
+                    "No verified WireGuard traffic or public egress IP yet. WireGuard/UDP may be blocked on this network."
             }
 
             if (attempt < policy.maxAttempts && policy.intervalMs > 0L) {

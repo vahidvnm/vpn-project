@@ -106,7 +106,8 @@ Android App
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 - [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
 - [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
-- [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی تا وضعیت `VERIFIED` رسید؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
+- [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی گاهی تا وضعیت `VERIFIED` رسید، اما در شبکه‌های ایران WireGuard/UDP اغلب فیلتر است؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
+- [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
 
 ## فازها
 
@@ -225,7 +226,8 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 - OpenVPN:
   - [ ] بررسی OpenVPN 3 Core / ics-openvpn / سایر گزینه‌ها.
   - [ ] تصمیم license.
-  - [ ] اجرای config pinned.
+  - [x] آماده‌سازی config pinned برای handoff خارجی به OpenVPN client، با اولویت TCP/443.
+  - [ ] اجرای داخلی config pinned بعد از تصمیم engine/license.
   - [ ] تشخیص handshake موفق.
 - WireGuard:
   - [x] بررسی اولیه WireGuard Android tunnel library / GoBackend.
@@ -239,7 +241,7 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 
 تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed است. برای شرایط ایران همچنان OpenVPN TCP و chain/proxy مهم است و بعداً اضافه می‌شود.
 
-**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند.
+**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند. برای ایران، app همچنین می‌تواند OpenVPN TCP/pinned config را برای تست در کلاینت OpenVPN آماده و ذخیره کند تا مسیر fallback عملی داشته باشیم.
 
 ---
 
@@ -388,10 +390,13 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] انتخاب و embed اولین engine: WireGuard.
 - [x] verification اولیه WireGuard با RX/TX + egress IP.
 - [x] rebind پایه WireGuard روی تغییر شبکه.
+- [x] تست گوشی اولیه و pivot عملی: WireGuard/UDP در ایران unreliable/filtered است؛ OpenVPN TCP fallback باید جلو بیاید.
+- [x] آماده‌سازی و ذخیره config pinned OpenVPN برای handoff خارجی.
 
 ### بعدی
 
-- [ ] تست روی گوشی با WireGuard config واقعی برای start/verify/rebind.
+- [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN.
+- [ ] انتخاب license/engine برای OpenVPN داخلی.
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
 - [ ] UI/مستندات Always-on و lockdown/kill switch.
@@ -430,6 +435,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - معیار فعلی اتصال verified برای WireGuard این است: engine در حالت UP باشد، RX/TX stats حرکت کند، و یک HTTPS public egress IP endpoint پاسخ public IPv4 بدهد. اگر فقط UP باشد، UI نباید Connected قطعی نشان دهد.
 - WireGuard service حالا روی تغییر شبکه، underlying network را refresh می‌کند و verification را دوباره اجرا می‌کند؛ اگر این rebind شکست بخورد، مرحله بعدی restart/backoff و انتخاب IP جایگزین است.
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
+- با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443 و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
 
 ## تصمیم‌های باز
 

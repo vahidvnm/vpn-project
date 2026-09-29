@@ -25,7 +25,9 @@ object PinnedConfigRenderer {
             val match = openVpnRemoteLine.find(line)
             if (match != null && !replaced) {
                 val host = match.groupValues[2].trim('"', '\'')
-                if (host == endpoint.host) {
+                val remoteTailTokens = OpenVpnConfigParser.splitWords(match.groupValues[3])
+                val linePort = remoteTailTokens.firstOrNull()?.toIntOrNull()
+                if (host == endpoint.host && (linePort == null || linePort == endpoint.port)) {
                     replaced = true
                     return@map match.groupValues[1] + pinnedIp + match.groupValues[3]
                 }

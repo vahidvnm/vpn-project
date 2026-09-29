@@ -10,7 +10,7 @@ The app is designed around **Bring Your Own Account / Config**:
 - connect through Android `VpnService`,
 - avoid sending user VPN credentials to any project backend.
 
-Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP health probes, start a bootstrap Android `VpnService`, and start the first real engine using WireGuard Android GoBackend with a pinned runtime config. It verifies WireGuard by checking RX/TX statistics plus public HTTPS egress IP, rebinds/re-verifies on Wi‑Fi/mobile changes, supports literal public IPv4/IPv6 WireGuard endpoints without unnecessary DoH, and prefers IP-literal DoH endpoints to reduce resolver hostname poisoning. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
+Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP health probes, start a bootstrap Android `VpnService`, and start the first real engine using WireGuard Android GoBackend with a pinned runtime config. Phone testing confirmed WireGuard/UDP is often filtered in Iran, so the app now also prepares pinned OpenVPN TCP fallback configs for external OpenVPN-client handoff while internal OpenVPN engine licensing is pending. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
 
 ## CI
 
