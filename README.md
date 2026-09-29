@@ -10,7 +10,7 @@ The app is designed around **Bring Your Own Account / Config**:
 - connect through Android `VpnService`,
 - avoid sending user VPN credentials to any project backend.
 
-Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs and common V2Ray/Xray share links from a file or the Android clipboard, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP/TLS health probes, warn when probes are running through an already-active VPN, start a bootstrap Android `VpnService`, start WireGuard Android GoBackend with a pinned runtime config, and experimentally start an embedded Xray core from imported V2Ray/Xray links. Phone testing confirmed WireGuard/UDP is often filtered in Iran and public DoH may be blocked/reset, so OpenVPN TCP and Xray/V2Ray fallbacks are now the practical focus. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
+Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs and common V2Ray/Xray share links from a file or the Android clipboard, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP/TLS health probes, warn when probes are running through an already-active VPN, start a bootstrap Android `VpnService`, start WireGuard Android GoBackend with a pinned runtime config, and experimentally start an embedded Xray core from imported V2Ray/Xray links. Phone testing confirmed WireGuard/UDP is often filtered in Iran and public DoH may be blocked/reset, so OpenVPN TCP and Xray/V2Ray fallbacks are now the practical focus. The debug APK is currently filtered to arm64-v8a to keep the embedded Xray build size manageable for real phone testing. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
 
 ## CI
 

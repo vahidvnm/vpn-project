@@ -95,7 +95,7 @@ class ConfigImporterTest {
             ),
             config.endpoints.single()
         )
-        assertTrue(config.warnings.any { it.contains("engine is not integrated") })
+        assertTrue(config.warnings.any { it.contains("experimental embedded Xray engine") })
     }
 
     @Test

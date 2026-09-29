@@ -111,7 +111,7 @@ Android App
 - [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی گاهی تا وضعیت `VERIFIED` رسید، اما در شبکه‌های ایران WireGuard/UDP اغلب فیلتر است؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
 - [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
 - [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ import از clipboard هم اضافه شد تا نیاز به تبدیل دستی لینک‌ها به `.txt` نباشد.
-- [x] مسیر experimental برای اجرای embedded Xray core با AndroidLibXrayLite اضافه شد: لینک V2Ray/Xray به config JSON با TUN inbound تبدیل می‌شود، Android `VpnService` بالا می‌آید، و core با همان TUN fd شروع می‌شود. این مسیر هنوز نیاز به تست گوشی و review license دارد.
+- [x] مسیر experimental برای اجرای embedded Xray core با AndroidLibXrayLite اضافه شد: لینک V2Ray/Xray به config JSON رسمی‌تر با TUN inbound تبدیل می‌شود، Android `VpnService` بالا می‌آید، و core با همان TUN fd شروع می‌شود. برای کنترل حجم APK تستی، فعلاً native ABI روی `arm64-v8a` محدود شده است. این مسیر هنوز نیاز به تست گوشی و review license دارد.
 
 ## فازها
 

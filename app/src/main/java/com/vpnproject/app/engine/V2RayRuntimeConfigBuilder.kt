@@ -185,41 +185,58 @@ object V2RayRuntimeConfigBuilder {
             else -> profile.scheme
         }
         val settings = when (protocol) {
-            "vless" -> """
-                "settings": {
-                  "address": ${profile.address.json()},
-                  "port": ${profile.port},
-                  "id": ${profile.idOrPassword.json()},
-                  "encryption": ${(profile.method ?: "none").json()},
-                  "flow": ${profile.flow.orEmpty().json()},
-                  "level": 8
-                }
-            """.trimIndent()
+            "vless" -> {
+                val flow = profile.flow?.takeIf { it.isNotBlank() }?.let { ", \"flow\": ${it.json()}" }.orEmpty()
+                """
+                    "settings": {
+                      "vnext": [{
+                        "address": ${profile.address.json()},
+                        "port": ${profile.port},
+                        "users": [{
+                          "id": ${profile.idOrPassword.json()},
+                          "encryption": ${(profile.method ?: "none").json()},
+                          "level": 8$flow
+                        }]
+                      }]
+                    }
+                """.trimIndent()
+            }
             "vmess" -> """
                 "settings": {
-                  "address": ${profile.address.json()},
-                  "port": ${profile.port},
-                  "id": ${profile.idOrPassword.json()},
-                  "security": ${(profile.method ?: "auto").json()},
-                  "level": 8
+                  "vnext": [{
+                    "address": ${profile.address.json()},
+                    "port": ${profile.port},
+                    "users": [{
+                      "id": ${profile.idOrPassword.json()},
+                      "alterId": 0,
+                      "security": ${(profile.method ?: "auto").json()},
+                      "level": 8
+                    }]
+                  }]
                 }
             """.trimIndent()
-            "trojan" -> """
-                "settings": {
-                  "address": ${profile.address.json()},
-                  "port": ${profile.port},
-                  "password": ${profile.idOrPassword.json()},
-                  "flow": ${profile.flow.orEmpty().json()},
-                  "level": 8
-                }
-            """.trimIndent()
+            "trojan" -> {
+                val flow = profile.flow?.takeIf { it.isNotBlank() }?.let { ", \"flow\": ${it.json()}" }.orEmpty()
+                """
+                    "settings": {
+                      "servers": [{
+                        "address": ${profile.address.json()},
+                        "port": ${profile.port},
+                        "password": ${profile.idOrPassword.json()},
+                        "level": 8$flow
+                      }]
+                    }
+                """.trimIndent()
+            }
             "shadowsocks" -> """
                 "settings": {
-                  "address": ${profile.address.json()},
-                  "port": ${profile.port},
-                  "method": ${(profile.method ?: "aes-128-gcm").json()},
-                  "password": ${profile.idOrPassword.json()},
-                  "level": 8
+                  "servers": [{
+                    "address": ${profile.address.json()},
+                    "port": ${profile.port},
+                    "method": ${(profile.method ?: "aes-128-gcm").json()},
+                    "password": ${profile.idOrPassword.json()},
+                    "level": 8
+                  }]
                 }
             """.trimIndent()
             else -> throw ConfigParseException("Unsupported outbound protocol $protocol")

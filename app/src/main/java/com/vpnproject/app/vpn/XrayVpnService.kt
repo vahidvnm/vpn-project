@@ -91,6 +91,12 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
 
         try {
+            updateStatus(
+                EngineState.CONNECTING,
+                "Android VPN interface is established; starting Xray core for $profileName.",
+                note
+            )
+            startForegroundNotification("VPN interface established; starting Xray core…")
             Seq.setContext(applicationContext)
             Libv2ray.initCoreEnv(filesDir.absolutePath, packageName)
             val controller = Libv2ray.newCoreController(this)

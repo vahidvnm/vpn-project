@@ -17,6 +17,7 @@ class V2RayRuntimeConfigBuilderTest {
 
         assertTrue(runtime.configJson.contains("\"protocol\": \"tun\""))
         assertTrue(runtime.configJson.contains("\"protocol\": \"vless\""))
+        assertTrue(runtime.configJson.contains("\"vnext\""))
         assertTrue(runtime.configJson.contains("\"security\": \"reality\""))
         assertTrue(runtime.configJson.contains("\"publicKey\": \"publicKey\""))
         assertTrue(runtime.configJson.contains("\"shortId\": \"abcd\""))

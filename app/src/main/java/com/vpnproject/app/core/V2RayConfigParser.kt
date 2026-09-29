@@ -51,7 +51,7 @@ object V2RayConfigParser {
             throw ConfigParseException("No supported V2Ray/Xray share links were found. Supported schemes: vless, vmess, trojan, ss.")
         }
 
-        warnings += "V2Ray/Xray links are parsed for endpoint diagnostics only; an internal Xray/V2Ray engine is not integrated yet. Keep using your trusted external client for real connections."
+        warnings += "V2Ray/Xray links can be probed and started with the experimental embedded Xray engine. Keep your trusted external client as a fallback while this engine is tuned on real networks."
         warnings += "Do not blindly IP-pin CDN/REALITY/V2Ray links: SNI, Host, ALPN, path, and fingerprint settings must be preserved by the eventual engine."
 
         return ImportedConfig(

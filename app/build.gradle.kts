@@ -38,6 +38,13 @@ android {
         versionName = "0.1.0-dev"
 
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+
+        ndk {
+            // Keep the debug APK practical for phone testing. The embedded Xray
+            // AAR ships native libraries for multiple ABIs; the user's test
+            // devices are modern arm64 phones, so CI builds the arm64 APK first.
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
