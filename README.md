@@ -10,7 +10,7 @@ The app is designed around **Bring Your Own Account / Config**:
 - connect through Android `VpnService`,
 - avoid sending user VPN credentials to any project backend.
 
-Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP health probes, start a bootstrap Android `VpnService`, and start the first real engine using WireGuard Android GoBackend with a pinned runtime config. It now verifies WireGuard by checking RX/TX statistics plus public HTTPS egress IP before marking the tunnel verified. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
+Current status: **Phase 4 in progress**. The app can import OpenVPN/WireGuard configs, extract endpoints, resolve public IPv4 candidates with DNS-over-HTTPS, run first-pass TCP health probes, start a bootstrap Android `VpnService`, and start the first real engine using WireGuard Android GoBackend with a pinned runtime config. It verifies WireGuard by checking RX/TX statistics plus public HTTPS egress IP, and now rebinds/re-verifies on Wi‑Fi/mobile network changes. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
 
 ## CI
 

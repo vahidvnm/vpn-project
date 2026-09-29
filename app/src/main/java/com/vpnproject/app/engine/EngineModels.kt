@@ -12,6 +12,7 @@ enum class EngineState {
     RUNNING,
     VERIFYING,
     VERIFIED,
+    RECONNECTING,
     STOPPING,
     STOPPED,
     FAILED

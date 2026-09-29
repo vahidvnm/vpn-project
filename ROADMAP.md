@@ -105,7 +105,7 @@ Android App
 - [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 - [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
-- [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده ممکن شد و verification اولیه با RX/TX stats + public egress IP اضافه شد.
+- [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
 
 ## فازها
 
@@ -232,8 +232,9 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] افزودن dependency رسمی و سرویس foreground-aware برای WireGuard.
   - [x] اجرای config pinned: قبل از start، endpoint دامنه‌ای با DoH به public IPv4 تبدیل و config runtime ساخته می‌شود.
   - [x] verification اولیه: بعد از `Tunnel.State.UP`، RX/TX statistics و public HTTPS egress IP بررسی می‌شود؛ فقط در صورت موفقیت وضعیت `VERIFIED` ثبت می‌شود.
+  - [x] rebind پایه روی تغییر شبکه: `ConnectivityManager` تغییر Wi‑Fi/mobile/capabilities را می‌گیرد، underlying network را refresh می‌کند، WireGuard را rebind می‌کند و verification را دوباره اجرا می‌کند.
   - [ ] تشخیص دقیق‌تر handshake/peer-level telemetry اگر API کافی بدهد؛ فعلاً معیار عملی RX/TX + egress است.
-  - [ ] reconnect/rebind کامل روی تغییر شبکه.
+  - [ ] reconnect کامل با restart/backoff و انتخاب IP بعدی در صورت شکست rebind.
 
 تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed است. برای شرایط ایران همچنان OpenVPN TCP و chain/proxy مهم است و بعداً اضافه می‌شود.
 
@@ -383,14 +384,17 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] resolver و IP pinning پایه.
 - [x] health checker اولیه.
 - [x] VpnService و TUN bootstrap پایه.
+- [x] انتخاب و embed اولین engine: WireGuard.
+- [x] verification اولیه WireGuard با RX/TX + egress IP.
+- [x] rebind پایه WireGuard روی تغییر شبکه.
 
 ### بعدی
 
+- [ ] تست روی گوشی با WireGuard config واقعی برای start/verify/rebind.
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
 - [ ] UI/مستندات Always-on و lockdown/kill switch.
-- [x] انتخاب و embed اولین engine: WireGuard.
-- [ ] اتصال واقعی verify‌شده با یک config، شامل handshake/RX-TX/egress check.
+- [ ] reconnect کامل با restart/backoff و انتخاب IP بعدی در صورت شکست.
 
 ### بعداً
 
@@ -423,6 +427,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - `VpnService` bootstrap یک تونل تستی می‌سازد و full-route/DNS را کنترل می‌کند، اما packetها را forward نمی‌کند؛ بنابراین نباید به‌عنوان اتصال موفق نمایش داده شود.
 - اولین engine واقعی برای MVP، WireGuard Android GoBackend است. چون WireGuard عموماً UDP است، برای ایران همچنان باید fallbackهای OpenVPN TCP/chain/rescue را بعداً اضافه کنیم.
 - معیار فعلی اتصال verified برای WireGuard این است: engine در حالت UP باشد، RX/TX stats حرکت کند، و یک HTTPS public egress IP endpoint پاسخ public IPv4 بدهد. اگر فقط UP باشد، UI نباید Connected قطعی نشان دهد.
+- WireGuard service حالا روی تغییر شبکه، underlying network را refresh می‌کند و verification را دوباره اجرا می‌کند؛ اگر این rebind شکست بخورد، مرحله بعدی restart/backoff و انتخاب IP جایگزین است.
 
 ## تصمیم‌های باز
 
