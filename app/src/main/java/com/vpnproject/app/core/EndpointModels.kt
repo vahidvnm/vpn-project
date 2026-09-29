@@ -5,6 +5,10 @@ enum class VpnProtocol {
     OPENVPN_TCP,
     OPENVPN_UDP,
     WIREGUARD,
+    V2RAY_TLS,
+    V2RAY_TCP,
+    V2RAY_REALITY,
+    V2RAY_UNKNOWN,
     UNKNOWN
 }
 

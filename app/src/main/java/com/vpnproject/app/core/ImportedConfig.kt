@@ -3,6 +3,7 @@ package com.vpnproject.app.core
 enum class ConfigKind {
     OPENVPN,
     WIREGUARD,
+    V2RAY,
     UNKNOWN
 }
 

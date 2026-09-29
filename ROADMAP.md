@@ -29,7 +29,7 @@
 
 نسخه اول وقتی موفق است که کاربر بتواند:
 
-1. یک فایل OpenVPN یا WireGuard را import کند.
+1. یک فایل OpenVPN/WireGuard یا لینک/فایل V2Ray/Xray را import کند.
 2. اپ hostnameهای داخل config را resolve/pin کند.
 3. IPهای candidate را تست کند.
 4. بهترین IP/route را انتخاب کند.
@@ -59,6 +59,7 @@ Android App
 ├── Config Layer
 │   ├── OpenVPN parser/renderer
 │   ├── WireGuard parser/renderer
+│   ├── V2Ray/Xray share-link parser/prober
 │   ├── IP pinning
 │   └── temporary runtime configs
 │
@@ -79,7 +80,8 @@ Android App
 │
 ├── Tunnel Engines
 │   ├── OpenVPN engine, licensing to decide
-│   ├── WireGuard engine, licensing to decide
+│   ├── WireGuard engine, embedded first
+│   ├── Xray/V2Ray engine, licensing/integration to decide
 │   ├── tun2socks / packet engine, licensing to decide
 │   └── underlay engines, later
 │
@@ -108,6 +110,7 @@ Android App
 - [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
 - [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی گاهی تا وضعیت `VERIFIED` رسید، اما در شبکه‌های ایران WireGuard/UDP اغلب فیلتر است؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
 - [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
+- [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ فعلاً فقط diagnostic/probe است و engine داخلی Xray هنوز اضافه نشده.
 
 ## فازها
 
@@ -160,6 +163,12 @@ PinnedConfig
   - [x] `Endpoint`
   - [x] `PublicKey` به‌عنوان بخش config حفظ می‌شود؛ فعلاً validation رمزنگاری نداریم
   - [x] `AllowedIPs` به‌عنوان بخش config حفظ می‌شود؛ فعلاً policy ندارد
+- [x] Parser اولیه V2Ray/Xray برای diagnostic endpointها:
+  - [x] `vless://`
+  - [x] `vmess://` base64 JSON
+  - [x] `trojan://`
+  - [x] `ss://` برای کلاینت‌های Xray-compatible
+  - [x] استخراج host/port/SNI/Host و تشخیص TLS/REALITY در حد probe
 - [x] Renderer برای config موقت pinned.
 - [ ] ذخیره امن config metadata.
 
@@ -184,6 +193,7 @@ PinnedConfig
 - [x] cache با TTL، فعلاً in-memory.
 - [x] TCP probe برای endpointهای TCP.
 - [x] TLS probe با verify hostname اصلی، بدون خاموش کردن امنیت؛ فعلاً ابزار generic است و برای موفقیت جعلی استفاده نمی‌شود.
+- [x] direct diagnostic probe برای endpointهای TCP/TLS مثل V2Ray/OpenVPN وقتی DoH در ایران reset/timeout می‌شود؛ این probe فقط تشخیصی است و IP pin محسوب نمی‌شود.
 - [x] score اولیه:
 
 ```text
@@ -238,10 +248,15 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] rebind پایه روی تغییر شبکه: `ConnectivityManager` تغییر Wi‑Fi/mobile/capabilities را می‌گیرد، underlying network را refresh می‌کند، WireGuard را rebind می‌کند و verification را دوباره اجرا می‌کند.
   - [ ] تشخیص دقیق‌تر handshake/peer-level telemetry اگر API کافی بدهد؛ فعلاً معیار عملی RX/TX + egress است.
   - [ ] reconnect کامل با restart/backoff و انتخاب IP بعدی در صورت شکست rebind.
+- Xray/V2Ray:
+  - [x] parser/prober اولیه برای share linkهای user-supplied.
+  - [ ] بررسی license و روش embed کردن Xray-core یا یک engine سازگار در Android.
+  - [ ] اجرای داخلی VLESS/VMess/Trojan/SS با حفظ SNI/Host/Path/ALPN/Fingerprint.
+  - [ ] verification واقعی با egress IP و جلوگیری از leak.
 
-تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed است. برای شرایط ایران همچنان OpenVPN TCP و chain/proxy مهم است و بعداً اضافه می‌شود.
+تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed بود؛ اما تست ایران نشان داد WireGuard/UDP نمی‌تواند مسیر اصلی باشد. اولویت عملی بعدی OpenVPN TCP/443 و Xray/V2Ray-compatible fallback است.
 
-**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند. برای ایران، app همچنین می‌تواند OpenVPN TCP/pinned config را برای تست در کلاینت OpenVPN آماده و ذخیره کند تا مسیر fallback عملی داشته باشیم.
+**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند. برای ایران، app همچنین می‌تواند OpenVPN TCP/pinned config را برای تست در کلاینت OpenVPN آماده و ذخیره کند و endpointهای V2Ray/Xray سالم را تشخیص اولیه بدهد تا مسیر fallback عملی داشته باشیم.
 
 ---
 
@@ -392,11 +407,14 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] rebind پایه WireGuard روی تغییر شبکه.
 - [x] تست گوشی اولیه و pivot عملی: WireGuard/UDP در ایران unreliable/filtered است؛ OpenVPN TCP fallback باید جلو بیاید.
 - [x] آماده‌سازی و ذخیره config pinned OpenVPN برای handoff خارجی.
+- [x] import/probe اولیه V2Ray/Xray share linkها برای وقتی پیدا کردن OpenVPN سالم سخت است.
 
 ### بعدی
 
-- [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN.
+- [ ] تست گوشی با V2Ray/Xray سالم user-owned: import یک فایل txt شامل لینک‌ها و اجرای Resolve & probe.
+- [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN، اگر config سالم پیدا شد.
 - [ ] انتخاب license/engine برای OpenVPN داخلی.
+- [ ] انتخاب license/engine برای Xray/V2Ray داخلی.
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
 - [ ] UI/مستندات Always-on و lockdown/kill switch.
@@ -413,7 +431,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 | ریسک | توضیح | راه کنترل |
 | --- | --- | --- |
-| License | OpenVPN/WireGuard/Psiphon/Tor ممکن است GPL/AGPL داشته باشند | قبل از embed تصمیم license بگیریم |
+| License | OpenVPN/WireGuard/Xray/Psiphon/Tor ممکن است licenseهای ناسازگار با مدل محصول داشته باشند | قبل از embed تصمیم license بگیریم |
 | Provider ToS | بعضی providerها API مخفی/اپ رسمی را نمی‌پذیرند | فقط manual/official/import |
 | Free account limits | اکانت رایگان همه کشورها را ندارد | محدودیت‌ها را شفاف و enforce کنیم |
 | IP block کامل | اگر همه IPها و underlayها بسته باشند، اتصال ممکن نیست | خطای صادقانه + fallbackهای optional |
@@ -435,13 +453,14 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - معیار فعلی اتصال verified برای WireGuard این است: engine در حالت UP باشد، RX/TX stats حرکت کند، و یک HTTPS public egress IP endpoint پاسخ public IPv4 بدهد. اگر فقط UP باشد، UI نباید Connected قطعی نشان دهد.
 - WireGuard service حالا روی تغییر شبکه، underlying network را refresh می‌کند و verification را دوباره اجرا می‌کند؛ اگر این rebind شکست بخورد، مرحله بعدی restart/backoff و انتخاب IP جایگزین است.
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
-- با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443 و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
+- با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443، Xray/V2Ray-compatible configs و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
+- به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray فعلاً به عنوان مسیر diagnostic/probe اضافه شد؛ اتصال واقعی آن تا تصمیم engine/license داخلی انجام نمی‌شود.
 
 ## تصمیم‌های باز
 
 1. نام پروژه چیست؟
 2. اپ کاملاً open-source باشد یا core باز و UI بسته؟
-3. آیا با licenseهای GPL/AGPL مشکلی داریم، مخصوصاً برای OpenVPN/Psiphon/Tor future engines؟
+3. آیا با licenseهای GPL/AGPL یا licenseهای engineهای proxy مشکلی داریم، مخصوصاً برای OpenVPN/Xray/Psiphon/Tor future engines؟
 4. آیا از ابتدا Psiphon را embed کنیم یا بعد از MVP؟
 5. manifest/update list روی چه بستری باشد؟ GitHub Pages، Cloudflare Pages، یا بدون backend؟
 

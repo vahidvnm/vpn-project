@@ -15,6 +15,10 @@ class EndpointHealthChecker(
     fun checkBestEffort(resolved: ResolvedEndpointCandidate): HealthResult {
         return when (resolved.protocol) {
             VpnProtocol.OPENVPN_TCP -> checkTcp(resolved)
+            VpnProtocol.V2RAY_TLS -> checkTls(resolved)
+            VpnProtocol.V2RAY_TCP,
+            VpnProtocol.V2RAY_REALITY,
+            VpnProtocol.V2RAY_UNKNOWN -> checkTcp(resolved)
             VpnProtocol.OPENVPN_UDP,
             VpnProtocol.WIREGUARD -> unsupported(
                 resolved,

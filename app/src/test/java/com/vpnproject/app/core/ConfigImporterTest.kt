@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 class ConfigImporterTest {
     @Test
@@ -74,6 +76,56 @@ class ConfigImporterTest {
             EndpointCandidate("vpn.example.com", 51820, VpnProtocol.WIREGUARD),
             config.endpoints.single()
         )
+    }
+
+    @Test
+    fun parsesVlessTlsShareLink() {
+        val text = "vless://00000000-0000-4000-8000-000000000000@cdn.example.com:443?security=tls&type=ws&sni=sni.example.com&host=front.example.com&path=%2Fws#Iran%20fallback"
+
+        val config = ConfigImporter.parse(text, "v2ray.txt")
+
+        assertEquals(ConfigKind.V2RAY, config.kind)
+        assertEquals("v2ray.txt", config.name)
+        assertEquals(
+            EndpointCandidate(
+                host = "cdn.example.com",
+                port = 443,
+                protocol = VpnProtocol.V2RAY_TLS,
+                verifyHost = "sni.example.com"
+            ),
+            config.endpoints.single()
+        )
+        assertTrue(config.warnings.any { it.contains("engine is not integrated") })
+    }
+
+    @Test
+    fun parsesBase64VmessSubscription() {
+        val vmessJson = """
+            {"v":"2","ps":"nl-ws","add":"edge.example.net","port":"443","id":"00000000-0000-4000-8000-000000000000","aid":"0","net":"ws","type":"none","host":"front.example.net","path":"/ws","tls":"tls","sni":"sni.example.net"}
+        """.trimIndent()
+        val vmessLink = "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"
+        val subscription = Base64.getEncoder().encodeToString(vmessLink.toByteArray(StandardCharsets.UTF_8))
+
+        val config = ConfigImporter.parse(subscription)
+
+        assertEquals(ConfigKind.V2RAY, config.kind)
+        assertEquals("nl-ws", config.name)
+        assertEquals("edge.example.net", config.endpoints.single().host)
+        assertEquals(443, config.endpoints.single().port)
+        assertEquals(VpnProtocol.V2RAY_TLS, config.endpoints.single().protocol)
+        assertEquals("sni.example.net", config.endpoints.single().verifyHost)
+    }
+
+    @Test
+    fun parsesTrojanRealityAsTcpDiagnosticEndpoint() {
+        val text = "trojan://password@example.org:443?security=reality&sni=www.microsoft.com&type=tcp#reality"
+
+        val config = ConfigImporter.parse(text)
+
+        assertEquals(ConfigKind.V2RAY, config.kind)
+        assertEquals(VpnProtocol.V2RAY_REALITY, config.endpoints.single().protocol)
+        assertEquals("www.microsoft.com", config.endpoints.single().verifyHost)
+        assertTrue(config.warnings.any { it.contains("REALITY") })
     }
 
     @Test(expected = ConfigParseException::class)

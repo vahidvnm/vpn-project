@@ -19,9 +19,14 @@ object ConfigImporter {
                 WireGuardConfigParser.parse(normalized, name)
             OpenVpnConfigParser.looksLikeOpenVpn(normalized) ->
                 OpenVpnConfigParser.parse(normalized, name)
+            V2RayConfigParser.looksLikeV2Ray(normalized) ->
+                V2RayConfigParser.parse(normalized, name)
             else -> throw ConfigParseException(
-                "This does not look like an OpenVPN .ovpn or WireGuard .conf file."
+                "This does not look like an OpenVPN .ovpn, WireGuard .conf, or V2Ray/Xray share-link file."
             )
+        }
+    }
+}
         }
     }
 }

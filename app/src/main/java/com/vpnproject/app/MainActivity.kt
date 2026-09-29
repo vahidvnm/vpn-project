@@ -16,15 +16,18 @@ import android.widget.TextView
 import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
+import com.vpnproject.app.core.EndpointCandidate
 import com.vpnproject.app.core.EndpointDiscovery
 import com.vpnproject.app.core.EndpointHealthChecker
 import com.vpnproject.app.core.HealthResult
 import com.vpnproject.app.core.ImportedConfig
+import com.vpnproject.app.core.IpClassifier
 import com.vpnproject.app.core.NetworkKey
 import com.vpnproject.app.core.NetworkType
 import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
+import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.vpn.AutoVpnService
@@ -62,7 +65,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned config, resolve/pin public IPs, start WireGuard where UDP works, or prepare OpenVPN TCP fallback configs."
+            text = "Import a user-owned OpenVPN, WireGuard, or V2Ray/Xray config; probe endpoints; start WireGuard where UDP works; or prepare OpenVPN TCP fallback configs."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -70,7 +73,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 4: WireGuard works where UDP is reachable. For Iran filtering, prepare OpenVPN TCP/443 fallback configs next."
+            text = "Phase 4: WireGuard is only useful where UDP works. For Iran, OpenVPN TCP/443 and V2Ray/Xray-style fallbacks are the next test paths."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -84,7 +87,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
-            text = "Import OpenVPN / WireGuard config"
+            text = "Import OpenVPN / WireGuard / V2Ray config"
             setOnClickListener { openConfigPicker() }
         })
 
@@ -254,7 +257,7 @@ class MainActivity : Activity() {
             return
         }
         if (config.kind != ConfigKind.WIREGUARD) {
-            status.text = "The first real engine is WireGuard. This imported config is ${config.kind}; OpenVPN engine is pending."
+            status.text = "The only embedded real engine right now is WireGuard. This imported config is ${config.kind}; OpenVPN/Xray engines are pending, but endpoint probing is available."
             return
         }
 
@@ -308,7 +311,7 @@ class MainActivity : Activity() {
             type = "*/*"
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
-                arrayOf("application/octet-stream", "application/x-openvpn-profile", "text/plain")
+                arrayOf("application/octet-stream", "application/x-openvpn-profile", "text/plain", "text/*")
             )
         }
         startActivityForResult(intent, IMPORT_CONFIG_REQUEST)
@@ -327,14 +330,18 @@ class MainActivity : Activity() {
             }
             val warnings = if (config.warnings.isEmpty()) "" else
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
-            val nextStep = if (config.kind == ConfigKind.WIREGUARD) {
-                "\n\nNext: tap Start WireGuard engine from imported config. If UDP is blocked, try an official OpenVPN TCP/443 config instead."
-            } else {
-                "\n\nNext: tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
+            val nextStep = when (config.kind) {
+                ConfigKind.WIREGUARD ->
+                    "\n\nNext: tap Start WireGuard engine from imported config. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
+                ConfigKind.OPENVPN ->
+                    "\n\nNext: tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
+                ConfigKind.V2RAY ->
+                    "\n\nNext: tap Resolve & probe imported endpoints. Internal Xray/V2Ray engine integration is pending, so keep using your trusted external client for real connections."
+                else -> ""
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
                 "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
-                "\n\nAuth line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
+                "\n\nOpenVPN auth-user-pass line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
                 nextStep +
                 warnings
         } catch (e: Exception) {
@@ -346,11 +353,11 @@ class MainActivity : Activity() {
     private fun resolveAndProbeImportedConfig() {
         val config = importedConfig
         if (config == null) {
-            status.text = "Import an OpenVPN or WireGuard config first."
+            status.text = "Import an OpenVPN, WireGuard, or V2Ray/Xray config first."
             return
         }
 
-        status.text = "Resolving endpoints with DNS-over-HTTPS and probing public IP candidates..."
+        status.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
         Thread {
             val text = try {
                 buildResolveAndProbeReport(config)
@@ -371,17 +378,25 @@ class MainActivity : Activity() {
             lines += "Endpoint: ${endpoint.protocol} ${endpoint.host}:${endpoint.port}"
             val discovery = endpointDiscovery.discover(endpoint)
             if (discovery.fromCache) lines += "DNS: cache hit"
-            if (discovery.resolved.isEmpty()) {
-                lines += if (discovery.errors.any { it.contains("public IPv6 literal") }) {
-                    "Public IPv6 literal endpoint; IPv4 pinning is not needed. The WireGuard engine can try the original endpoint."
+            val candidates = if (discovery.resolved.isEmpty()) {
+                val direct = directSystemProbeCandidate(endpoint)
+                if (direct != null) {
+                    lines += "No DoH public IPv4 candidate found; trying a direct diagnostic probe through Android/system DNS without IP pinning."
+                    listOf(direct)
                 } else {
-                    "No public IPv4 candidate found."
+                    lines += if (discovery.errors.any { it.contains("public IPv6 literal") }) {
+                        "Public IPv6 literal endpoint; IPv4 pinning is not needed. The WireGuard engine can try the original endpoint."
+                    } else {
+                        "No public IPv4 candidate found."
+                    }
+                    discovery.errors.take(MAX_ERRORS_PER_ENDPOINT).forEach { lines += "DNS note: $it" }
+                    continue
                 }
-                discovery.errors.take(MAX_ERRORS_PER_ENDPOINT).forEach { lines += "DNS note: $it" }
-                continue
+            } else {
+                discovery.resolved
             }
 
-            for (resolved in discovery.resolved.take(MAX_IPS_PER_ENDPOINT)) {
+            for (resolved in candidates.take(MAX_IPS_PER_ENDPOINT)) {
                 lines += resolved.describe()
                 val health = endpointHealthChecker.checkBestEffort(resolved)
                 val adjustedScore = routeHealthCache.scoreFor(resolved, networkKey, health.latencyMs) ?: health.score
@@ -393,13 +408,40 @@ class MainActivity : Activity() {
         }
 
         lines += ""
-        lines += "Note: UDP/WireGuard candidates are finally validated by the WireGuard engine handshake. TCP/TLS probes do not fake WireGuard success."
+        lines += "Note: UDP/WireGuard candidates are finally validated by the WireGuard engine handshake. TCP/TLS probes do not fake VPN success. V2Ray/Xray probes only check the front endpoint, not credentials or full proxy login yet."
         return lines.joinToString("\n")
     }
 
+    private fun directSystemProbeCandidate(endpoint: EndpointCandidate): ResolvedEndpointCandidate? {
+        if (IpClassifier.isIpv4Literal(endpoint.host) || IpClassifier.isIpv6Literal(endpoint.host)) return null
+        val canProbeDirectly = when (endpoint.protocol) {
+            VpnProtocol.OPENVPN_TCP,
+            VpnProtocol.V2RAY_TLS,
+            VpnProtocol.V2RAY_TCP,
+            VpnProtocol.V2RAY_REALITY,
+            VpnProtocol.V2RAY_UNKNOWN,
+            VpnProtocol.UNKNOWN -> true
+            VpnProtocol.OPENVPN_UDP,
+            VpnProtocol.WIREGUARD -> false
+        }
+        if (!canProbeDirectly) return null
+        return ResolvedEndpointCandidate(
+            endpoint = endpoint,
+            ip = endpoint.host,
+            provider = null,
+            ttlSeconds = 0L,
+            expiresAtEpochMs = 0L
+        )
+    }
+
     private fun ResolvedEndpointCandidate.describe(): String {
-        val providerName = provider?.displayName ?: "literal/imported IP"
-        return "IP: $ip via $providerName, TTL ${ttlSeconds}s"
+        val providerName = provider?.displayName ?: if (IpClassifier.isIpv4Literal(ip) || IpClassifier.isIpv6Literal(ip)) {
+            "literal/imported IP"
+        } else {
+            "direct system DNS (not pinned)"
+        }
+        val ttlText = if (ttlSeconds > 0) ", TTL ${ttlSeconds}s" else ""
+        return "Target: $ip via $providerName$ttlText"
     }
 
     private fun HealthResult.describe(scoreValue: Int?): String {
