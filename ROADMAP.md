@@ -29,7 +29,7 @@
 
 نسخه اول وقتی موفق است که کاربر بتواند:
 
-1. یک فایل OpenVPN/WireGuard یا لینک/فایل V2Ray/Xray را import کند.
+1. یک فایل OpenVPN/WireGuard یا لینک/فایل V2Ray/Xray را از فایل یا clipboard import کند.
 2. اپ hostnameهای داخل config را resolve/pin کند.
 3. IPهای candidate را تست کند.
 4. بهترین IP/route را انتخاب کند.
@@ -110,7 +110,7 @@ Android App
 - [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
 - [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی گاهی تا وضعیت `VERIFIED` رسید، اما در شبکه‌های ایران WireGuard/UDP اغلب فیلتر است؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
 - [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
-- [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ فعلاً فقط diagnostic/probe است و engine داخلی Xray هنوز اضافه نشده.
+- [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ import از clipboard هم اضافه شد تا نیاز به تبدیل دستی لینک‌ها به `.txt` نباشد. فعلاً فقط diagnostic/probe است و engine داخلی Xray هنوز اضافه نشده.
 
 ## فازها
 
@@ -169,6 +169,7 @@ PinnedConfig
   - [x] `trojan://`
   - [x] `ss://` برای کلاینت‌های Xray-compatible
   - [x] استخراج host/port/SNI/Host و تشخیص TLS/REALITY در حد probe
+  - [x] import مستقیم از Android clipboard برای لینک‌های کپی‌شده
 - [x] Renderer برای config موقت pinned.
 - [ ] ذخیره امن config metadata.
 
@@ -455,6 +456,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
 - با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443، Xray/V2Ray-compatible configs و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
 - به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray فعلاً به عنوان مسیر diagnostic/probe اضافه شد؛ اتصال واقعی آن تا تصمیم engine/license داخلی انجام نمی‌شود.
+- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای یک endpoint `dns.all.ultradns.space:8880` با TCP latency حدود 132ms موفق شد؛ بنابراین fallback مستقیم برای diagnostic ارزشمند است، اما موفقیت probe هنوز برابر اتصال VPN کامل نیست.
 
 ## تصمیم‌های باز
 

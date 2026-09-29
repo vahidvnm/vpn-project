@@ -1,6 +1,7 @@
 package com.vpnproject.app
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
@@ -87,8 +88,13 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
-            text = "Import OpenVPN / WireGuard / V2Ray config"
+            text = "Import OpenVPN / WireGuard / V2Ray file"
             setOnClickListener { openConfigPicker() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Import config from clipboard"
+            setOnClickListener { importConfigFromClipboard() }
         })
 
         root.addView(Button(this).apply {
@@ -318,10 +324,38 @@ class MainActivity : Activity() {
     }
 
     private fun importConfig(uri: Uri) {
-        try {
-            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        val text = try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 ?: throw ConfigParseException("Could not read selected file.")
-            val name = displayName(uri)
+        } catch (e: Exception) {
+            importedConfig = null
+            status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
+            return
+        }
+        importConfigText(text, displayName(uri))
+    }
+
+    private fun importConfigFromClipboard() {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+        val clipText = clipboard
+            ?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+
+        if (clipText.isBlank()) {
+            status.text = "Clipboard is empty. Copy a vless://, vmess://, trojan://, ss://, OpenVPN, or WireGuard config first."
+            return
+        }
+
+        importConfigText(clipText, "clipboard")
+    }
+
+    private fun importConfigText(text: String, name: String?) {
+        try {
             val config = ConfigImporter.parse(text, name)
             importedConfig = config
             val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
