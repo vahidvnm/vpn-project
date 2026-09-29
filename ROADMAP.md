@@ -103,6 +103,7 @@ Android App
 - [ ] انتخاب stack نهایی Android و native core.
 - [x] ساخت skeleton اپ با Activity، VpnService placeholder و مدل‌های core اولیه.
 - [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
+- [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 
 ## فازها
 
@@ -166,29 +167,29 @@ PinnedConfig
 
 هدف: پیدا کردن IPهای واقعی و تست اولیه آن‌ها.
 
-- [ ] DoH resolver با چند endpoint:
-  - [ ] Cloudflare
-  - [ ] Google
-  - [ ] Quad9, optional
-- [ ] حذف IPهای reserved/private:
-  - [ ] `10.0.0.0/8`
-  - [ ] `172.16.0.0/12`
-  - [ ] `192.168.0.0/16`
-  - [ ] `127.0.0.0/8`
-  - [ ] multicast/reserved
-- [ ] cache با TTL.
-- [ ] TCP probe.
-- [ ] TLS probe با verify hostname اصلی، بدون خاموش کردن امنیت.
-- [ ] score اولیه:
+- [x] DoH resolver با چند endpoint:
+  - [x] Cloudflare
+  - [x] Google
+  - [x] Quad9, optional
+- [x] حذف IPهای reserved/private:
+  - [x] `10.0.0.0/8`
+  - [x] `172.16.0.0/12`
+  - [x] `192.168.0.0/16`
+  - [x] `127.0.0.0/8`
+  - [x] multicast/reserved/test-net/CGNAT
+- [x] cache با TTL، فعلاً in-memory.
+- [x] TCP probe برای endpointهای TCP.
+- [x] TLS probe با verify hostname اصلی، بدون خاموش کردن امنیت؛ فعلاً ابزار generic است و برای موفقیت جعلی استفاده نمی‌شود.
+- [x] score اولیه:
 
 ```text
 score = latency + recentFailurePenalty - lastSuccessBonus
 ```
 
-- [ ] per-network cache:
-  - [ ] operator/mobile vs Wi-Fi
-  - [ ] last good route
-  - [ ] failure count
+- [x] per-network cache پایه، فعلاً in-memory:
+  - [ ] تشخیص واقعی operator/mobile vs Wi-Fi از Android `ConnectivityManager`
+  - [x] last good route/IP
+  - [x] failure count
 
 **خروجی فاز:** اپ برای هر hostname چند IP پیدا می‌کند و سالم‌ترین candidateها را رتبه‌بندی می‌کند.
 
@@ -373,11 +374,13 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [ ] انتخاب license.
 - [ ] انتخاب اولین engine: OpenVPN یا WireGuard.
 - [x] پیاده‌سازی import/parser config پایه.
+- [x] resolver و IP pinning پایه.
+- [x] health checker اولیه.
 
 ### بعدی
 
-- [ ] resolver و IP pinning.
-- [ ] health checker.
+- [ ] ذخیره امن config metadata.
+- [ ] تشخیص network واقعی و persistent health cache.
 - [ ] VpnService.
 - [ ] اتصال واقعی با یک config.
 
@@ -407,6 +410,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - پکیج موقت پروژه `com.vpnproject.app` است تا بعداً بعد از انتخاب نام محصول تغییر کند.
 - CI اولیه با GitHub Actions ساخته شد و فعلاً با Gradle نصب‌شده در workflow اجرا می‌شود؛ wrapper بعداً اضافه می‌شود اگر لازم شد.
 - UI فعلاً ساده و بدون Compose است تا build سریع و پایدار شود؛ Compose در فاز UX اضافه می‌شود.
+- Resolver فعلاً فقط public IPv4/A record را از DoH می‌پذیرد؛ IPv6 و DNSهای غیرعمومی تا زمان طراحی کامل route policy کنار گذاشته می‌شوند.
+- Health probe فعلی برای TCP قابل اتکاتر است؛ برای WireGuard/OpenVPN UDP باید در فاز engine، handshake واقعی معیار موفقیت باشد.
 
 ## تصمیم‌های باز
 

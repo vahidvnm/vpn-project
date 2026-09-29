@@ -14,9 +14,22 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigParseException
+import com.vpnproject.app.core.EndpointDiscovery
+import com.vpnproject.app.core.EndpointHealthChecker
+import com.vpnproject.app.core.HealthResult
+import com.vpnproject.app.core.ImportedConfig
+import com.vpnproject.app.core.NetworkKey
+import com.vpnproject.app.core.NetworkType
+import com.vpnproject.app.core.ProbeKind
+import com.vpnproject.app.core.ResolvedEndpointCandidate
+import com.vpnproject.app.core.RouteHealthCache
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
+    private var importedConfig: ImportedConfig? = null
+    private val endpointDiscovery by lazy { EndpointDiscovery() }
+    private val endpointHealthChecker by lazy { EndpointHealthChecker() }
+    private val routeHealthCache = RouteHealthCache()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,7 +52,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned OpenVPN or WireGuard config. The app extracts endpoints first; connection engines come next."
+            text = "Import a user-owned OpenVPN or WireGuard config, resolve real public IPs with DoH, then run safe first-pass health probes."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -47,7 +60,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 1: config import and parser started."
+            text = "Phase 2: import a config, then resolve and probe its endpoints."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -63,6 +76,11 @@ class MainActivity : Activity() {
         root.addView(Button(this).apply {
             text = "Import OpenVPN / WireGuard config"
             setOnClickListener { openConfigPicker() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Resolve & probe imported endpoints"
+            setOnClickListener { resolveAndProbeImportedConfig() }
         })
 
         setContentView(ScrollView(this).apply { addView(root) })
@@ -117,6 +135,7 @@ class MainActivity : Activity() {
                 ?: throw ConfigParseException("Could not read selected file.")
             val name = displayName(uri)
             val config = ConfigImporter.parse(text, name)
+            importedConfig = config
             val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
                 "• ${endpoint.protocol}  ${endpoint.host}:${endpoint.port}" +
                     (endpoint.verifyHost?.let { "  verify: $it" } ?: "")
@@ -126,9 +145,74 @@ class MainActivity : Activity() {
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
                 "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
                 "\n\nAuth line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
+                "\n\nNext: tap Resolve & probe imported endpoints." +
                 warnings
         } catch (e: Exception) {
+            importedConfig = null
             status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    private fun resolveAndProbeImportedConfig() {
+        val config = importedConfig
+        if (config == null) {
+            status.text = "Import an OpenVPN or WireGuard config first."
+            return
+        }
+
+        status.text = "Resolving endpoints with DNS-over-HTTPS and probing public IP candidates..."
+        Thread {
+            val text = try {
+                buildResolveAndProbeReport(config)
+            } catch (e: Exception) {
+                "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}"
+            }
+            runOnUiThread { status.text = text }
+        }.start()
+    }
+
+    private fun buildResolveAndProbeReport(config: ImportedConfig): String {
+        val lines = mutableListOf<String>()
+        val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
+        lines += "Phase 2 results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
+
+        for (endpoint in config.endpoints) {
+            lines += ""
+            lines += "Endpoint: ${endpoint.protocol} ${endpoint.host}:${endpoint.port}"
+            val discovery = endpointDiscovery.discover(endpoint)
+            if (discovery.fromCache) lines += "DNS: cache hit"
+            if (discovery.resolved.isEmpty()) {
+                lines += "No public IPv4 candidate found."
+                discovery.errors.take(MAX_ERRORS_PER_ENDPOINT).forEach { lines += "DNS note: $it" }
+                continue
+            }
+
+            for (resolved in discovery.resolved.take(MAX_IPS_PER_ENDPOINT)) {
+                lines += resolved.describe()
+                val health = endpointHealthChecker.checkBestEffort(resolved)
+                val adjustedScore = routeHealthCache.scoreFor(resolved, networkKey, health.latencyMs) ?: health.score
+                routeHealthCache.record(endpoint, networkKey, health)
+                lines += health.describe(adjustedScore)
+            }
+
+            discovery.errors.take(MAX_ERRORS_PER_ENDPOINT).forEach { lines += "DNS note: $it" }
+        }
+
+        lines += ""
+        lines += "Note: UDP/WireGuard candidates need protocol-level handshake probes in the tunnel engine phase. TLS probe code is available and keeps hostname verification on; it is not used to fake success."
+        return lines.joinToString("\n")
+    }
+
+    private fun ResolvedEndpointCandidate.describe(): String {
+        val providerName = provider?.displayName ?: "literal/imported IP"
+        return "IP: $ip via $providerName, TTL ${ttlSeconds}s"
+    }
+
+    private fun HealthResult.describe(scoreValue: Int?): String {
+        return when {
+            probeKind == ProbeKind.UNSUPPORTED -> "Probe: skipped — ${reason.orEmpty()}"
+            reachable -> "Probe: $probeKind OK, latency ${latencyMs ?: 0}ms, score ${scoreValue ?: "n/a"}"
+            else -> "Probe: $probeKind failed — ${reason.orEmpty()}"
         }
     }
 
@@ -147,5 +231,7 @@ class MainActivity : Activity() {
     private companion object {
         const val VPN_PERMISSION_REQUEST = 1001
         const val IMPORT_CONFIG_REQUEST = 1002
+        const val MAX_IPS_PER_ENDPOINT = 4
+        const val MAX_ERRORS_PER_ENDPOINT = 3
     }
 }

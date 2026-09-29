@@ -23,9 +23,19 @@ enum class CandidateSource {
     LAST_GOOD_CACHE
 }
 
+enum class ProbeKind {
+    DNS_ONLY,
+    TCP_CONNECT,
+    TLS_HANDSHAKE,
+    UNSUPPORTED
+}
+
 data class HealthResult(
     val candidate: EndpointCandidate,
     val reachable: Boolean,
     val latencyMs: Long? = null,
-    val reason: String? = null
+    val reason: String? = null,
+    val probeKind: ProbeKind = ProbeKind.TCP_CONNECT,
+    val score: Int? = null,
+    val checkedAtEpochMs: Long = 0L
 )

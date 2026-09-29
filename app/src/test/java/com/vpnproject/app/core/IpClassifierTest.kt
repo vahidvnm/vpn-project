@@ -18,6 +18,8 @@ class IpClassifierTest {
         assertTrue(IpClassifier.isReservedIpv4("192.168.1.1"))
         assertTrue(IpClassifier.isReservedIpv4("172.16.0.1"))
         assertTrue(IpClassifier.isReservedIpv4("100.64.1.1"))
+        assertTrue(IpClassifier.isReservedIpv4("198.51.100.10"))
+        assertTrue(IpClassifier.isReservedIpv4("203.0.113.10"))
         assertFalse(IpClassifier.isPublicIpv4("999.1.1.1"))
         assertFalse(IpClassifier.isIpv4Literal("vpn.example.com"))
     }

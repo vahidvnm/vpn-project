@@ -30,6 +30,7 @@ object IpClassifier {
     private fun isReserved(parts: IntArray): Boolean {
         val a = parts[0]
         val b = parts[1]
+        val c = parts[2]
         return when {
             a == 0 -> true
             a == 10 -> true
@@ -37,9 +38,13 @@ object IpClassifier {
             a == 127 -> true
             a == 169 && b == 254 -> true
             a == 172 && b in 16..31 -> true
-            a == 192 && b == 0 -> true
+            a == 192 && b == 0 && c == 0 -> true // IETF protocol assignments
+            a == 192 && b == 0 && c == 2 -> true // documentation TEST-NET-1
+            a == 192 && b == 88 && c == 99 -> true // deprecated 6to4 relay anycast
             a == 192 && b == 168 -> true
-            a == 198 && b in 18..19 -> true
+            a == 198 && b in 18..19 -> true // benchmark networks
+            a == 198 && b == 51 && c == 100 -> true // documentation TEST-NET-2
+            a == 203 && b == 0 && c == 113 -> true // documentation TEST-NET-3
             a >= 224 -> true
             else -> false
         }
