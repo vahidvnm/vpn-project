@@ -104,6 +104,7 @@ Android App
 - [x] ساخت skeleton اپ با Activity، VpnService placeholder و مدل‌های core اولیه.
 - [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
+- [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
 
 ## فازها
 
@@ -199,16 +200,17 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 
 هدف: اپ بتواند تونل سیستم‌سطحی بسازد.
 
-- [ ] ساخت `VpnService`.
-- [ ] ساخت foreground service و notification.
-- [ ] ایجاد TUN interface.
-- [ ] route کامل `0.0.0.0/0`.
-- [ ] DNS کنترل‌شده.
-- [ ] split tunneling پایه.
-- [ ] kill switch behavior.
-- [ ] protect کردن socketهای خود اپ برای جلوگیری از loop.
+- [x] ساخت `VpnService` واقعی برای bootstrap.
+- [x] ساخت foreground service و notification با دکمه Stop.
+- [x] ایجاد TUN interface.
+- [x] route کامل `0.0.0.0/0` برای IPv4.
+- [x] DNS کنترل‌شده پایه با DNSهای public ثابت.
+- [x] split tunneling پایه در policy/code، هنوز بدون UI انتخاب اپ‌ها.
+- [ ] kill switch behavior کامل؛ بخش Android Always-on/Lockdown باید در UX و مستندات اضافه شود و بعد از engine واقعی verify شود.
+- [x] protect کردن socketهای خود اپ برای جلوگیری از loop؛ HealthChecker حالا `SocketProtector` می‌پذیرد و `VpnServiceSocketProtector` اضافه شد.
+- [x] packet pump موقت برای drain کردن TUN؛ تا قبل از engine واقعی packetها عمداً forward نمی‌شوند.
 
-**خروجی فاز:** سرویس VPN بالا می‌آید و route سیستم را کنترل می‌کند، حتی اگر هنوز engine کامل وصل نباشد.
+**خروجی فاز:** سرویس VPN بالا می‌آید و route سیستم را کنترل می‌کند، حتی اگر هنوز engine کامل وصل نباشد. در حالت فعلی این tunnel برای تست پلتفرم است و اینترنت را عبور نمی‌دهد تا engine OpenVPN/WireGuard اضافه شود.
 
 ---
 
@@ -376,12 +378,14 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] پیاده‌سازی import/parser config پایه.
 - [x] resolver و IP pinning پایه.
 - [x] health checker اولیه.
+- [x] VpnService و TUN bootstrap پایه.
 
 ### بعدی
 
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
-- [ ] VpnService.
+- [ ] UI/مستندات Always-on و lockdown/kill switch.
+- [ ] انتخاب و embed اولین engine.
 - [ ] اتصال واقعی با یک config.
 
 ### بعداً
@@ -412,6 +416,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - UI فعلاً ساده و بدون Compose است تا build سریع و پایدار شود؛ Compose در فاز UX اضافه می‌شود.
 - Resolver فعلاً فقط public IPv4/A record را از DoH می‌پذیرد؛ IPv6 و DNSهای غیرعمومی تا زمان طراحی کامل route policy کنار گذاشته می‌شوند.
 - Health probe فعلی برای TCP قابل اتکاتر است؛ برای WireGuard/OpenVPN UDP باید در فاز engine، handshake واقعی معیار موفقیت باشد.
+- `VpnService` فعلی یک bootstrap tunnel می‌سازد و full-route/DNS را کنترل می‌کند، اما تا زمان اضافه شدن engine، packetها را forward نمی‌کند؛ بنابراین نباید به‌عنوان اتصال موفق نمایش داده شود.
 
 ## تصمیم‌های باز
 

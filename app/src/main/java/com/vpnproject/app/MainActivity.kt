@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.Gravity
@@ -23,10 +24,12 @@ import com.vpnproject.app.core.NetworkType
 import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
+import com.vpnproject.app.vpn.AutoVpnService
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private var importedConfig: ImportedConfig? = null
+    private var startVpnAfterPermission = false
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val routeHealthCache = RouteHealthCache()
@@ -52,7 +55,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned OpenVPN or WireGuard config, resolve real public IPs with DoH, then run safe first-pass health probes."
+            text = "Import a user-owned OpenVPN or WireGuard config, resolve real public IPs with DoH, then start the Android VPN bootstrap tunnel."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -60,7 +63,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 2: import a config, then resolve and probe its endpoints."
+            text = "Phase 3: VpnService can create a TUN interface. It is not a working internet tunnel until an engine is added."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -70,7 +73,17 @@ class MainActivity : Activity() {
 
         root.addView(Button(this).apply {
             text = "Prepare VPN permission"
-            setOnClickListener { requestVpnPermission() }
+            setOnClickListener { requestVpnPermission(startAfterGrant = false) }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Start TUN bootstrap VPN"
+            setOnClickListener { startBootstrapVpn() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Stop bootstrap VPN"
+            setOnClickListener { stopBootstrapVpn() }
         })
 
         root.addView(Button(this).apply {
@@ -91,10 +104,16 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             VPN_PERMISSION_REQUEST -> {
-                status.text = if (resultCode == RESULT_OK) {
-                    "VPN permission granted. Engine implementation comes in the next phases."
+                if (resultCode == RESULT_OK) {
+                    if (startVpnAfterPermission) {
+                        startVpnAfterPermission = false
+                        startBootstrapVpnService()
+                    } else {
+                        status.text = "VPN permission granted. You can start the TUN bootstrap tunnel now."
+                    }
                 } else {
-                    "VPN permission was not granted."
+                    startVpnAfterPermission = false
+                    status.text = "VPN permission was not granted."
                 }
             }
             IMPORT_CONFIG_REQUEST -> {
@@ -108,13 +127,40 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun requestVpnPermission() {
+    private fun requestVpnPermission(startAfterGrant: Boolean) {
         val intent = VpnService.prepare(this)
         if (intent != null) {
+            startVpnAfterPermission = startAfterGrant
             startActivityForResult(intent, VPN_PERMISSION_REQUEST)
+        } else if (startAfterGrant) {
+            startBootstrapVpnService()
         } else {
             status.text = "VPN permission is already granted."
         }
+    }
+
+    private fun startBootstrapVpn() {
+        requestVpnPermission(startAfterGrant = true)
+    }
+
+    private fun startBootstrapVpnService() {
+        val intent = Intent(this, AutoVpnService::class.java).apply {
+            action = AutoVpnService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        status.text = "Starting TUN bootstrap VPN. Warning: it owns the full IPv4 route but does not forward traffic until an OpenVPN/WireGuard engine is integrated. Use Stop to return to normal networking."
+    }
+
+    private fun stopBootstrapVpn() {
+        val intent = Intent(this, AutoVpnService::class.java).apply {
+            action = AutoVpnService.ACTION_STOP
+        }
+        startService(intent)
+        status.text = "Stop requested for bootstrap VPN."
     }
 
     private fun openConfigPicker() {

@@ -1,5 +1,6 @@
 package com.vpnproject.app.core
 
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import javax.net.ssl.SSLSocket
@@ -8,7 +9,8 @@ import javax.net.ssl.SSLSocketFactory
 class EndpointHealthChecker(
     private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
     private val nowEpochMs: () -> Long = { System.currentTimeMillis() },
-    private val sslSocketFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+    private val sslSocketFactory: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
+    private val socketProtector: SocketProtector = NoOpSocketProtector
 ) {
     fun checkBestEffort(resolved: ResolvedEndpointCandidate): HealthResult {
         return when (resolved.protocol) {
@@ -28,6 +30,9 @@ class EndpointHealthChecker(
         return try {
             Socket().use { socket ->
                 socket.tcpNoDelay = true
+                if (!socketProtector.protect(socket)) {
+                    throw IOException("Could not protect probe socket from VPN routing loop.")
+                }
                 socket.connect(InetSocketAddress(resolved.ip, resolved.port), timeoutMs)
             }
             val latency = elapsedMs(started)
@@ -76,6 +81,9 @@ class EndpointHealthChecker(
         var plainSocket: Socket? = null
         return try {
             plainSocket = Socket().apply {
+                if (!socketProtector.protect(this)) {
+                    throw IOException("Could not protect TLS probe socket from VPN routing loop.")
+                }
                 connect(InetSocketAddress(resolved.ip, resolved.port), timeoutMs)
             }
             val sslSocket = sslSocketFactory.createSocket(
