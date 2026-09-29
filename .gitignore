@@ -3,6 +3,7 @@
 **/build/
 local.properties
 captures/
+app/libs/libv2ray.aar
 
 # IDE
 .idea/

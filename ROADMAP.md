@@ -81,7 +81,7 @@ Android App
 ├── Tunnel Engines
 │   ├── OpenVPN engine, licensing to decide
 │   ├── WireGuard engine, embedded first
-│   ├── Xray/V2Ray engine, licensing/integration to decide
+│   ├── Xray/V2Ray engine, experimental embedded path added; license/integration still under review
 │   ├── tun2socks / packet engine, licensing to decide
 │   └── underlay engines, later
 │
@@ -110,7 +110,8 @@ Android App
 - [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده، verification اولیه RX/TX + public egress IP، و rebind پایه روی تغییر شبکه اضافه شد.
 - [x] نتیجه تست گوشی وارد شد: WireGuard با endpoint IPv4 واقعی گاهی تا وضعیت `VERIFIED` رسید، اما در شبکه‌های ایران WireGuard/UDP اغلب فیلتر است؛ DoH hostnameها روی شبکه موبایل می‌توانند به IP جعلی/private مثل `10.10.34.35` poison شوند؛ پشتیبانی از endpoint literal IPv4/IPv6 بدون DoH و fallback DoH با IP literal اضافه شد.
 - [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
-- [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ import از clipboard هم اضافه شد تا نیاز به تبدیل دستی لینک‌ها به `.txt` نباشد. فعلاً فقط diagnostic/probe است و engine داخلی Xray هنوز اضافه نشده.
+- [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ import از clipboard هم اضافه شد تا نیاز به تبدیل دستی لینک‌ها به `.txt` نباشد.
+- [x] مسیر experimental برای اجرای embedded Xray core با AndroidLibXrayLite اضافه شد: لینک V2Ray/Xray به config JSON با TUN inbound تبدیل می‌شود، Android `VpnService` بالا می‌آید، و core با همان TUN fd شروع می‌شود. این مسیر هنوز نیاز به تست گوشی و review license دارد.
 
 ## فازها
 
@@ -252,13 +253,15 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [ ] reconnect کامل با restart/backoff و انتخاب IP بعدی در صورت شکست rebind.
 - Xray/V2Ray:
   - [x] parser/prober اولیه برای share linkهای user-supplied.
-  - [ ] بررسی license و روش embed کردن Xray-core یا یک engine سازگار در Android.
-  - [ ] اجرای داخلی VLESS/VMess/Trojan/SS با حفظ SNI/Host/Path/ALPN/Fingerprint.
-  - [ ] verification واقعی با egress IP و جلوگیری از leak.
+  - [x] اجرای experimental داخلی برای VLESS/VMess/Trojan/SS با AndroidLibXrayLite و TUN inbound.
+  - [x] حفظ SNI/Host/Path/ALPN/Fingerprint/REALITY publicKey/shortId در config runtime تا حد parser فعلی.
+  - [ ] تست گوشی روی چند لینک واقعی ایران و اصلاح config generator برای transportهای خاص.
+  - [ ] review کامل license/LGPL و noticeهای production.
+  - [ ] verification قوی‌تر با egress IP و جلوگیری از leak.
 
-تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed بود؛ اما تست ایران نشان داد WireGuard/UDP نمی‌تواند مسیر اصلی باشد. اولویت عملی بعدی OpenVPN TCP/443 و Xray/V2Ray-compatible fallback است.
+تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed بود؛ اما تست ایران نشان داد WireGuard/UDP نمی‌تواند مسیر اصلی باشد. اولویت عملی بعدی OpenVPN TCP/443 و Xray/V2Ray-compatible fallback است؛ به همین دلیل embedded Xray به شکل experimental اضافه شد.
 
-**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند. برای ایران، app همچنین می‌تواند OpenVPN TCP/pinned config را برای تست در کلاینت OpenVPN آماده و ذخیره کند و endpointهای V2Ray/Xray سالم را تشخیص اولیه بدهد تا مسیر fallback عملی داشته باشیم.
+**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند. برای ایران، app همچنین می‌تواند OpenVPN TCP/pinned config را برای تست در کلاینت OpenVPN آماده و ذخیره کند، endpointهای V2Ray/Xray سالم را تشخیص اولیه بدهد، و به‌صورت experimental همان لینک‌های V2Ray/Xray را با embedded Xray core شروع کند.
 
 ---
 
@@ -410,13 +413,15 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] تست گوشی اولیه و pivot عملی: WireGuard/UDP در ایران unreliable/filtered است؛ OpenVPN TCP fallback باید جلو بیاید.
 - [x] آماده‌سازی و ذخیره config pinned OpenVPN برای handoff خارجی.
 - [x] import/probe اولیه V2Ray/Xray share linkها برای وقتی پیدا کردن OpenVPN سالم سخت است.
+- [x] start experimental embedded Xray engine برای لینک‌های V2Ray/Xray user-owned.
 
 ### بعدی
 
-- [ ] تست گوشی با V2Ray/Xray سالم user-owned: import یک فایل txt شامل لینک‌ها و اجرای Resolve & probe.
+- [ ] تست گوشی با V2Ray/Xray سالم user-owned: import از clipboard، Resolve & probe، سپس Start imported VPN engine.
+- [ ] اصلاح runtime config generator برای هر transport واقعی که در تست گوشی fail می‌شود.
 - [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN، اگر config سالم پیدا شد.
 - [ ] انتخاب license/engine برای OpenVPN داخلی.
-- [ ] انتخاب license/engine برای Xray/V2Ray داخلی.
+- [ ] review نهایی license/notice برای Xray/V2Ray داخلی.
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
 - [ ] UI/مستندات Always-on و lockdown/kill switch.
@@ -456,8 +461,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - WireGuard service حالا روی تغییر شبکه، underlying network را refresh می‌کند و verification را دوباره اجرا می‌کند؛ اگر این rebind شکست بخورد، مرحله بعدی restart/backoff و انتخاب IP جایگزین است.
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
 - با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443، Xray/V2Ray-compatible configs و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
-- به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray فعلاً به عنوان مسیر diagnostic/probe اضافه شد؛ اتصال واقعی آن تا تصمیم engine/license داخلی انجام نمی‌شود.
-- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است، اما موفقیت probe هنوز برابر اتصال VPN کامل نیست. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر VPN خارجی باشد و باید با VPN خاموش هم تکرار شود.
+- به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray اول به عنوان مسیر diagnostic/probe اضافه شد و سپس یک embedded Xray engine experimental برای شروع واقعی همان لینک‌ها اضافه شد.
+- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است. حالا باید همان لینک‌ها با Start imported VPN engine تست شوند تا ببینیم TUN + Xray runtime config واقعاً verified می‌شود یا کدام transport نیاز به اصلاح دارد. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر VPN خارجی باشد و باید با VPN خاموش هم تکرار شود.
 
 ## تصمیم‌های باز
 

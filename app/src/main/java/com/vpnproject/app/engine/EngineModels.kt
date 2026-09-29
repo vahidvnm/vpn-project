@@ -2,6 +2,7 @@ package com.vpnproject.app.engine
 
 enum class EngineKind {
     WIREGUARD_GO,
+    XRAY_CORE,
     OPENVPN_UNAVAILABLE
 }
 

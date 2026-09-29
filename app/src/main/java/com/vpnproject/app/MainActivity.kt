@@ -33,8 +33,11 @@ import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
+import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
+import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.vpn.AutoVpnService
 import com.vpnproject.app.vpn.WireGuardVpnService
+import com.vpnproject.app.vpn.XrayVpnService
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -111,18 +114,18 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
-            text = "Start WireGuard engine from imported config"
-            setOnClickListener { requestVpnPermission(PendingVpnAction.WIREGUARD) }
+            text = "Start imported VPN engine"
+            setOnClickListener { requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE) }
         })
 
         root.addView(Button(this).apply {
-            text = "Stop WireGuard engine"
-            setOnClickListener { stopWireGuardEngine() }
+            text = "Stop imported engines"
+            setOnClickListener { stopImportedEngines() }
         })
 
         root.addView(Button(this).apply {
-            text = "Refresh WireGuard status"
-            setOnClickListener { showWireGuardStatus() }
+            text = "Refresh engine status"
+            setOnClickListener { showEngineStatus() }
         })
 
         root.addView(Button(this).apply {
@@ -184,7 +187,7 @@ class MainActivity : Activity() {
         when (action) {
             PendingVpnAction.NONE -> status.text = "VPN permission is granted."
             PendingVpnAction.BOOTSTRAP -> startBootstrapVpnService()
-            PendingVpnAction.WIREGUARD -> prepareAndStartWireGuardEngine()
+            PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine()
         }
     }
 
@@ -259,17 +262,21 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun prepareAndStartWireGuardEngine() {
+    private fun prepareAndStartImportedEngine() {
         val config = importedConfig
         if (config == null) {
-            status.text = "Import a WireGuard config first."
+            status.text = "Import a WireGuard or V2Ray/Xray config first."
             return
         }
-        if (config.kind != ConfigKind.WIREGUARD) {
-            status.text = "The only embedded real engine right now is WireGuard. This imported config is ${config.kind}; OpenVPN/Xray engines are pending, but endpoint probing is available."
-            return
+        when (config.kind) {
+            ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
+            ConfigKind.V2RAY -> prepareAndStartXrayEngine(config)
+            ConfigKind.OPENVPN -> status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
+            ConfigKind.UNKNOWN -> status.text = "Unknown config kind cannot be started."
         }
+    }
 
+    private fun prepareAndStartWireGuardEngine(config: ImportedConfig) {
         status.text = "Preparing WireGuard runtime config: resolving endpoint and pinning a public IPv4 candidate..."
         Thread {
             val result = runCatching { runtimeConfigPreparer.prepareWireGuard(config) }
@@ -285,6 +292,7 @@ class MainActivity : Activity() {
     }
 
     private fun startWireGuardEngine(selection: RuntimeConfigSelection, config: ImportedConfig) {
+        startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         val intent = Intent(this, WireGuardVpnService::class.java).apply {
             action = WireGuardVpnService.ACTION_START
             putExtra(WireGuardVpnService.EXTRA_CONFIG_TEXT, selection.configText)
@@ -292,26 +300,55 @@ class MainActivity : Activity() {
             putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Tap Refresh WireGuard status after a few seconds."
+        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Tap Refresh engine status after a few seconds."
     }
 
-    private fun stopWireGuardEngine() {
-        val intent = Intent(this, WireGuardVpnService::class.java).apply {
-            action = WireGuardVpnService.ACTION_STOP
+    private fun prepareAndStartXrayEngine(config: ImportedConfig) {
+        status.text = "Preparing embedded Xray/V2Ray runtime config from the imported link..."
+        Thread {
+            val result = runCatching { V2RayRuntimeConfigBuilder.build(config) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { runtime -> startXrayEngine(runtime) },
+                    onFailure = { error ->
+                        status.text = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                    }
+                )
+            }
+        }.start()
+    }
+
+    private fun startXrayEngine(runtime: V2RayRuntimeConfig) {
+        startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
+        val intent = Intent(this, XrayVpnService::class.java).apply {
+            action = XrayVpnService.ACTION_START
+            putExtra(XrayVpnService.EXTRA_CONFIG_JSON, runtime.configJson)
+            putExtra(XrayVpnService.EXTRA_PROFILE_NAME, safeTunnelName(runtime.profileName))
+            putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
         }
-        startService(intent)
-        val last = WireGuardVpnService.lastStatus
-        status.text = "Stop requested for WireGuard engine. Last status: ${last.state} — ${last.message}"
+        startForegroundServiceCompat(intent)
+        status.text = "Starting embedded Xray engine.\n${runtime.note}\n\nTap Refresh engine status after a few seconds. If it stays unverified, send the screenshot so we can tune the generated Xray config for this link type."
     }
 
-    private fun showWireGuardStatus() {
-        val last = WireGuardVpnService.lastStatus
-        status.text = "WireGuard status: ${last.state}\n" +
-            "Verified: ${if (last.verified) "yes" else "no"}\n" +
-            "Message: ${last.message}" +
-            (last.detail?.let { "\nDetail: $it" } ?: "") +
-            (last.egressIp?.let { "\nEgress IP: $it" } ?: "") +
-            "\nRX/TX: ${last.rxBytes ?: 0} / ${last.txBytes ?: 0} bytes"
+    private fun stopImportedEngines() {
+        startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
+        startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
+        status.text = "Stop requested for WireGuard and Xray engines."
+    }
+
+    private fun showEngineStatus() {
+        val wg = WireGuardVpnService.lastStatus
+        val xray = XrayVpnService.lastStatus
+        status.text = "WireGuard status: ${wg.state}\n" +
+            "Verified: ${if (wg.verified) "yes" else "no"}\n" +
+            "Message: ${wg.message}" +
+            (wg.detail?.let { "\nDetail: $it" } ?: "") +
+            (wg.egressIp?.let { "\nEgress IP: $it" } ?: "") +
+            "\nRX/TX: ${wg.rxBytes ?: 0} / ${wg.txBytes ?: 0} bytes" +
+            "\n\nXray status: ${xray.state}\n" +
+            "Verified: ${if (xray.verified) "yes" else "no"}\n" +
+            "Message: ${xray.message}" +
+            (xray.detail?.let { "\nDetail: $it" } ?: "")
     }
 
     private fun openConfigPicker() {
@@ -369,11 +406,11 @@ class MainActivity : Activity() {
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
             val nextStep = when (config.kind) {
                 ConfigKind.WIREGUARD ->
-                    "\n\nNext: tap Start WireGuard engine from imported config. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
+                    "\n\nNext: tap Start imported VPN engine. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
                 ConfigKind.OPENVPN ->
                     "\n\nNext: tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
                 ConfigKind.V2RAY ->
-                    "\n\nNext: tap Resolve & probe imported endpoints. Internal Xray/V2Ray engine integration is pending, so keep using your trusted external client for real connections."
+                    "\n\nNext: tap Resolve & probe imported endpoints, then Start imported VPN engine to try the embedded Xray core."
                 else -> ""
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
@@ -554,7 +591,7 @@ class MainActivity : Activity() {
     private enum class PendingVpnAction {
         NONE,
         BOOTSTRAP,
-        WIREGUARD
+        IMPORTED_ENGINE
     }
 
     private companion object {

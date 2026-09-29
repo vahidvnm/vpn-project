@@ -52,6 +52,19 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".vpn.XrayVpnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="xray-user-config-engine" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
         <!-- We run GoBackend through our foreground-aware subclass above. -->
         <service
             android:name="com.wireguard.android.backend.GoBackend$VpnService"
