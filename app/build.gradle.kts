@@ -38,7 +38,7 @@ android {
 }
 
 dependencies {
-    implementation("com.wireguard.android:tunnel:1.0.20260102")
+    implementation("com.wireguard.android:tunnel:1.0.20230706")
 
     testImplementation("junit:junit:4.13.2")
 }
