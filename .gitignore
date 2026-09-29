@@ -1,0 +1,22 @@
+# Gradle / Android build output
+.gradle/
+**/build/
+local.properties
+captures/
+
+# IDE
+.idea/
+*.iml
+
+# OS/editor
+.DS_Store
+*.swp
+
+# Secrets and local imported configs
+*.ovpn
+*.conf
+*.mobileconfig
+.env
+.env.*
+*.keystore
+*.jks

@@ -1,0 +1,424 @@
+# نقشه راه پروژه VPN Auto-Connector برای ایران
+
+> این فایل «نقشه راه زنده» پروژه است. هر وقت در مسیر تصمیم مهم، تغییر فاز، یا کشف محدودیت جدید داشتیم، همین فایل را به‌روزرسانی می‌کنیم تا پروژه شلوغ و گیج‌کننده نشود.
+
+## هدف محصول
+
+ساخت یک اپلیکیشن اندرویدی که با **اکانت یا کانفیگ خود کاربر** کار کند و بدون اینکه ما سرور خروجی یا پهنای‌باند برای کاربران بخریم، بهترین مسیر اتصال را برای اینترنت ایران پیدا کند.
+
+اپ قرار نیست فروشنده VPN باشد. اپ قرار است این کارها را خودکار کند:
+
+1. گرفتن/ایمپورت کانفیگ مجاز کاربر.
+2. پیدا کردن IPهای واقعی و سالم برای همان کانفیگ.
+3. تست چند روش اتصال.
+4. انتخاب سریع‌ترین مسیر موفق.
+5. اتصال کامل دستگاه با Android VpnService.
+6. مانیتورینگ، reconnect، kill switch و جلوگیری از DNS leak.
+
+## اصل‌های ثابت پروژه
+
+- **بدون سرور خروجی پولی از سمت ما:** ترافیک کاربران نباید از زیرساخت ما رد شود، مگر در حالت optional و user-supplied.
+- **Bring Your Own Account/Config:** کاربر از اکانت، service credential، یا config مجاز خودش استفاده می‌کند.
+- **عدم دور زدن محدودیت پلن‌ها:** اگر اکانت رایگان فقط چند سرور دارد، اپ فقط همان‌ها را استفاده می‌کند.
+- **عدم استخراج مخفی از اپ رسمی VPNها:** استفاده فقط از manual config، API رسمی/مجاز، service credentials، یا import کاربر.
+- **Credential فقط روی گوشی:** هیچ پسورد/توکن کاربر نباید به backend ما ارسال شود.
+- **اتصال تأییدشده:** UI فقط وقتی Connected نشان دهد که ترافیک واقعاً از تونل عبور کرده باشد.
+- **طراحی مخصوص ایران:** تصمیم‌گیری بر اساس فیلترینگ هوشمند، تفاوت اپراتورها، DNS poisoning، IP block، SNI/DPI و UDP block.
+
+## تعریف موفقیت نسخه اولیه
+
+نسخه اول وقتی موفق است که کاربر بتواند:
+
+1. یک فایل OpenVPN یا WireGuard را import کند.
+2. اپ hostnameهای داخل config را resolve/pin کند.
+3. IPهای candidate را تست کند.
+4. بهترین IP/route را انتخاب کند.
+5. VPNService را بالا بیاورد.
+6. egress IP و DNS را verify کند.
+7. اگر اتصال افتاد، اپ مسیر بعدی را امتحان کند.
+
+## معماری هدف
+
+```text
+Android App
+│
+├── UI Layer
+│   └── Kotlin + Jetpack Compose
+│
+├── VPN Platform Layer
+│   ├── Android VpnService
+│   ├── Foreground notification
+│   ├── Always-on / lockdown compatibility
+│   └── Per-app split tunneling
+│
+├── Secure Storage
+│   ├── Android Keystore
+│   ├── encrypted configs/credentials
+│   └── no secret logs
+│
+├── Config Layer
+│   ├── OpenVPN parser/renderer
+│   ├── WireGuard parser/renderer
+│   ├── IP pinning
+│   └── temporary runtime configs
+│
+├── Resolver + Health Checker
+│   ├── DoH resolver
+│   ├── optional static/signed manifest
+│   ├── fake/private IP filtering
+│   ├── TCP/TLS/protocol probes
+│   └── per-network health cache
+│
+├── Route Orchestrator
+│   ├── Direct route
+│   ├── Pinned IP route
+│   ├── Provider stealth route, where official
+│   ├── User proxy chain route
+│   ├── Psiphon/WARP/MASQUE/Tor rescue route, later
+│   └── auto fallback ladder
+│
+├── Tunnel Engines
+│   ├── OpenVPN engine, licensing to decide
+│   ├── WireGuard engine, licensing to decide
+│   ├── tun2socks / packet engine, licensing to decide
+│   └── underlay engines, later
+│
+└── Provider Adapters
+    ├── Import-only, MVP
+    ├── Proton manual config
+    ├── Nord manual/service credentials
+    ├── Express manual config
+    ├── Surfshark manual/service credentials
+    └── others only if official/manual path exists
+```
+
+## وضعیت فعلی
+
+- [x] ایده و محدودیت‌های محصول مشخص شد.
+- [x] مسیر رایگان/بدون سرور خروجی انتخاب شد.
+- [x] تصمیم گرفتیم ابتدا روی config/account خود کاربر کار کنیم.
+- [x] تصمیم گرفتیم از تجربه MSN-GUARD، AetherST، Psiphon و Relay فقط به عنوان معماری الهام بگیریم، نه کپی کورکورانه.
+- [ ] انتخاب نام پروژه.
+- [ ] انتخاب license پروژه.
+- [ ] انتخاب stack نهایی Android و native core.
+- [x] ساخت skeleton اپ با Activity، VpnService placeholder و مدل‌های core اولیه.
+
+## فازها
+
+### فاز 0 — تصمیم‌های پایه و آماده‌سازی repo
+
+هدف: جلوگیری از آشفتگی قبل از کدنویسی اصلی.
+
+- [ ] انتخاب نام موقت پروژه.
+- [ ] انتخاب license: کاملاً مهم، چون OpenVPN/WireGuard/Psiphon/Tor ممکن است GPL/AGPL داشته باشند.
+- [x] انتخاب حداقل نسخه Android: Android 8.0+ / minSdk 26.
+- [x] انتخاب زبان پایه: Kotlin. UI فعلاً Activity ساده است؛ Compose در فاز UX اضافه می‌شود.
+- [x] ساخت پروژه Android پایه.
+- [ ] افزودن اسناد:
+  - [x] `ROADMAP.md`
+  - [ ] `ARCHITECTURE.md`
+  - [ ] `SECURITY.md`
+  - [ ] `PROVIDERS.md`
+
+**خروجی فاز:** پروژه Android خالی ولی قابل build، همراه با اسناد پایه.
+
+---
+
+### فاز 1 — MVP Import + Config Intelligence
+
+هدف: اپ بتواند config کاربر را بفهمد، نه اینکه هنوز حتماً VPN کامل وصل کند.
+
+- [ ] Import فایل `.ovpn`.
+- [ ] Import فایل WireGuard `.conf`.
+- [ ] مدل داخلی مشترک برای endpointها:
+
+```text
+ProviderProfile
+ServerProfile
+EndpointCandidate
+ConnectionMethod
+HealthResult
+PinnedConfig
+```
+
+- [ ] Parser ساده OpenVPN:
+  - [ ] `remote host port proto`
+  - [ ] `proto`
+  - [ ] `port`
+  - [ ] `auth-user-pass`
+  - [ ] `verify-x509-name`
+  - [ ] certificate/key blocks بدون دستکاری
+- [ ] Parser ساده WireGuard:
+  - [ ] `[Interface]`
+  - [ ] `[Peer]`
+  - [ ] `Endpoint`
+  - [ ] `PublicKey`
+  - [ ] `AllowedIPs`
+- [ ] Renderer برای config موقت pinned.
+- [ ] ذخیره امن config metadata.
+
+**خروجی فاز:** کاربر config وارد می‌کند و اپ endpointها را استخراج و نمایش می‌دهد.
+
+---
+
+### فاز 2 — Resolver و IP سالم‌یاب
+
+هدف: پیدا کردن IPهای واقعی و تست اولیه آن‌ها.
+
+- [ ] DoH resolver با چند endpoint:
+  - [ ] Cloudflare
+  - [ ] Google
+  - [ ] Quad9, optional
+- [ ] حذف IPهای reserved/private:
+  - [ ] `10.0.0.0/8`
+  - [ ] `172.16.0.0/12`
+  - [ ] `192.168.0.0/16`
+  - [ ] `127.0.0.0/8`
+  - [ ] multicast/reserved
+- [ ] cache با TTL.
+- [ ] TCP probe.
+- [ ] TLS probe با verify hostname اصلی، بدون خاموش کردن امنیت.
+- [ ] score اولیه:
+
+```text
+score = latency + recentFailurePenalty - lastSuccessBonus
+```
+
+- [ ] per-network cache:
+  - [ ] operator/mobile vs Wi-Fi
+  - [ ] last good route
+  - [ ] failure count
+
+**خروجی فاز:** اپ برای هر hostname چند IP پیدا می‌کند و سالم‌ترین candidateها را رتبه‌بندی می‌کند.
+
+---
+
+### فاز 3 — Android VpnService و تونل پایه
+
+هدف: اپ بتواند تونل سیستم‌سطحی بسازد.
+
+- [ ] ساخت `VpnService`.
+- [ ] ساخت foreground service و notification.
+- [ ] ایجاد TUN interface.
+- [ ] route کامل `0.0.0.0/0`.
+- [ ] DNS کنترل‌شده.
+- [ ] split tunneling پایه.
+- [ ] kill switch behavior.
+- [ ] protect کردن socketهای خود اپ برای جلوگیری از loop.
+
+**خروجی فاز:** سرویس VPN بالا می‌آید و route سیستم را کنترل می‌کند، حتی اگر هنوز engine کامل وصل نباشد.
+
+---
+
+### فاز 4 — Connection Engine اول
+
+هدف: یک مسیر واقعی وصل شود.
+
+گزینه‌ها باید از نظر license بررسی شوند:
+
+- OpenVPN:
+  - [ ] بررسی OpenVPN 3 Core / ics-openvpn / سایر گزینه‌ها.
+  - [ ] تصمیم license.
+  - [ ] اجرای config pinned.
+  - [ ] تشخیص handshake موفق.
+- WireGuard:
+  - [ ] بررسی wireguard-go / Android tunnel library.
+  - [ ] تصمیم license.
+  - [ ] اجرای config pinned.
+  - [ ] تشخیص handshake و RX/TX.
+
+پیشنهاد اجرایی: ابتدا یکی را برای MVP انتخاب کنیم، احتمالاً OpenVPN TCP چون برای chain/proxy راحت‌تر است.
+
+**خروجی فاز:** با یک config واقعی user-supplied اتصال برقرار شود.
+
+---
+
+### فاز 5 — Verified Connection و UX ساده
+
+هدف: کاربر گیج نشود و اتصال دروغین نبینید.
+
+- [ ] صفحه اصلی بسیار ساده:
+  - [ ] Import config
+  - [ ] Country/server
+  - [ ] Auto Connect
+  - [ ] Status
+- [ ] وضعیت‌ها:
+
+```text
+Idle
+Resolving
+Testing IPs
+Connecting
+Verifying
+Connected
+Reconnecting
+Failed
+```
+
+- [ ] verification:
+  - [ ] egress IP check
+  - [ ] DNS check
+  - [ ] tunnel traffic check
+- [ ] نمایش خلاصه ساده:
+
+```text
+Connected via pinned IP
+Connected via fallback
+No working path
+Credentials failed
+Config stale
+```
+
+**خروجی فاز:** اتصال از دید کاربر ساده و قابل اعتماد است.
+
+---
+
+### فاز 6 — Auto Route Orchestrator
+
+هدف: اپ خودش چند روش را سریع تست کند.
+
+- [ ] route ladder:
+
+```text
+1. last good route
+2. direct original endpoint
+3. direct pinned IP
+4. fresh pinned IPs
+5. alternate port/proto from config/provider
+6. user proxy chain
+7. rescue underlay, later
+```
+
+- [ ] parallel probing با limit.
+- [ ] cancel کردن probeهای اضافه بعد از موفقیت.
+- [ ] timeout هوشمند.
+- [ ] backoff برای IPهای خراب.
+- [ ] reconnect خودکار روی drop.
+
+**خروجی فاز:** Auto Connect واقعاً خودکار و سریع می‌شود.
+
+---
+
+### فاز 7 — Provider Adapters رسمی/مجاز
+
+هدف: کاربر کمتر دستی config وارد کند، ولی فقط در محدوده مجاز providerها.
+
+اولویت پیشنهادی:
+
+1. Import-only برای همه.
+2. Surfshark manual/service credentials.
+3. Nord manual/service credentials.
+4. Express manual config.
+5. Proton manual config.
+6. Windscribe فقط مسیرهای مجاز و با توضیح محدودیت free/paid.
+
+هر adapter باید مشخص کند:
+
+```text
+supportsFreeManualConfig: yes/no/unknown
+supportsOpenVPN: yes/no
+supportsWireGuard: yes/no
+requiresServiceCredentials: yes/no
+serverListSource: manual/import/official/api/static
+```
+
+**خروجی فاز:** اپ برای چند provider محبوب مسیر رسمی و قابل توضیح دارد.
+
+---
+
+### فاز 8 — Rescue/Underlay رایگان یا user-supplied
+
+هدف: وقتی IP provider مستقیم از ایران بسته است، مسیر واسط بدون هزینه سرور خودمان فراهم شود.
+
+گزینه‌ها:
+
+- [ ] User-supplied HTTP/SOCKS proxy chain.
+- [ ] Psiphon core, بعد از بررسی license و embed feasibility.
+- [ ] WARP/WireGuard-based underlay، اگر مجاز و عملی.
+- [ ] MASQUE, اگر endpoint قابل استفاده و مجاز داریم.
+- [ ] Tor/bridges برای fallback خاص، با توضیح سرعت کمتر و محدودیت UDP.
+
+مدل اتصال:
+
+```text
+Phone -> Underlay -> Provider endpoint -> Internet
+```
+
+**خروجی فاز:** اگر direct provider بسته بود، اپ می‌تواند provider را از داخل مسیر واسط وصل کند.
+
+---
+
+### فاز 9 — امنیت، حریم خصوصی، انتشار
+
+- [ ] threat model.
+- [ ] no secret logging.
+- [ ] encrypted storage.
+- [ ] export/import امن configها.
+- [ ] privacy policy.
+- [ ] crash report policy, پیش‌فرض خاموش یا بدون secret.
+- [ ] reproducible-ish builds یا حداقل signed releases.
+- [ ] build flavors:
+  - [ ] F-Droid/open-source compatible, اگر license اجازه دهد.
+  - [ ] APK direct release.
+  - [ ] Play Store فقط اگر policy اجازه دهد.
+
+**خروجی فاز:** نسخه قابل اعتماد برای کاربران عمومی.
+
+## Backlog کوتاه و مرتب
+
+### اکنون
+
+- [x] ساخت skeleton Android.
+- [ ] انتخاب license.
+- [ ] انتخاب اولین engine: OpenVPN یا WireGuard.
+- [ ] پیاده‌سازی import/parser config.
+
+### بعدی
+
+- [ ] resolver و IP pinning.
+- [ ] health checker.
+- [ ] VpnService.
+- [ ] اتصال واقعی با یک config.
+
+### بعداً
+
+- [ ] provider adapters.
+- [ ] Psiphon/WARP/MASQUE/Tor rescue.
+- [ ] operator-aware learning.
+- [ ] public release.
+
+## ریسک‌های اصلی
+
+| ریسک | توضیح | راه کنترل |
+| --- | --- | --- |
+| License | OpenVPN/WireGuard/Psiphon/Tor ممکن است GPL/AGPL داشته باشند | قبل از embed تصمیم license بگیریم |
+| Provider ToS | بعضی providerها API مخفی/اپ رسمی را نمی‌پذیرند | فقط manual/official/import |
+| Free account limits | اکانت رایگان همه کشورها را ندارد | محدودیت‌ها را شفاف و enforce کنیم |
+| IP block کامل | اگر همه IPها و underlayها بسته باشند، اتصال ممکن نیست | خطای صادقانه + fallbackهای optional |
+| DNS leak | Android DNS اگر درست route نشود لو می‌رود | forced DNS + verification |
+| UDP/QUIC | همه مسیرها UDP را خوب حمل نمی‌کنند | per-protocol handling + fallback TCP |
+| اعتماد کاربر | اپ credential می‌گیرد | Keystore، no backend secrets، open code تا حد امکان |
+
+
+## تصمیم‌های گرفته‌شده
+
+- Android حداقل نسخه 8.0 / API 26 برای شروع انتخاب شد.
+- پکیج موقت پروژه `com.vpnproject.app` است تا بعداً بعد از انتخاب نام محصول تغییر کند.
+- CI اولیه با GitHub Actions ساخته شد و فعلاً با Gradle نصب‌شده در workflow اجرا می‌شود؛ wrapper بعداً اضافه می‌شود اگر لازم شد.
+- UI فعلاً ساده و بدون Compose است تا build سریع و پایدار شود؛ Compose در فاز UX اضافه می‌شود.
+
+## تصمیم‌های باز
+
+1. نام پروژه چیست؟
+2. اپ کاملاً open-source باشد یا core باز و UI بسته؟
+3. آیا با licenseهای GPL/AGPL مشکلی داریم؟
+4. اولین protocol engine کدام باشد؟ OpenVPN یا WireGuard؟
+5. آیا از ابتدا Psiphon را embed کنیم یا بعد از MVP؟
+6. manifest/update list روی چه بستری باشد؟ GitHub Pages، Cloudflare Pages، یا بدون backend؟
+
+## قانون به‌روزرسانی این نقشه راه
+
+- هر فاز که شروع شد، وضعیت آن را اینجا تغییر می‌دهیم.
+- هر تصمیم مهم به بخش «تصمیم‌های باز» یا «تصمیم‌های گرفته‌شده» اضافه می‌شود.
+- اگر مسیر عوض شد، دلیلش نوشته می‌شود.
+- هیچ feature جدیدی وارد کدنویسی نمی‌شود مگر اینجا در backlog یا فاز مربوطه ثبت شده باشد.
