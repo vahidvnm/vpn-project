@@ -10,7 +10,8 @@ object PinnedConfigRenderer {
         return when (config.kind) {
             ConfigKind.OPENVPN -> renderOpenVpn(config.originalText, endpoint, pinnedIp)
             ConfigKind.WIREGUARD -> renderWireGuard(config.originalText, endpoint, pinnedIp)
-            ConfigKind.UNKNOWN -> throw IllegalArgumentException("Unsupported config kind.")
+            ConfigKind.V2RAY,
+            ConfigKind.UNKNOWN -> throw IllegalArgumentException("Unsupported config kind for IP pin rendering.")
         }
     }
 
