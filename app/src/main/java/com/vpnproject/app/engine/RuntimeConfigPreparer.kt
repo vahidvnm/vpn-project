@@ -58,7 +58,7 @@ class RuntimeConfigPreparer(
                 originalHost = endpoint.host,
                 selectedEndpointHost = endpoint.host,
                 port = endpoint.port,
-                note = "Using imported public IPv4 $configLabel endpoint ${endpoint.host}:${endpoint.port}; DNS pinning is not needed.",
+                note = "Using imported public IPv4 endpoint for $configLabel ${endpoint.host}:${endpoint.port}; DNS pinning is not needed.",
                 wasPinned = false,
                 configKind = config.kind
             )
@@ -70,7 +70,7 @@ class RuntimeConfigPreparer(
                 originalHost = endpoint.host,
                 selectedEndpointHost = endpoint.host,
                 port = endpoint.port,
-                note = "Using imported public IPv6 $configLabel endpoint [${endpoint.host}]:${endpoint.port}; DNS pinning is not needed. $ipv6Note",
+                note = "Using imported public IPv6 endpoint for $configLabel [${endpoint.host}]:${endpoint.port}; DNS pinning is not needed. $ipv6Note",
                 wasPinned = false,
                 configKind = config.kind
             )
