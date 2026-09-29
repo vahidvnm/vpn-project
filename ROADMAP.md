@@ -105,6 +105,7 @@ Android App
 - [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 - [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
+- [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده ممکن شد، verification کامل handshake/RX-TX هنوز باقی است.
 
 ## فازها
 
@@ -226,14 +227,16 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [ ] اجرای config pinned.
   - [ ] تشخیص handshake موفق.
 - WireGuard:
-  - [ ] بررسی wireguard-go / Android tunnel library.
-  - [ ] تصمیم license.
-  - [ ] اجرای config pinned.
-  - [ ] تشخیص handshake و RX/TX.
+  - [x] بررسی اولیه WireGuard Android tunnel library / GoBackend.
+  - [x] تصمیم اولیه license: dependency رسمی `com.wireguard.android:tunnel` با Apache-2.0 مناسب‌تر از گزینه‌های GPL برای شروع MVP است؛ license پروژه اصلی هنوز باید جداگانه انتخاب شود.
+  - [x] افزودن dependency رسمی و سرویس foreground-aware برای WireGuard.
+  - [x] اجرای config pinned: قبل از start، endpoint دامنه‌ای با DoH به public IPv4 تبدیل و config runtime ساخته می‌شود.
+  - [ ] تشخیص handshake و RX/TX؛ فعلاً `Tunnel.State.UP` فقط یعنی engine بالا آمده، نه verified connected.
+  - [ ] reconnect/rebind کامل روی تغییر شبکه.
 
-پیشنهاد اجرایی: ابتدا یکی را برای MVP انتخاب کنیم، احتمالاً OpenVPN TCP چون برای chain/proxy راحت‌تر است.
+تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed است. برای شرایط ایران همچنان OpenVPN TCP و chain/proxy مهم است و بعداً اضافه می‌شود.
 
-**خروجی فاز:** با یک config واقعی user-supplied اتصال برقرار شود.
+**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد؛ نمایش «اتصال تأییدشده» تا زمان handshake/RX-TX و egress verification عقب می‌افتد.
 
 ---
 
@@ -374,7 +377,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 - [x] ساخت skeleton Android.
 - [ ] انتخاب license.
-- [ ] انتخاب اولین engine: OpenVPN یا WireGuard.
+- [x] انتخاب اولین engine: WireGuard Android GoBackend برای MVP اولیه.
 - [x] پیاده‌سازی import/parser config پایه.
 - [x] resolver و IP pinning پایه.
 - [x] health checker اولیه.
@@ -385,8 +388,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [ ] ذخیره امن config metadata.
 - [ ] تشخیص network واقعی و persistent health cache.
 - [ ] UI/مستندات Always-on و lockdown/kill switch.
-- [ ] انتخاب و embed اولین engine.
-- [ ] اتصال واقعی با یک config.
+- [x] انتخاب و embed اولین engine: WireGuard.
+- [ ] اتصال واقعی verify‌شده با یک config، شامل handshake/RX-TX/egress check.
 
 ### بعداً
 
@@ -416,16 +419,16 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - UI فعلاً ساده و بدون Compose است تا build سریع و پایدار شود؛ Compose در فاز UX اضافه می‌شود.
 - Resolver فعلاً فقط public IPv4/A record را از DoH می‌پذیرد؛ IPv6 و DNSهای غیرعمومی تا زمان طراحی کامل route policy کنار گذاشته می‌شوند.
 - Health probe فعلی برای TCP قابل اتکاتر است؛ برای WireGuard/OpenVPN UDP باید در فاز engine، handshake واقعی معیار موفقیت باشد.
-- `VpnService` فعلی یک bootstrap tunnel می‌سازد و full-route/DNS را کنترل می‌کند، اما تا زمان اضافه شدن engine، packetها را forward نمی‌کند؛ بنابراین نباید به‌عنوان اتصال موفق نمایش داده شود.
+- `VpnService` bootstrap یک تونل تستی می‌سازد و full-route/DNS را کنترل می‌کند، اما packetها را forward نمی‌کند؛ بنابراین نباید به‌عنوان اتصال موفق نمایش داده شود.
+- اولین engine واقعی برای MVP، WireGuard Android GoBackend است. چون WireGuard عموماً UDP است، برای ایران همچنان باید fallbackهای OpenVPN TCP/chain/rescue را بعداً اضافه کنیم.
 
 ## تصمیم‌های باز
 
 1. نام پروژه چیست؟
 2. اپ کاملاً open-source باشد یا core باز و UI بسته؟
-3. آیا با licenseهای GPL/AGPL مشکلی داریم؟
-4. اولین protocol engine کدام باشد؟ OpenVPN یا WireGuard؟
-5. آیا از ابتدا Psiphon را embed کنیم یا بعد از MVP؟
-6. manifest/update list روی چه بستری باشد؟ GitHub Pages، Cloudflare Pages، یا بدون backend؟
+3. آیا با licenseهای GPL/AGPL مشکلی داریم، مخصوصاً برای OpenVPN/Psiphon/Tor future engines؟
+4. آیا از ابتدا Psiphon را embed کنیم یا بعد از MVP؟
+5. manifest/update list روی چه بستری باشد؟ GitHub Pages، Cloudflare Pages، یا بدون backend؟
 
 ## قانون به‌روزرسانی این نقشه راه
 

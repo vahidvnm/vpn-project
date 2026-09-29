@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.vpnproject.app.core.ConfigImporter
+import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.EndpointDiscovery
 import com.vpnproject.app.core.EndpointHealthChecker
@@ -24,14 +25,18 @@ import com.vpnproject.app.core.NetworkType
 import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
+import com.vpnproject.app.engine.RuntimeConfigPreparer
+import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.vpn.AutoVpnService
+import com.vpnproject.app.vpn.WireGuardVpnService
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private var importedConfig: ImportedConfig? = null
-    private var startVpnAfterPermission = false
+    private var pendingVpnAction = PendingVpnAction.NONE
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
+    private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
     private val routeHealthCache = RouteHealthCache()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +60,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned OpenVPN or WireGuard config, resolve real public IPs with DoH, then start the Android VPN bootstrap tunnel."
+            text = "Import a user-owned config, resolve/pin public IPs, then start the first real engine: WireGuard userspace."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -63,7 +68,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 3: VpnService can create a TUN interface. It is not a working internet tunnel until an engine is added."
+            text = "Phase 4: WireGuard engine integration started. OpenVPN engine is still pending license/implementation review."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -73,17 +78,7 @@ class MainActivity : Activity() {
 
         root.addView(Button(this).apply {
             text = "Prepare VPN permission"
-            setOnClickListener { requestVpnPermission(startAfterGrant = false) }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Start TUN bootstrap VPN"
-            setOnClickListener { startBootstrapVpn() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Stop bootstrap VPN"
-            setOnClickListener { stopBootstrapVpn() }
+            setOnClickListener { requestVpnPermission(PendingVpnAction.NONE) }
         })
 
         root.addView(Button(this).apply {
@@ -96,6 +91,26 @@ class MainActivity : Activity() {
             setOnClickListener { resolveAndProbeImportedConfig() }
         })
 
+        root.addView(Button(this).apply {
+            text = "Start WireGuard engine from imported config"
+            setOnClickListener { requestVpnPermission(PendingVpnAction.WIREGUARD) }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Stop WireGuard engine"
+            setOnClickListener { stopWireGuardEngine() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Start TUN bootstrap VPN"
+            setOnClickListener { requestVpnPermission(PendingVpnAction.BOOTSTRAP) }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Stop bootstrap VPN"
+            setOnClickListener { stopBootstrapVpn() }
+        })
+
         setContentView(ScrollView(this).apply { addView(root) })
     }
 
@@ -104,15 +119,11 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             VPN_PERMISSION_REQUEST -> {
+                val action = pendingVpnAction
+                pendingVpnAction = PendingVpnAction.NONE
                 if (resultCode == RESULT_OK) {
-                    if (startVpnAfterPermission) {
-                        startVpnAfterPermission = false
-                        startBootstrapVpnService()
-                    } else {
-                        status.text = "VPN permission granted. You can start the TUN bootstrap tunnel now."
-                    }
+                    runVpnAction(action)
                 } else {
-                    startVpnAfterPermission = false
                     status.text = "VPN permission was not granted."
                 }
             }
@@ -127,31 +138,29 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun requestVpnPermission(startAfterGrant: Boolean) {
+    private fun requestVpnPermission(action: PendingVpnAction) {
         val intent = VpnService.prepare(this)
         if (intent != null) {
-            startVpnAfterPermission = startAfterGrant
+            pendingVpnAction = action
             startActivityForResult(intent, VPN_PERMISSION_REQUEST)
-        } else if (startAfterGrant) {
-            startBootstrapVpnService()
         } else {
-            status.text = "VPN permission is already granted."
+            runVpnAction(action)
         }
     }
 
-    private fun startBootstrapVpn() {
-        requestVpnPermission(startAfterGrant = true)
+    private fun runVpnAction(action: PendingVpnAction) {
+        when (action) {
+            PendingVpnAction.NONE -> status.text = "VPN permission is granted."
+            PendingVpnAction.BOOTSTRAP -> startBootstrapVpnService()
+            PendingVpnAction.WIREGUARD -> prepareAndStartWireGuardEngine()
+        }
     }
 
     private fun startBootstrapVpnService() {
         val intent = Intent(this, AutoVpnService::class.java).apply {
             action = AutoVpnService.ACTION_START
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        startForegroundServiceCompat(intent)
         status.text = "Starting TUN bootstrap VPN. Warning: it owns the full IPv4 route but does not forward traffic until an OpenVPN/WireGuard engine is integrated. Use Stop to return to normal networking."
     }
 
@@ -161,6 +170,51 @@ class MainActivity : Activity() {
         }
         startService(intent)
         status.text = "Stop requested for bootstrap VPN."
+    }
+
+    private fun prepareAndStartWireGuardEngine() {
+        val config = importedConfig
+        if (config == null) {
+            status.text = "Import a WireGuard config first."
+            return
+        }
+        if (config.kind != ConfigKind.WIREGUARD) {
+            status.text = "The first real engine is WireGuard. This imported config is ${config.kind}; OpenVPN engine is pending."
+            return
+        }
+
+        status.text = "Preparing WireGuard runtime config: resolving endpoint and pinning a public IPv4 candidate..."
+        Thread {
+            val result = runCatching { runtimeConfigPreparer.prepareWireGuard(config) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { selection -> startWireGuardEngine(selection, config) },
+                    onFailure = { error ->
+                        status.text = "WireGuard runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                    }
+                )
+            }
+        }.start()
+    }
+
+    private fun startWireGuardEngine(selection: RuntimeConfigSelection, config: ImportedConfig) {
+        val intent = Intent(this, WireGuardVpnService::class.java).apply {
+            action = WireGuardVpnService.ACTION_START
+            putExtra(WireGuardVpnService.EXTRA_CONFIG_TEXT, selection.configText)
+            putExtra(WireGuardVpnService.EXTRA_TUNNEL_NAME, safeTunnelName(config.name))
+            putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
+        }
+        startForegroundServiceCompat(intent)
+        status.text = "Starting WireGuard engine.\n${selection.note}\n\nThe engine uses WireGuard public-key authentication. Full handshake/egress verification is the next sub-step, so this is not yet marked as verified connected."
+    }
+
+    private fun stopWireGuardEngine() {
+        val intent = Intent(this, WireGuardVpnService::class.java).apply {
+            action = WireGuardVpnService.ACTION_STOP
+        }
+        startService(intent)
+        val last = WireGuardVpnService.lastStatus
+        status.text = "Stop requested for WireGuard engine. Last status: ${last.state} — ${last.message}"
     }
 
     private fun openConfigPicker() {
@@ -188,10 +242,15 @@ class MainActivity : Activity() {
             }
             val warnings = if (config.warnings.isEmpty()) "" else
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
+            val nextStep = if (config.kind == ConfigKind.WIREGUARD) {
+                "\n\nNext: tap Start WireGuard engine from imported config."
+            } else {
+                "\n\nNext: use Resolve & probe now; OpenVPN engine is still pending."
+            }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
                 "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
                 "\n\nAuth line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
-                "\n\nNext: tap Resolve & probe imported endpoints." +
+                nextStep +
                 warnings
         } catch (e: Exception) {
             importedConfig = null
@@ -220,7 +279,7 @@ class MainActivity : Activity() {
     private fun buildResolveAndProbeReport(config: ImportedConfig): String {
         val lines = mutableListOf<String>()
         val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
-        lines += "Phase 2 results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
+        lines += "Phase 2/4 results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
 
         for (endpoint in config.endpoints) {
             lines += ""
@@ -245,7 +304,7 @@ class MainActivity : Activity() {
         }
 
         lines += ""
-        lines += "Note: UDP/WireGuard candidates need protocol-level handshake probes in the tunnel engine phase. TLS probe code is available and keeps hostname verification on; it is not used to fake success."
+        lines += "Note: UDP/WireGuard candidates are finally validated by the WireGuard engine handshake. TCP/TLS probes do not fake WireGuard success."
         return lines.joinToString("\n")
     }
 
@@ -262,6 +321,21 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startForegroundServiceCompat(intent: Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun safeTunnelName(name: String?): String = name
+        ?.substringBeforeLast('.')
+        ?.replace(Regex("[^A-Za-z0-9_=+.-]"), "-")
+        ?.take(30)
+        ?.takeIf { it.isNotBlank() }
+        ?: "vpn-project-wg"
+
     private fun displayName(uri: Uri): String? {
         if (uri.scheme == "content") {
             contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -273,6 +347,12 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private enum class PendingVpnAction {
+        NONE,
+        BOOTSTRAP,
+        WIREGUARD
+    }
 
     private companion object {
         const val VPN_PERMISSION_REQUEST = 1001
