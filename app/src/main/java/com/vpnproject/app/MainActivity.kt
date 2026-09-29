@@ -3,6 +3,8 @@ package com.vpnproject.app
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
@@ -43,6 +45,7 @@ class MainActivity : Activity() {
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
+    private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val routeHealthCache = RouteHealthCache()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -406,6 +409,7 @@ class MainActivity : Activity() {
         val lines = mutableListOf<String>()
         val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
         lines += "Phase 2/4 results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
+        lines += currentNetworkDiagnosticNote()
 
         for (endpoint in config.endpoints) {
             lines += ""
@@ -444,6 +448,30 @@ class MainActivity : Activity() {
         lines += ""
         lines += "Note: UDP/WireGuard candidates are finally validated by the WireGuard engine handshake. TCP/TLS probes do not fake VPN success. V2Ray/Xray probes only check the front endpoint, not credentials or full proxy login yet."
         return lines.joinToString("\n")
+    }
+
+    private fun currentNetworkDiagnosticNote(): String {
+        return try {
+            val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+            if (capabilities == null) {
+                "Network: unknown. If another VPN app is active, probes may not represent the raw Iran mobile path."
+            } else {
+                val transports = mutableListOf<String>()
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) transports += "cellular"
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) transports += "wifi"
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) transports += "vpn"
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) transports += "ethernet"
+                val validated = if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) "validated" else "not-validated"
+                val base = "Network: ${transports.ifEmpty { listOf("unknown") }.joinToString("+")} / $validated."
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    "$base Warning: Android reports an active VPN transport. Diagnostic probes may be routed through that VPN/external client, not the raw mobile network. Turn other VPNs off when testing censorship reachability."
+                } else {
+                    base
+                }
+            }
+        } catch (e: Exception) {
+            "Network: unavailable (${e.message ?: e.javaClass.simpleName})."
+        }
     }
 
     private fun directSystemProbeCandidate(endpoint: EndpointCandidate): ResolvedEndpointCandidate? {

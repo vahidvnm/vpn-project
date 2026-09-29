@@ -195,6 +195,7 @@ PinnedConfig
 - [x] TCP probe برای endpointهای TCP.
 - [x] TLS probe با verify hostname اصلی، بدون خاموش کردن امنیت؛ فعلاً ابزار generic است و برای موفقیت جعلی استفاده نمی‌شود.
 - [x] direct diagnostic probe برای endpointهای TCP/TLS مثل V2Ray/OpenVPN وقتی DoH در ایران reset/timeout می‌شود؛ این probe فقط تشخیصی است و IP pin محسوب نمی‌شود.
+- [x] نمایش هشدار وقتی Android یک VPN فعال دیگر را گزارش می‌کند، چون probe در آن حالت ممکن است از مسیر VPN خارجی عبور کند و مسیر خام ایران را نشان ندهد.
 - [x] score اولیه:
 
 ```text
@@ -456,7 +457,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
 - با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443، Xray/V2Ray-compatible configs و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
 - به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray فعلاً به عنوان مسیر diagnostic/probe اضافه شد؛ اتصال واقعی آن تا تصمیم engine/license داخلی انجام نمی‌شود.
-- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای یک endpoint `dns.all.ultradns.space:8880` با TCP latency حدود 132ms موفق شد؛ بنابراین fallback مستقیم برای diagnostic ارزشمند است، اما موفقیت probe هنوز برابر اتصال VPN کامل نیست.
+- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است، اما موفقیت probe هنوز برابر اتصال VPN کامل نیست. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر VPN خارجی باشد و باید با VPN خاموش هم تکرار شود.
 
 ## تصمیم‌های باز
 
