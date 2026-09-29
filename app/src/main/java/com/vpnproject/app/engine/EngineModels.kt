@@ -10,6 +10,8 @@ enum class EngineState {
     PREPARING_CONFIG,
     CONNECTING,
     RUNNING,
+    VERIFYING,
+    VERIFIED,
     STOPPING,
     STOPPED,
     FAILED
@@ -19,5 +21,9 @@ data class EngineStatus(
     val kind: EngineKind,
     val state: EngineState,
     val message: String,
-    val detail: String? = null
+    val detail: String? = null,
+    val rxBytes: Long? = null,
+    val txBytes: Long? = null,
+    val egressIp: String? = null,
+    val verified: Boolean = false
 )

@@ -105,7 +105,7 @@ Android App
 - [x] شروع فاز 1: import config، parser OpenVPN/WireGuard، و renderer pinned config اضافه شد.
 - [x] شروع فاز 2: DoH resolver، DNS cache، public IPv4 filtering، TCP/TLS probe و score/cache اولیه اضافه شد.
 - [x] شروع فاز 3: `VpnService` واقعی با foreground notification، TUN bootstrap، route/DNS policy و socket protection پایه اضافه شد.
-- [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده ممکن شد، verification کامل handshake/RX-TX هنوز باقی است.
+- [x] شروع فاز 4: اولین engine واقعی با WireGuard Android GoBackend اضافه شد؛ اجرای config پین‌شده ممکن شد و verification اولیه با RX/TX stats + public egress IP اضافه شد.
 
 ## فازها
 
@@ -231,12 +231,13 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] تصمیم اولیه license: dependency رسمی `com.wireguard.android:tunnel` با Apache-2.0 مناسب‌تر از گزینه‌های GPL برای شروع MVP است؛ license پروژه اصلی هنوز باید جداگانه انتخاب شود.
   - [x] افزودن dependency رسمی و سرویس foreground-aware برای WireGuard.
   - [x] اجرای config pinned: قبل از start، endpoint دامنه‌ای با DoH به public IPv4 تبدیل و config runtime ساخته می‌شود.
-  - [ ] تشخیص handshake و RX/TX؛ فعلاً `Tunnel.State.UP` فقط یعنی engine بالا آمده، نه verified connected.
+  - [x] verification اولیه: بعد از `Tunnel.State.UP`، RX/TX statistics و public HTTPS egress IP بررسی می‌شود؛ فقط در صورت موفقیت وضعیت `VERIFIED` ثبت می‌شود.
+  - [ ] تشخیص دقیق‌تر handshake/peer-level telemetry اگر API کافی بدهد؛ فعلاً معیار عملی RX/TX + egress است.
   - [ ] reconnect/rebind کامل روی تغییر شبکه.
 
 تصمیم اجرایی: برای اولین اتصال واقعی، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed است. برای شرایط ایران همچنان OpenVPN TCP و chain/proxy مهم است و بعداً اضافه می‌شود.
 
-**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد؛ نمایش «اتصال تأییدشده» تا زمان handshake/RX-TX و egress verification عقب می‌افتد.
+**خروجی فاز:** با یک config واقعی user-supplied WireGuard، engine می‌تواند config پین‌شده را بالا بیاورد و بعد از RX/TX + egress verification وضعیت verified را جدا از صرفاً UP بودن engine ثبت کند.
 
 ---
 
@@ -421,6 +422,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - Health probe فعلی برای TCP قابل اتکاتر است؛ برای WireGuard/OpenVPN UDP باید در فاز engine، handshake واقعی معیار موفقیت باشد.
 - `VpnService` bootstrap یک تونل تستی می‌سازد و full-route/DNS را کنترل می‌کند، اما packetها را forward نمی‌کند؛ بنابراین نباید به‌عنوان اتصال موفق نمایش داده شود.
 - اولین engine واقعی برای MVP، WireGuard Android GoBackend است. چون WireGuard عموماً UDP است، برای ایران همچنان باید fallbackهای OpenVPN TCP/chain/rescue را بعداً اضافه کنیم.
+- معیار فعلی اتصال verified برای WireGuard این است: engine در حالت UP باشد، RX/TX stats حرکت کند، و یک HTTPS public egress IP endpoint پاسخ public IPv4 بدهد. اگر فقط UP باشد، UI نباید Connected قطعی نشان دهد.
 
 ## تصمیم‌های باز
 

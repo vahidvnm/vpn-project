@@ -102,6 +102,11 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
+            text = "Refresh WireGuard status"
+            setOnClickListener { showWireGuardStatus() }
+        })
+
+        root.addView(Button(this).apply {
             text = "Start TUN bootstrap VPN"
             setOnClickListener { requestVpnPermission(PendingVpnAction.BOOTSTRAP) }
         })
@@ -215,6 +220,16 @@ class MainActivity : Activity() {
         startService(intent)
         val last = WireGuardVpnService.lastStatus
         status.text = "Stop requested for WireGuard engine. Last status: ${last.state} — ${last.message}"
+    }
+
+    private fun showWireGuardStatus() {
+        val last = WireGuardVpnService.lastStatus
+        status.text = "WireGuard status: ${last.state}\n" +
+            "Verified: ${if (last.verified) "yes" else "no"}\n" +
+            "Message: ${last.message}" +
+            (last.detail?.let { "\nDetail: $it" } ?: "") +
+            (last.egressIp?.let { "\nEgress IP: $it" } ?: "") +
+            "\nRX/TX: ${last.rxBytes ?: 0} / ${last.txBytes ?: 0} bytes"
     }
 
     private fun openConfigPicker() {

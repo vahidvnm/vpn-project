@@ -12,7 +12,12 @@ import android.os.Build
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
+import com.vpnproject.app.engine.HttpsEgressIpResolver
+import com.vpnproject.app.engine.WireGuardBackendStatsSource
+import com.vpnproject.app.engine.WireGuardConnectionVerifier
 import com.vpnproject.app.engine.WireGuardTunnelHandle
+import com.vpnproject.app.engine.WireGuardVerificationPolicy
+import com.vpnproject.app.engine.WireGuardVerificationResult
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
@@ -27,6 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class WireGuardVpnService : GoBackend.VpnService() {
     private val starting = AtomicBoolean(false)
+    private val verificationRunning = AtomicBoolean(false)
 
     @Volatile
     private var backend: GoBackend? = null
@@ -36,6 +42,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
     @Volatile
     private var currentConfig: Config? = null
+
+    @Volatile
+    private var verificationThread: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -99,12 +108,13 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
         Thread({
             try {
+                stopVerification()
                 val parsedConfig = Config.parse(configText.byteInputStream(Charsets.UTF_8))
                 val tunnelHandle = WireGuardTunnelHandle(tunnelName) { state ->
                     when (state) {
                         Tunnel.State.UP -> {
-                            updateStatus(EngineState.RUNNING, "WireGuard tunnel state is UP.", note)
-                            startForegroundNotification("WireGuard tunnel is UP. Verification comes next.")
+                            updateStatus(EngineState.RUNNING, "WireGuard tunnel state is UP; verification is pending.", note)
+                            startForegroundNotification("WireGuard tunnel is UP. Verifying traffic and egress…")
                         }
                         Tunnel.State.DOWN -> {
                             updateStatus(EngineState.STOPPED, "WireGuard tunnel state is DOWN.")
@@ -123,8 +133,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
                 currentConfig = parsedConfig
 
                 if (state == Tunnel.State.UP) {
-                    updateStatus(EngineState.RUNNING, "WireGuard engine started.", note)
-                    startForegroundNotification("WireGuard engine started. Handshake verification is next.")
+                    updateStatus(EngineState.RUNNING, "WireGuard engine started; verification is running.", note)
+                    startForegroundNotification("WireGuard engine started. Verifying handshake traffic and egress IP…")
+                    startVerification(goBackend, tunnelHandle, note)
                 } else {
                     updateStatus(EngineState.FAILED, "WireGuard did not enter UP state: $state", note)
                     startForegroundNotification("WireGuard did not enter UP state: $state")
@@ -143,7 +154,84 @@ class WireGuardVpnService : GoBackend.VpnService() {
         }, "wireguard-engine-start").start()
     }
 
+    private fun startVerification(goBackend: GoBackend, tunnelHandle: WireGuardTunnelHandle, note: String?) {
+        stopVerification()
+        verificationRunning.set(true)
+        val thread = Thread({
+            updateStatus(EngineState.VERIFYING, "Checking WireGuard traffic and public egress IP…", note)
+            startForegroundNotification("Verifying WireGuard tunnel: traffic + egress IP…")
+
+            val verifier = WireGuardConnectionVerifier(
+                statsSource = WireGuardBackendStatsSource(goBackend, tunnelHandle),
+                egressIpResolver = HttpsEgressIpResolver(),
+                policy = WireGuardVerificationPolicy(
+                    maxAttempts = VERIFY_ATTEMPTS,
+                    intervalMs = VERIFY_INTERVAL_MS,
+                    minTrafficDeltaBytes = VERIFY_MIN_TRAFFIC_DELTA_BYTES
+                ),
+                sleeper = { millis ->
+                    if (verificationRunning.get()) Thread.sleep(millis)
+                }
+            )
+            val result = runCatching { verifier.verify() }.getOrElse { error ->
+                WireGuardVerificationResult(
+                    verified = false,
+                    statsMoved = false,
+                    egressVerified = false,
+                    reason = if (verificationRunning.get()) {
+                        "Verification failed: ${error.message ?: error.javaClass.simpleName}"
+                    } else {
+                        "Verification cancelled."
+                    },
+                    rxBytes = 0L,
+                    txBytes = 0L,
+                    attempts = 0
+                )
+            }
+
+            if (!verificationRunning.get()) return@Thread
+            updateStatusFromVerification(result, note)
+            startForegroundNotification(notificationTextFor(result))
+        }, "wireguard-engine-verify")
+        thread.isDaemon = true
+        verificationThread = thread
+        thread.start()
+    }
+
+    private fun updateStatusFromVerification(result: WireGuardVerificationResult, note: String?) {
+        if (result.verified) {
+            updateStatus(
+                state = EngineState.VERIFIED,
+                message = "WireGuard verified: traffic moved and public egress IP is ${result.egressIp}.",
+                detail = note ?: result.reason,
+                rxBytes = result.rxBytes,
+                txBytes = result.txBytes,
+                egressIp = result.egressIp,
+                verified = true
+            )
+        } else {
+            updateStatus(
+                state = EngineState.RUNNING,
+                message = "WireGuard is running but not fully verified: ${result.reason}",
+                detail = note,
+                rxBytes = result.rxBytes,
+                txBytes = result.txBytes,
+                egressIp = result.egressIp,
+                verified = false
+            )
+        }
+    }
+
+    private fun notificationTextFor(result: WireGuardVerificationResult): String {
+        return if (result.verified) {
+            "WireGuard verified. Egress IP: ${result.egressIp}. RX ${result.rxBytes} B / TX ${result.txBytes} B."
+        } else {
+            "WireGuard running, not verified yet. ${result.reason} RX ${result.rxBytes} B / TX ${result.txBytes} B."
+        }
+    }
+
     private fun stopWireGuardTunnel() {
+        stopVerification()
         updateStatus(EngineState.STOPPING, "Stopping WireGuard engine…")
         try {
             val goBackend = backend
@@ -162,6 +250,12 @@ class WireGuardVpnService : GoBackend.VpnService() {
         }
     }
 
+    private fun stopVerification() {
+        verificationRunning.set(false)
+        verificationThread?.interrupt()
+        verificationThread = null
+    }
+
     private fun setCurrentUnderlyingNetwork() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val connectivityManager = getSystemService(ConnectivityManager::class.java)
@@ -169,12 +263,24 @@ class WireGuardVpnService : GoBackend.VpnService() {
         runCatching { setUnderlyingNetworks(arrayOf(activeNetwork)) }
     }
 
-    private fun updateStatus(state: EngineState, message: String, detail: String? = null) {
+    private fun updateStatus(
+        state: EngineState,
+        message: String,
+        detail: String? = null,
+        rxBytes: Long? = null,
+        txBytes: Long? = null,
+        egressIp: String? = null,
+        verified: Boolean = false
+    ) {
         lastStatus = EngineStatus(
             kind = EngineKind.WIREGUARD_GO,
             state = state,
             message = message,
-            detail = detail
+            detail = detail,
+            rxBytes = rxBytes,
+            txBytes = txBytes,
+            egressIp = egressIp,
+            verified = verified
         )
     }
 
@@ -248,6 +354,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
         private const val NOTIFICATION_ID = 51
         private const val STOP_REQUEST_CODE = 52
         private const val DEFAULT_TUNNEL_NAME = "vpn-project-wg"
+        private const val VERIFY_ATTEMPTS = 6
+        private const val VERIFY_INTERVAL_MS = 1_500L
+        private const val VERIFY_MIN_TRAFFIC_DELTA_BYTES = 1L
 
         @Volatile
         var lastStatus: EngineStatus = EngineStatus(
