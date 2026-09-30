@@ -9,6 +9,8 @@ import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.ViewGroup
@@ -49,6 +51,7 @@ class MainActivity : Activity() {
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val routeHealthCache = RouteHealthCache()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -300,7 +303,8 @@ class MainActivity : Activity() {
             putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Tap Refresh engine status after a few seconds."
+        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Engine status will refresh automatically."
+        scheduleEngineStatusRefreshes()
     }
 
     private fun prepareAndStartXrayEngine(config: ImportedConfig) {
@@ -327,13 +331,20 @@ class MainActivity : Activity() {
             putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting embedded Xray engine.\n${runtime.note}\n\nTap Refresh engine status after a few seconds. If it stays unverified, send the screenshot so we can tune the generated Xray config for this link type."
+        status.text = "Starting embedded Xray engine.\n${runtime.note}\n\nThe app will auto-refresh status shortly. If no VPN icon appears, the refreshed status should now show the exact Android/Xray failure instead of staying on this starting screen."
+        scheduleEngineStatusRefreshes()
     }
 
     private fun stopImportedEngines() {
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         status.text = "Stop requested for WireGuard and Xray engines."
+    }
+
+    private fun scheduleEngineStatusRefreshes() {
+        listOf(1_500L, 3_500L, 7_000L, 12_000L).forEach { delayMs ->
+            mainHandler.postDelayed({ showEngineStatus() }, delayMs)
+        }
     }
 
     private fun showEngineStatus() {
