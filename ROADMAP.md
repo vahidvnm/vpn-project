@@ -306,11 +306,12 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 
 هدف: بعد از اثبات اتصال Xray، اسکلت فعلی را از صفحه تست/debug به foundation یک VPN همه‌کاره تبدیل کنیم.
 
-- [ ] تعریف مدل پایدار `VpnProfile`:
-  - [ ] kind: `XRAY`, `WIREGUARD`, `OPENVPN`, `PROXY_CHAIN`, future
-  - [ ] display name, tags, last verified network, last verified time
-  - [ ] encrypted raw config / secret fields
-  - [ ] non-secret endpoint metadata برای probe و نمایش
+- [x] تعریف مدل پایدار اولیه `VpnProfile`:
+  - [x] kind: `XRAY`, `WIREGUARD`, `OPENVPN`, `UNKNOWN`؛ `PROXY_CHAIN` و future بعداً
+  - [x] display name, endpoint metadata, created/updated time
+  - [x] encrypted raw config / secret fields در `SecureProfileStore`
+  - [x] non-secret endpoint metadata برای probe و نمایش
+  - [ ] tags, favorite و last verified network/time در UI و persistence کامل
 - [ ] تعریف abstraction مشترک engine:
 
 ```text
@@ -324,18 +325,19 @@ explainFailure()
 ```
 
 - [ ] تبدیل statusهای WireGuard و Xray به مدل مشترک برای UI.
-- [ ] ساخت `EngineRegistry` برای انتخاب engine بر اساس نوع profile.
+- [x] ساخت `EngineRegistry` اولیه برای انتخاب engine بر اساس نوع profile.
 - [ ] جداسازی diagnostics از مسیر connect عادی:
   - [ ] import/probe report طولانی در Advanced
   - [ ] صفحه اصلی فقط وضعیت ساده و action بعدی
-- [ ] storage امن:
-  - [ ] Android Keystore/EncryptedFile یا معادل مناسب
-  - [ ] عدم log کردن secretها
-  - [ ] redaction در error/report
+- [x] storage امن اولیه برای raw configها:
+  - [x] Android Keystore + AES-GCM روی SharedPreferences
+  - [ ] عدم log کردن secretها در همه مسیرهای آینده
+  - [ ] redaction کامل در error/report
 - [ ] profile lifecycle:
-  - [ ] add/import
+  - [x] add/import و Load latest profile
+  - [ ] profile list قابل انتخاب، نه فقط نمایش latest
   - [ ] rename
-  - [ ] delete
+  - [ ] delete در UI
   - [ ] mark as favorite/last-good
   - [ ] export فقط با هشدار کاربر
 
@@ -506,7 +508,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 ### بعدی
 
-- [ ] تبدیل اسکلت به VPN Hub چندموتوره: `VpnProfile`, `EngineRegistry`, status/stats مشترک.
+- [x] شروع تبدیل اسکلت به VPN Hub چندموتوره: `VpnProfile`, `SecureProfileStore`, `EngineRegistry` اولیه.
+- [ ] تکمیل status/stats مشترک و انتخاب profile از لیست.
 - [ ] تبدیل UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
 - [ ] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.

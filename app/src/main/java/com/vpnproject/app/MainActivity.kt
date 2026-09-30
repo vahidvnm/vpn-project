@@ -33,10 +33,13 @@ import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.VpnProtocol
+import com.vpnproject.app.engine.EngineRegistry
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
 import com.vpnproject.app.engine.V2RayRuntimeConfig
+import com.vpnproject.app.profile.SecureProfileStore
+import com.vpnproject.app.profile.VpnProfile
 import com.vpnproject.app.vpn.AutoVpnService
 import com.vpnproject.app.vpn.WireGuardVpnService
 import com.vpnproject.app.vpn.XrayVpnService
@@ -44,12 +47,14 @@ import com.vpnproject.app.vpn.XrayVpnService
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private var importedConfig: ImportedConfig? = null
+    private var selectedProfileId: String? = null
     private var pendingVpnAction = PendingVpnAction.NONE
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
+    private val profileStore by lazy { SecureProfileStore(this) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val routeHealthCache = RouteHealthCache()
@@ -75,7 +80,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Import a user-owned OpenVPN, WireGuard, or V2Ray/Xray config; probe endpoints; start WireGuard where UDP works; or prepare OpenVPN TCP fallback configs."
+            text = "Multi-engine VPN hub: import your own OpenVPN, WireGuard, or V2Ray/Xray config; save local profiles; connect with the best available engine."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -83,7 +88,7 @@ class MainActivity : Activity() {
         })
 
         status = TextView(this).apply {
-            text = "Phase 4: WireGuard is only useful where UDP works. For Iran, OpenVPN TCP/443 and V2Ray/Xray-style fallbacks are the next test paths."
+            text = "Phase 4.5: Xray/V2Ray is verified on phone. Next step is turning this debug screen into a multi-engine VPN hub with local profiles."
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
@@ -104,6 +109,16 @@ class MainActivity : Activity() {
         root.addView(Button(this).apply {
             text = "Import config from clipboard"
             setOnClickListener { importConfigFromClipboard() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Show saved profiles"
+            setOnClickListener { showSavedProfiles() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Load latest profile"
+            setOnClickListener { loadLatestProfile() }
         })
 
         root.addView(Button(this).apply {
@@ -266,9 +281,9 @@ class MainActivity : Activity() {
     }
 
     private fun prepareAndStartImportedEngine() {
-        val config = importedConfig
+        val config = importedConfig ?: loadLatestProfileConfigForAction()
         if (config == null) {
-            status.text = "Import a WireGuard or V2Ray/Xray config first."
+            status.text = "Import or load a saved WireGuard or V2Ray/Xray profile first."
             return
         }
         when (config.kind) {
@@ -409,6 +424,7 @@ class MainActivity : Activity() {
         try {
             val config = ConfigImporter.parse(text, name)
             importedConfig = config
+            val savedProfileLine = saveImportedProfile(config, name)
             val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
                 "• ${endpoint.protocol}  ${endpoint.host}:${endpoint.port}" +
                     (endpoint.verifyHost?.let { "  verify: $it" } ?: "")
@@ -426,12 +442,87 @@ class MainActivity : Activity() {
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
                 "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
+                savedProfileLine +
                 "\n\nOpenVPN auth-user-pass line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
                 nextStep +
                 warnings
         } catch (e: Exception) {
             importedConfig = null
             status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+
+    private fun saveImportedProfile(config: ImportedConfig, displayName: String?): String {
+        return runCatching { profileStore.saveImportedConfig(config, displayName) }.fold(
+            onSuccess = { profile ->
+                selectedProfileId = profile.id
+                val engine = EngineRegistry.engineFor(profile.kind)
+                "\n\nSaved local profile: ${profile.displayName}\nEngine: ${engine.displayName}${if (engine.startableInApp) "" else " (handoff)"}"
+            },
+            onFailure = { error ->
+                "\n\nProfile store warning: config imported for this session, but saving failed (${error.message ?: error.javaClass.simpleName})."
+            }
+        )
+    }
+
+    private fun showSavedProfiles() {
+        val profiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
+            status.text = "Could not load saved profiles: ${error.message ?: error.javaClass.simpleName}"
+            return
+        }
+        if (profiles.isEmpty()) {
+            status.text = "No saved profiles yet. Import or paste a config first."
+            return
+        }
+        status.text = "Saved VPN Hub profiles:\n" + profiles.joinToString("\n") { profile ->
+            val marker = if (profile.id == selectedProfileId) "*" else "•"
+            "$marker ${profile.summary()} — engine ${EngineRegistry.engineFor(profile.kind).displayName}"
+        } + "\n\nUse Load latest profile, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
+    }
+
+    private fun loadLatestProfile() {
+        val profile = runCatching { profileStore.latestProfile() }.getOrElse { error ->
+            status.text = "Could not load latest profile metadata: ${error.message ?: error.javaClass.simpleName}"
+            return
+        }
+        if (profile == null) {
+            status.text = "No saved profile found. Import or paste a config first."
+            return
+        }
+        val config = loadProfileConfig(profile) ?: return
+        importedConfig = config
+        selectedProfileId = profile.id
+        status.text = "Loaded profile: ${profile.displayName}\n" +
+            "Kind: ${profile.kind.displayName}\n" +
+            "Engine: ${EngineRegistry.engineFor(profile.kind).displayName}\n" +
+            "Endpoints: ${config.endpoints.size}\n" +
+            profile.endpoints.joinToString("\n") { "• ${it.summary()}" } +
+            "\n\nNext: Resolve & probe, or Start imported VPN engine."
+    }
+
+    private fun loadLatestProfileConfigForAction(): ImportedConfig? {
+        val profile = runCatching { profileStore.latestProfile() }.getOrNull() ?: return null
+        val config = loadProfileConfig(profile) ?: return null
+        importedConfig = config
+        selectedProfileId = profile.id
+        return config
+    }
+
+    private fun loadProfileConfig(profile: VpnProfile): ImportedConfig? {
+        val raw = runCatching { profileStore.loadRawConfig(profile.id) }.getOrElse { error ->
+            status.text = "Could not decrypt profile ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}"
+            return null
+        }
+        if (raw.isNullOrBlank()) {
+            status.text = "Saved profile ${profile.displayName} has no decryptable config. Import it again."
+            return null
+        }
+        return try {
+            ConfigImporter.parse(raw, profile.name)
+        } catch (e: Exception) {
+            status.text = "Saved profile ${profile.displayName} could not be parsed: ${e.message ?: e.javaClass.simpleName}"
+            null
         }
     }
 
