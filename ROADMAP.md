@@ -1,12 +1,12 @@
-# نقشه راه پروژه VPN Auto-Connector برای ایران
+# نقشه راه پروژه VPN Hub / Auto-Connector چندموتوره
 
 > این فایل «نقشه راه زنده» پروژه است. هر وقت در مسیر تصمیم مهم، تغییر فاز، یا کشف محدودیت جدید داشتیم، همین فایل را به‌روزرسانی می‌کنیم تا پروژه شلوغ و گیج‌کننده نشود.
 
 ## هدف محصول
 
-ساخت یک اپلیکیشن اندرویدی که با **اکانت یا کانفیگ خود کاربر** کار کند و بدون اینکه ما سرور خروجی یا پهنای‌باند برای کاربران بخریم، بهترین مسیر اتصال را برای اینترنت ایران پیدا کند.
+ساخت یک اپلیکیشن اندرویدی **VPN Hub / Auto-Connector چندموتوره** که با **اکانت یا کانفیگ خود کاربر** کار کند و بدون اینکه ما سرور خروجی یا پهنای‌باند برای کاربران بخریم، بهترین مسیر اتصال را پیدا کند. ایران اولین و سخت‌ترین سناریوی محصول است، اما اسکلت باید عمومی و چندکاره باشد تا بعداً برای کاربران دیگر، providerهای مختلف و چند پروتکل هم توسعه‌پذیر بماند.
 
-اپ قرار نیست فروشنده VPN باشد. اپ قرار است این کارها را خودکار کند:
+اپ قرار نیست فروشنده VPN باشد. «همه‌کاره» بودن در این پروژه یعنی یک کلاینت/ارکستریتور چندپروتکلی برای کانفیگ‌های مجاز کاربر، نه ساخت سرویس VPN پولی با سرورهای ما. اپ قرار است این کارها را خودکار کند:
 
 1. گرفتن/ایمپورت کانفیگ مجاز کاربر.
 2. پیدا کردن IPهای واقعی و سالم برای همان کانفیگ.
@@ -14,6 +14,7 @@
 4. انتخاب سریع‌ترین مسیر موفق.
 5. اتصال کامل دستگاه با Android VpnService.
 6. مانیتورینگ، reconnect، kill switch و جلوگیری از DNS leak.
+7. مدیریت چند profile/engine در یک اپ، با UI ساده Connect/Disconnect و diagnostics جداگانه.
 
 ## اصل‌های ثابت پروژه
 
@@ -24,6 +25,19 @@
 - **Credential فقط روی گوشی:** هیچ پسورد/توکن کاربر نباید به backend ما ارسال شود.
 - **اتصال تأییدشده:** UI فقط وقتی Connected نشان دهد که ترافیک واقعاً از تونل عبور کرده باشد.
 - **طراحی مخصوص ایران:** تصمیم‌گیری بر اساس فیلترینگ هوشمند، تفاوت اپراتورها، DNS poisoning، IP block، SNI/DPI و UDP block.
+
+## تعریف «VPN همه‌کاره» در این پروژه
+
+منظور از همه‌کاره بودن، پشتیبانی تدریجی از چند خانواده اتصال در یک اپ واحد است:
+
+- **Profile manager محلی:** چند config از clipboard/file ذخیره و مدیریت شود، بدون ارسال secret به backend.
+- **Engineهای چندگانه:** Xray/V2Ray به‌عنوان مسیر عملی MVP ایران، WireGuard برای شبکه‌هایی که UDP کار می‌کند، OpenVPN TCP به‌عنوان handoff و بعداً engine داخلی، و user-supplied proxy/underlay در آینده.
+- **یک دکمه Connect:** کاربر مجبور نباشد بداند کدام موتور باید اجرا شود؛ app بر اساس نوع config و health قبلی انتخاب کند.
+- **Diagnostics پیشرفته جدا از UI عادی:** کاربر عادی فقط نتیجه ساده ببیند؛ اطلاعات DoH، probe، stats، error class و transport در بخش Advanced بماند.
+- **Auto-orchestration:** app به‌تدریج last good route، transport سالم، DNS fallback و reconnect/backoff را یاد بگیرد.
+- **قابل توسعه، نه شکننده:** هر protocol/engine پشت abstraction مشترک status/stats/start/stop/verify قرار بگیرد تا بعداً engine جدید اضافه شود.
+
+مرزها همچنان ثابت‌اند: استخراج مخفی config از اپ‌های دیگر، سوءاستفاده از planها، یا عبور ترافیک کاربران از سرورهای ما جزو محصول نیست.
 
 ## تعریف موفقیت نسخه اولیه
 
@@ -56,7 +70,10 @@
 Android App
 │
 ├── UI Layer
-│   └── Kotlin + Jetpack Compose
+│   ├── Simple Connect/Disconnect UX
+│   ├── Profile list / import / paste
+│   ├── Advanced diagnostics
+│   └── Kotlin + Jetpack Compose, later
 │
 ├── VPN Platform Layer
 │   ├── Android VpnService
@@ -69,7 +86,8 @@ Android App
 │   ├── encrypted configs/credentials
 │   └── no secret logs
 │
-├── Config Layer
+├── Profile + Config Layer
+│   ├── Local profile manager
 │   ├── OpenVPN parser/renderer
 │   ├── WireGuard parser/renderer
 │   ├── V2Ray/Xray share-link parser/prober
@@ -92,9 +110,10 @@ Android App
 │   └── auto fallback ladder
 │
 ├── Tunnel Engines
+│   ├── Engine abstraction: start/stop/status/stats/verify
+│   ├── Xray/V2Ray engine, verified embedded path for MVP ایران
+│   ├── WireGuard engine, embedded but secondary where UDP works
 │   ├── OpenVPN engine, licensing to decide
-│   ├── WireGuard engine, embedded first
-│   ├── Xray/V2Ray engine, experimental embedded path added; license/integration still under review
 │   ├── tun2socks / packet engine, licensing to decide
 │   └── underlay engines, later
 │
@@ -125,6 +144,7 @@ Android App
 - [x] برای مسیر جایگزین فوری، آماده‌سازی و ذخیره config موقت OpenVPN TCP/pinned برای import در کلاینت OpenVPN اضافه شد تا قبل از embed engine داخلی هم قابل تست باشد.
 - [x] با توجه به کمبود config سالم OpenVPN در ایران، import و probe اولیه لینک‌های V2Ray/Xray (`vless`, `vmess`, `trojan`, `ss`) اضافه شد؛ import از clipboard هم اضافه شد تا نیاز به تبدیل دستی لینک‌ها به `.txt` نباشد.
 - [x] مسیر embedded Xray core با AndroidLibXrayLite اضافه و با تست گوشی تأیید شد: لینک V2Ray/Xray به config JSON با TUN inbound تبدیل می‌شود، Android `VpnService` بالا می‌آید، core با همان TUN fd شروع می‌شود، و VLESS `httpupgrade/none` کاربر تا وضعیت `VERIFIED` رسید. برای کنترل حجم APK تستی، فعلاً native ABI روی `arm64-v8a` محدود شده است. این مسیر هنوز برای transportهای بیشتر، UX، storage امن و review license نیاز به hardening دارد.
+- [x] جهت محصول بعد از تست موفق Xray بازتعریف شد: اسکلت باید به یک VPN Hub چندموتوره و همه‌کاره تبدیل شود؛ MVP عملی برای ایران Xray/V2Ray-first است، اما معماری باید OpenVPN، WireGuard و underlay/proxyهای آینده را هم تمیز پشتیبانی کند.
 
 ## فازها
 
@@ -279,6 +299,47 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 تصمیم اجرایی: برای اولین engine، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed بود؛ اما تست ایران نشان داد WireGuard/UDP نمی‌تواند مسیر اصلی باشد. بعد از تست موفق `VERIFIED` با embedded Xray، مسیر عملی MVP برای ایران به Xray/V2Ray-compatible configs با config کاربر تغییر کرده است. OpenVPN TCP/443 هنوز fallback/handoff مهم است و WireGuard برای شبکه‌هایی که UDP کار می‌کند باقی می‌ماند.
 
 **خروجی فاز:** app اکنون هم WireGuard user-supplied را با verification جدا از `UP` اجرا می‌کند، هم OpenVPN TCP/pinned config را برای handoff خارجی آماده می‌کند، و مهم‌تر از همه یک config واقعی V2Ray/Xray کاربر را با embedded Xray core روی Android `VpnService` تا وضعیت `VERIFIED` وصل کرده است. فاز بعدی تبدیل این مسیر debug/prototype به UX ساده و پایدار است.
+
+---
+
+### فاز 4.5 — تبدیل اسکلت به VPN Hub چندموتوره
+
+هدف: بعد از اثبات اتصال Xray، اسکلت فعلی را از صفحه تست/debug به foundation یک VPN همه‌کاره تبدیل کنیم.
+
+- [ ] تعریف مدل پایدار `VpnProfile`:
+  - [ ] kind: `XRAY`, `WIREGUARD`, `OPENVPN`, `PROXY_CHAIN`, future
+  - [ ] display name, tags, last verified network, last verified time
+  - [ ] encrypted raw config / secret fields
+  - [ ] non-secret endpoint metadata برای probe و نمایش
+- [ ] تعریف abstraction مشترک engine:
+
+```text
+prepare(profile)
+start(profile)
+stop(profile)
+status()
+stats()
+verify()
+explainFailure()
+```
+
+- [ ] تبدیل statusهای WireGuard و Xray به مدل مشترک برای UI.
+- [ ] ساخت `EngineRegistry` برای انتخاب engine بر اساس نوع profile.
+- [ ] جداسازی diagnostics از مسیر connect عادی:
+  - [ ] import/probe report طولانی در Advanced
+  - [ ] صفحه اصلی فقط وضعیت ساده و action بعدی
+- [ ] storage امن:
+  - [ ] Android Keystore/EncryptedFile یا معادل مناسب
+  - [ ] عدم log کردن secretها
+  - [ ] redaction در error/report
+- [ ] profile lifecycle:
+  - [ ] add/import
+  - [ ] rename
+  - [ ] delete
+  - [ ] mark as favorite/last-good
+  - [ ] export فقط با هشدار کاربر
+
+**خروجی فاز:** app دیگر فقط proof-of-concept اتصال نیست؛ یک هسته چندموتوره قابل توسعه دارد که UI و orchestrator روی آن ساخته می‌شوند.
 
 ---
 
@@ -445,6 +506,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 ### بعدی
 
+- [ ] تبدیل اسکلت به VPN Hub چندموتوره: `VpnProfile`, `EngineRegistry`, status/stats مشترک.
 - [ ] تبدیل UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
 - [ ] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
@@ -495,6 +557,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است. تست start اولیه Xray روی گوشی هنوز آیکن VPN پایدار نشان نداد و status نهایی به `STOPPED / Xray service destroyed` overwrite شد؛ پس UI auto-refresh و حفظ `FAILED` واقعی اضافه شد تا خطای دقیق Android/Xray بعد از start دیده شود. تست بعدی خطای `xray.xudp.basekey` را آشکار کرد و با ساخت base key سی‌ودو بایتی از Android ID رفع شد. تست گوشی بعد از آن آیکن VPN را نشان داد و Xray به `VERIFYING` رسید. پس از افزودن پشتیبانی runtime برای `httpupgrade`/TCP HTTP header و گزارش بهتر verification، تست گوشی `d86ef66` با config کاربر به `VERIFIED` رسید: VLESS `api2.rabbithongo.ir:8880` via `httpupgrade/none`، check به `https://www.gstatic.com/generate_204` در 129ms، و stats نمونه `proxy,downlink,44249;proxy,uplink,28698;`. مرحله بعدی hardening برای transportهای بیشتری است. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر همین VPN یا VPN خارجی باشد و باید برای reachability خام ایران با VPN خاموش هم تکرار شود.
 
 - پس از status `VERIFIED` روی گوشی، مسیر محصول برای MVP ایران به Xray/V2Ray-first تغییر کرد: import/clipboard config کاربر، حفظ metadata transport، شروع embedded Xray، و verification واقعی. WireGuard برای شبکه‌های غیرایران/UDP-friendly و OpenVPN TCP برای handoff یا engine آینده باقی می‌ماند.
+- تصمیم محصولی جدید: اسکلت باید به VPN Hub همه‌کاره/چندموتوره تبدیل شود. یعنی engineها و profileها پشت abstraction مشترک قرار می‌گیرند و UI نهایی فقط یک تجربه ساده Connect/Disconnect نشان می‌دهد؛ diagnostics و جزئیات پروتکل پشت Advanced می‌روند.
 - برای V2Ray/Xray نباید IP pinning کور انجام شود؛ فقط وقتی امن است. SNI/Host/path/ALPN/fingerprint/REALITY/httpupgrade باید کامل حفظ شود و در بسیاری از موارد direct Android/system DNS fallback از DoH عملی‌تر است.
 
 ## تصمیم‌های باز
