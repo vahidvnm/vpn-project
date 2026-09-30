@@ -39,4 +39,36 @@ class V2RayRuntimeConfigBuilderTest {
         assertTrue(runtime.configJson.contains("\"Host\": \"front.example.net\""))
         assertTrue(runtime.configJson.contains("\"serverName\": \"sni.example.net\""))
     }
+
+    @Test
+    fun buildsVlessHttpUpgradeConfig() {
+        val imported = ConfigImporter.parse(
+            "vless://00000000-0000-4000-8000-000000000000@api.example.ir:8880?security=none&type=httpupgrade&host=front.example.com&path=%2Fupgrade#hu"
+        )
+
+        val runtime = V2RayRuntimeConfigBuilder.build(imported)
+
+        assertTrue(runtime.configJson.contains("\"network\": \"httpupgrade\""))
+        assertTrue(runtime.configJson.contains("\"httpupgradeSettings\""))
+        assertTrue(runtime.configJson.contains("\"path\": \"/upgrade\""))
+        assertTrue(runtime.configJson.contains("\"host\": \"front.example.com\""))
+    }
+
+    @Test
+    fun buildsVmessTcpHttpHeaderAndAlterId() {
+        val vmessJson = """
+            {"v":"2","ps":"tcp-http","add":"edge.example.net","port":"80","id":"00000000-0000-4000-8000-000000000000","aid":"2","scy":"auto","net":"tcp","type":"http","host":"www.netlify.com","path":"/front","tls":"none"}
+        """.trimIndent()
+        val imported = ConfigImporter.parse(
+            "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"
+        )
+
+        val runtime = V2RayRuntimeConfigBuilder.build(imported)
+
+        assertTrue(runtime.configJson.contains("\"alterId\": 2"))
+        assertTrue(runtime.configJson.contains("\"tcpSettings\""))
+        assertTrue(runtime.configJson.contains("\"type\": \"http\""))
+        assertTrue(runtime.configJson.contains("\"path\": [\"/front\"]"))
+        assertTrue(runtime.configJson.contains("\"Host\": [\"www.netlify.com\"]"))
+    }
 }

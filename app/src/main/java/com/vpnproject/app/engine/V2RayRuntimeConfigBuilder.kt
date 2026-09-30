@@ -103,6 +103,9 @@ object V2RayRuntimeConfigBuilder {
             port = port,
             idOrPassword = jsonStringField(json, "id") ?: throw ConfigParseException("VMess payload has no id field."),
             method = jsonStringField(json, "scy")?.takeIf { it.isNotBlank() } ?: "auto",
+            alterId = jsonStringField(json, "aid")?.toIntOrNull()
+                ?: jsonNumberField(json, "aid")?.toInt()
+                ?: 0,
             security = security,
             network = jsonStringField(json, "net")?.lowercase()?.takeIf { it.isNotBlank() } ?: "tcp",
             headerType = jsonStringField(json, "type"),
@@ -208,7 +211,7 @@ object V2RayRuntimeConfigBuilder {
                     "port": ${profile.port},
                     "users": [{
                       "id": ${profile.idOrPassword.json()},
-                      "alterId": 0,
+                      "alterId": ${profile.alterId},
                       "security": ${(profile.method ?: "auto").json()},
                       "level": 8
                     }]
@@ -261,7 +264,7 @@ object V2RayRuntimeConfigBuilder {
     }
 
     private fun networkSettings(profile: V2RayProfile): String? = when (profile.network) {
-        "ws" -> {
+        "ws", "websocket" -> {
             val headers = profile.hostHeader?.takeIf { it.isNotBlank() }?.let { ", \"headers\": { \"Host\": ${it.json()} }" }.orEmpty()
             "\"wsSettings\": { \"path\": ${(profile.path ?: "/").json()}$headers }"
         }
@@ -273,11 +276,39 @@ object V2RayRuntimeConfigBuilder {
             val hosts = profile.hostHeader.orEmpty().split(',').map { it.trim() }.filter { it.isNotBlank() }
             "\"httpSettings\": { \"host\": [${hosts.joinToString(",") { it.json() }}], \"path\": ${(profile.path ?: "/").json()} }"
         }
-        "tcp" -> {
-            val headerType = profile.headerType?.takeIf { it.isNotBlank() && it != "tcp" && it != "none" } ?: return null
-            "\"tcpSettings\": { \"header\": { \"type\": ${headerType.json()} } }"
-        }
+        "httpupgrade" -> httpUpgradeSettings(profile)
+        "tcp", "raw" -> tcpSettings(profile)
         else -> null
+    }
+
+    private fun httpUpgradeSettings(profile: V2RayProfile): String {
+        val fields = mutableListOf("\"path\": ${(profile.path ?: "/").ifBlank { "/" }.json()}")
+        firstNonBlank(profile.hostHeader, profile.authority, profile.sni)?.let { host ->
+            fields += "\"host\": ${host.json()}"
+        }
+        return "\"httpupgradeSettings\": { ${fields.joinToString(", ")} }"
+    }
+
+    private fun tcpSettings(profile: V2RayProfile): String? {
+        val headerType = profile.headerType?.lowercase()?.takeIf { it.isNotBlank() && it != "tcp" && it != "none" }
+            ?: return null
+        if (headerType != "http") {
+            return "\"tcpSettings\": { \"header\": { \"type\": ${headerType.json()} } }"
+        }
+
+        val requestFields = mutableListOf(
+            "\"method\": \"GET\"",
+            "\"path\": [${(profile.path ?: "/").ifBlank { "/" }.json()}]"
+        )
+        val hosts = firstNonBlank(profile.hostHeader, profile.authority, profile.sni)
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        if (hosts.isNotEmpty()) {
+            requestFields += "\"headers\": { \"Host\": [${hosts.joinToString(",") { it.json() }}] }"
+        }
+        return "\"tcpSettings\": { \"header\": { \"type\": \"http\", \"request\": { ${requestFields.joinToString(", ")} }, \"response\": {} } } }"
     }
 
     private fun securitySettings(profile: V2RayProfile): String? = when (profile.security) {
@@ -338,6 +369,8 @@ object V2RayRuntimeConfigBuilder {
         val index = value.indexOf(delimiter)
         return if (index < 0) value to "" else value.substring(0, index) to value.substring(index + 1)
     }
+
+    private fun firstNonBlank(vararg values: String?): String? = values.firstOrNull { !it.isNullOrBlank() }?.trim()
 
     private fun decodeBase64Text(value: String): String? {
         val cleaned = value.trim().replace(Regex("\\s+"), "")
@@ -408,6 +441,7 @@ private data class V2RayProfile(
     val port: Int,
     val idOrPassword: String,
     val method: String? = null,
+    val alterId: Int = 0,
     val flow: String? = null,
     val security: String,
     val network: String,

@@ -342,7 +342,7 @@ class MainActivity : Activity() {
     }
 
     private fun scheduleEngineStatusRefreshes() {
-        listOf(1_500L, 3_500L, 7_000L, 12_000L).forEach { delayMs ->
+        listOf(1_500L, 3_500L, 7_000L, 12_000L, 22_000L, 40_000L, 65_000L, 90_000L).forEach { delayMs ->
             mainHandler.postDelayed({ showEngineStatus() }, delayMs)
         }
     }
@@ -512,7 +512,7 @@ class MainActivity : Activity() {
                 val validated = if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) "validated" else "not-validated"
                 val base = "Network: ${transports.ifEmpty { listOf("unknown") }.joinToString("+")} / $validated."
                 if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                    "$base Warning: Android reports an active VPN transport. Diagnostic probes may be routed through that VPN/external client, not the raw mobile network. Turn other VPNs off when testing censorship reachability."
+                    "$base Warning: Android reports an active VPN transport (possibly this app if Xray/WireGuard is already running). Diagnostic probes may be routed through the active tunnel instead of the raw mobile network. Stop VPNs first when testing censorship reachability."
                 } else {
                     base
                 }

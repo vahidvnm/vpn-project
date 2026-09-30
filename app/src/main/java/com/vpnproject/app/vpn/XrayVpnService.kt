@@ -20,6 +20,8 @@ import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class XrayVpnService : VpnService(), CoreCallbackHandler {
@@ -77,7 +79,13 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 
     override fun onEmitStatus(l: Long, s: String?): Long {
         if (!s.isNullOrBlank()) {
-            updateStatus(lastStatus.state, lastStatus.message, "xray: $s")
+            val previous = lastStatus
+            updateStatus(
+                previous.state,
+                previous.message,
+                appendDetailLine(previous.detail, "xray: ${s.shortForStatus()}"),
+                verified = previous.verified
+            )
         }
         return 0L
     }
@@ -175,28 +183,40 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         verifierThread?.interrupt()
         verifierThread = Thread({
             try {
-                Thread.sleep(3_000L)
-                val delay = controller.measureDelay("https://www.gstatic.com/generate_204")
+                Thread.sleep(VERIFY_START_DELAY_MS)
+                val attempts = mutableListOf<String>()
+                var verifiedDelayMs: Long? = null
+                var verifiedUrl: String? = null
+
+                for (url in VERIFY_URLS) {
+                    if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
+                    val result = measureDelayWithTimeout(controller, url, VERIFY_URL_TIMEOUT_MS)
+                    if (result.delayMs != null && result.delayMs >= 0L) {
+                        verifiedDelayMs = result.delayMs
+                        verifiedUrl = url
+                        attempts += "${url.hostLabel()}: OK ${result.delayMs}ms"
+                        break
+                    } else {
+                        attempts += "${url.hostLabel()}: ${result.error ?: "returned no delay"}"
+                        if (result.error?.startsWith("timed out") == true) break
+                    }
+                }
+
+                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
                 val stats = runCatching { controller.queryAllOutboundTrafficStats() }.getOrNull()
-                if (delay >= 0) {
+                if (verifiedDelayMs != null) {
                     updateStatus(
                         EngineState.VERIFIED,
-                        "Xray verified: outbound HTTP check passed through the proxy in ${delay}ms.",
-                        buildString {
-                            append(note)
-                            if (!stats.isNullOrBlank()) append("\nStats: $stats")
-                        }.ifBlank { null },
+                        "Xray verified: outbound HTTP check passed through the proxy in ${verifiedDelayMs}ms.",
+                        verificationDetail(note, attempts, stats, verifiedUrl),
                         verified = true
                     )
-                    startForegroundNotification("Xray verified through proxy: ${delay}ms")
+                    startForegroundNotification("Xray verified through proxy: ${verifiedDelayMs}ms")
                 } else {
                     updateStatus(
                         EngineState.RUNNING,
-                        "Xray core is running, but proxy egress verification did not complete yet.",
-                        buildString {
-                            append(note)
-                            if (!stats.isNullOrBlank()) append("\nStats: $stats")
-                        }.ifBlank { null },
+                        "Xray core is running and the Android VPN is established, but proxy egress verification failed for the test URLs.",
+                        verificationDetail(note, attempts, stats, null),
                         verified = false
                     )
                     startForegroundNotification("Xray running; egress is not verified yet.")
@@ -207,7 +227,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 updateStatus(
                     EngineState.RUNNING,
                     "Xray core is running, but verification failed: ${e.message ?: e.javaClass.simpleName}",
-                    note,
+                    verificationDetail(note, listOf("${e.javaClass.simpleName}: ${e.message.orEmpty()}"), null, null),
                     verified = false
                 )
                 startForegroundNotification("Xray running; verification failed.")
@@ -215,6 +235,52 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }, "xray-verifier")
         verifierThread?.isDaemon = true
         verifierThread?.start()
+    }
+
+    private fun measureDelayWithTimeout(controller: CoreController, url: String, timeoutMs: Long): DelayProbeResult {
+        val queue = ArrayBlockingQueue<DelayProbeResult>(1)
+        Thread({
+            val result = try {
+                val delay = controller.measureDelay(url)
+                if (delay >= 0L) DelayProbeResult(delayMs = delay) else DelayProbeResult(error = "returned $delay")
+            } catch (error: Exception) {
+                DelayProbeResult(error = (error.message ?: error.javaClass.simpleName).shortForStatus())
+            }
+            queue.offer(result)
+        }, "xray-delay-${url.hostLabel()}").apply {
+            isDaemon = true
+            start()
+        }
+        return queue.poll(timeoutMs, TimeUnit.MILLISECONDS)
+            ?: DelayProbeResult(error = "timed out after ${timeoutMs / 1000}s")
+    }
+
+    private fun verificationDetail(
+        note: String,
+        attempts: List<String>,
+        stats: String?,
+        verifiedUrl: String?
+    ): String? = buildString {
+        append(note)
+        if (verifiedUrl != null) append("\nVerified URL: $verifiedUrl")
+        if (attempts.isNotEmpty()) append("\nVerification attempts: ${attempts.joinToString("; ")}")
+        if (!stats.isNullOrBlank()) append("\nStats: $stats")
+    }.ifBlank { null }
+
+    private fun String.hostLabel(): String = removePrefix("https://")
+        .removePrefix("http://")
+        .substringBefore('/')
+        .shortForStatus(48)
+
+    private fun appendDetailLine(current: String?, next: String): String {
+        val combined = listOfNotNull(current?.takeIf { it.isNotBlank() }, next.takeIf { it.isNotBlank() })
+            .joinToString("\n")
+        return combined.shortForStatus(900)
+    }
+
+    private fun String.shortForStatus(maxLength: Int = 220): String {
+        val singleLine = replace(Regex("\\s+"), " ").trim()
+        return if (singleLine.length <= maxLength) singleLine else singleLine.take(maxLength - 1) + "…"
     }
 
     private fun stopXray(message: String) {
@@ -344,5 +410,19 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val CHANNEL_ID = "xray_engine_status"
         private const val NOTIFICATION_ID = 61
         private const val STOP_REQUEST_CODE = 62
+        private const val VERIFY_START_DELAY_MS = 3_000L
+        private const val VERIFY_URL_TIMEOUT_MS = 15_000L
+        private val VERIFY_URLS = listOf(
+            "https://www.gstatic.com/generate_204",
+            "https://www.google.com/generate_204",
+            "https://cp.cloudflare.com/generate_204",
+            "https://www.msftconnecttest.com/connecttest.txt",
+            "https://www.netlify.com/"
+        )
     }
 }
+
+private data class DelayProbeResult(
+    val delayMs: Long? = null,
+    val error: String? = null
+)
