@@ -417,7 +417,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 ### بعدی
 
-- [ ] تست گوشی با V2Ray/Xray سالم user-owned: import از clipboard، Resolve & probe، سپس Start imported VPN engine.
+- [x] تست گوشی با V2Ray/Xray سالم user-owned: import از clipboard، Resolve & probe، سپس Start imported VPN engine.
+- [ ] گرفتن screenshot/status نهایی بعد از اتصال Xray برای ثبت `VERIFIED`، egress، و خطاهای احتمالی verification.
 - [ ] اصلاح runtime config generator برای هر transport واقعی که در تست گوشی fail می‌شود.
 - [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN، اگر config سالم پیدا شد.
 - [ ] انتخاب license/engine برای OpenVPN داخلی.
@@ -462,7 +463,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - تست گوشی نشان داد DNS poisoning می‌تواند حتی hostnameهای DoH مثل `cloudflare-dns.com`، `dns.google` و `dns.quad9.net` را به IP خصوصی `10.10.34.35` ببرد؛ بنابراین resolver باید endpointهای IP-literal DoH را ترجیح دهد و هرگز private resolver IP را قبول نکند.
 - با توجه به فیلتر بودن WireGuard/UDP در ایران، مسیر MVP نباید WireGuard-only باشد؛ OpenVPN TCP/443، Xray/V2Ray-compatible configs و بعداً stealth/underlay باید به fallback ladder اضافه شوند.
 - به خاطر سخت بودن پیدا کردن config سالم OpenVPN در ایران، V2Ray/Xray اول به عنوان مسیر diagnostic/probe اضافه شد و سپس یک embedded Xray engine experimental برای شروع واقعی همان لینک‌ها اضافه شد.
-- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است. تست start اولیه Xray روی گوشی هنوز آیکن VPN پایدار نشان نداد و status نهایی به `STOPPED / Xray service destroyed` overwrite شد؛ پس UI auto-refresh و حفظ `FAILED` واقعی اضافه شد تا خطای دقیق Android/Xray بعد از start دیده شود. تست بعدی خطای `xray.xudp.basekey` را آشکار کرد و با ساخت base key سی‌ودو بایتی از Android ID رفع شد. تست گوشی بعد از آن آیکن VPN را نشان داد و Xray به `VERIFYING` رسید، اما هنوز verified نشد؛ بنابراین مرحله بعدی اصلاح transportهای واقعی مثل `httpupgrade`/TCP HTTP header و گزارش timeout/error چند URL verification است. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر همین VPN یا VPN خارجی باشد و باید برای reachability خام ایران با VPN خاموش هم تکرار شود.
+- تست گوشی V2Ray نشان داد DoH همچنان reset/timeout یا به `10.10.34.35` poison می‌شود، ولی direct system DNS probe برای endpointهای V2Ray مثل `dns.all.ultradns.space:8880` و hostnameهای Connectoo با TCP موفق شد؛ latency نمونه‌ها از حدود 132ms تا 4163ms بود. بنابراین fallback مستقیم برای diagnostic ارزشمند است. تست start اولیه Xray روی گوشی هنوز آیکن VPN پایدار نشان نداد و status نهایی به `STOPPED / Xray service destroyed` overwrite شد؛ پس UI auto-refresh و حفظ `FAILED` واقعی اضافه شد تا خطای دقیق Android/Xray بعد از start دیده شود. تست بعدی خطای `xray.xudp.basekey` را آشکار کرد و با ساخت base key سی‌ودو بایتی از Android ID رفع شد. تست گوشی بعد از آن آیکن VPN را نشان داد و Xray به `VERIFYING` رسید. پس از افزودن پشتیبانی runtime برای `httpupgrade`/TCP HTTP header و گزارش بهتر verification، تست گوشی `d86ef66` با config کاربر وصل شد. مرحله بعدی ثبت status نهایی (`VERIFIED`/egress/attempts) و hardening برای transportهای بیشتری است. اگر آیکن VPN بالای گوشی فعال باشد، نتیجه probe ممکن است از مسیر همین VPN یا VPN خارجی باشد و باید برای reachability خام ایران با VPN خاموش هم تکرار شود.
 
 ## تصمیم‌های باز
 
