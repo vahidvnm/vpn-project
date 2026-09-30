@@ -11,6 +11,8 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.provider.Settings
+import android.util.Base64
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
@@ -104,7 +106,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             )
             startForegroundNotification("VPN interface established; starting Xray core…")
             Seq.setContext(applicationContext)
-            Libv2ray.initCoreEnv(filesDir.absolutePath, packageName)
+            Libv2ray.initCoreEnv(filesDir.absolutePath, xudpBaseKey())
             val controller = Libv2ray.newCoreController(this)
             coreController = controller
             controller.startLoop(configJson, tun.fd)
@@ -239,6 +241,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         coreController = null
         runCatching { vpnInterface?.close() }
         vpnInterface = null
+    }
+
+    private fun xudpBaseKey(): String {
+        val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: packageName
+        val rawKey = androidId.toByteArray(Charsets.UTF_8).copyOf(32)
+        return Base64.encodeToString(rawKey, Base64.NO_PADDING or Base64.URL_SAFE or Base64.NO_WRAP)
     }
 
     private fun updateStatus(
