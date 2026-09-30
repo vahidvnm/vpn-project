@@ -53,7 +53,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     override fun onDestroy() {
-        stopXray("Xray service destroyed.")
+        // If startup failed, keep the FAILED status visible for the UI instead
+        // of overwriting the useful error with a generic service-destroyed state.
+        if (lastStatus.kind == EngineKind.XRAY_CORE && lastStatus.state == EngineState.FAILED) {
+            stopCoreOnly()
+            stopForegroundCompat()
+        } else {
+            stopXray("Xray service destroyed.")
+        }
         super.onDestroy()
     }
 
@@ -82,15 +89,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
 
         stopCoreOnly()
-        val tun = establishTun(profileName)
-        if (tun == null) {
-            updateStatus(EngineState.FAILED, "Could not establish Android VPN interface for Xray.", note)
-            startForegroundNotification("Xray failed: VPN interface was not created.")
-            stopSelf()
-            return
-        }
-
         try {
+            updateStatus(
+                EngineState.CONNECTING,
+                "Establishing Android VPN interface for Xray profile $profileName.",
+                note
+            )
+            startForegroundNotification("Establishing Android VPN interface for Xray…")
+            val tun = establishTunOrThrow(profileName)
             updateStatus(
                 EngineState.CONNECTING,
                 "Android VPN interface is established; starting Xray core for $profileName.",
@@ -112,17 +118,27 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             startVerification(controller, note)
         } catch (e: Exception) {
             stopCoreOnly()
+            val errorText = e.message ?: e.javaClass.simpleName
             updateStatus(
                 EngineState.FAILED,
-                "Xray engine failed: ${e.message ?: e.javaClass.simpleName}",
-                note
+                "Xray startup failed: $errorText",
+                buildString {
+                    append(note)
+                    append("\nError class: ${e.javaClass.name}")
+                    e.cause?.let { append("\nCause: ${it.message ?: it.javaClass.simpleName}") }
+                },
+                verified = false
             )
-            startForegroundNotification("Xray failed: ${e.message ?: e.javaClass.simpleName}")
+            startForegroundNotification("Xray failed: $errorText")
             stopSelf()
         }
     }
 
-    private fun establishTun(profileName: String): ParcelFileDescriptor? {
+    private fun establishTunOrThrow(profileName: String): ParcelFileDescriptor {
+        if (VpnService.prepare(this) != null) {
+            throw IllegalStateException("VPN permission is missing. Tap Prepare VPN permission, allow it, then start again.")
+        }
+
         val builder = Builder()
             .setSession("VPN Project Xray - $profileName")
             .setMtu(1500)
@@ -144,9 +160,12 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 
         return try {
             vpnInterface?.close()
-            builder.establish()?.also { vpnInterface = it }
-        } catch (_: Exception) {
-            null
+            val established = builder.establish()
+                ?: throw IllegalStateException("Android Builder.establish() returned null.")
+            vpnInterface = established
+            established
+        } catch (e: Exception) {
+            throw IllegalStateException("Android VPN interface failed: ${e.message ?: e.javaClass.simpleName}", e)
         }
     }
 
@@ -200,6 +219,10 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         updateStatus(EngineState.STOPPING, message)
         stopCoreOnly()
         updateStatus(EngineState.STOPPED, message)
+        stopForegroundCompat()
+    }
+
+    private fun stopForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(Service.STOP_FOREGROUND_REMOVE)
         } else {
