@@ -324,18 +324,20 @@ verify()
 explainFailure()
 ```
 
-- [ ] تبدیل statusهای WireGuard و Xray به مدل مشترک برای UI.
+- [x] تبدیل اولیه statusهای WireGuard و Xray به summary مشترک UI با `VpnHubStatusMapper`.
 - [x] ساخت `EngineRegistry` اولیه برای انتخاب engine بر اساس نوع profile.
 - [ ] جداسازی diagnostics از مسیر connect عادی:
   - [ ] import/probe report طولانی در Advanced
-  - [ ] صفحه اصلی فقط وضعیت ساده و action بعدی
+  - [x] شروع صفحه status ساده با `Hub status` بالای diagnostics
+  - [ ] صفحه اصلی نهایی فقط وضعیت ساده و action بعدی
 - [x] storage امن اولیه برای raw configها:
   - [x] Android Keystore + AES-GCM روی SharedPreferences
   - [ ] عدم log کردن secretها در همه مسیرهای آینده
   - [ ] redaction کامل در error/report
 - [ ] profile lifecycle:
   - [x] add/import و Load latest profile
-  - [ ] profile list قابل انتخاب، نه فقط نمایش latest
+  - [x] profile list قابل انتخاب اولیه با دکمه‌های dynamic در UI ساده فعلی
+  - [ ] profile list نهایی با طراحی بهتر/scroll و انتخاب پایدار
   - [ ] rename
   - [ ] delete در UI
   - [ ] mark as favorite/last-good
@@ -509,7 +511,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 ### بعدی
 
 - [x] شروع تبدیل اسکلت به VPN Hub چندموتوره: `VpnProfile`, `SecureProfileStore`, `EngineRegistry` اولیه.
-- [ ] تکمیل status/stats مشترک و انتخاب profile از لیست.
+- [x] شروع status مشترک و انتخاب profile از لیست.
+- [ ] تکمیل status/stats مشترک برای همه engineها و طراحی UI نهایی.
 - [ ] تبدیل UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
 - [ ] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.

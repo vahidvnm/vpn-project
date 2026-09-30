@@ -37,6 +37,7 @@ import com.vpnproject.app.engine.EngineRegistry
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
+import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.VpnProfile
@@ -48,6 +49,8 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private var importedConfig: ImportedConfig? = null
     private var selectedProfileId: String? = null
+    private var selectedProfile: VpnProfile? = null
+    private lateinit var profileListContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
@@ -121,8 +124,16 @@ class MainActivity : Activity() {
             setOnClickListener { loadLatestProfile() }
         })
 
+        profileListContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
+        }
+        root.addView(profileListContainer)
+        refreshProfileButtons()
+
         root.addView(Button(this).apply {
-            text = "Resolve & probe imported endpoints"
+            text = "Resolve & probe selected/imported endpoints"
             setOnClickListener { resolveAndProbeImportedConfig() }
         })
 
@@ -132,17 +143,17 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
-            text = "Start imported VPN engine"
+            text = "Connect selected/imported profile"
             setOnClickListener { requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE) }
         })
 
         root.addView(Button(this).apply {
-            text = "Stop imported engines"
+            text = "Disconnect active engines"
             setOnClickListener { stopImportedEngines() }
         })
 
         root.addView(Button(this).apply {
-            text = "Refresh engine status"
+            text = "Refresh connection status"
             setOnClickListener { showEngineStatus() }
         })
 
@@ -365,7 +376,14 @@ class MainActivity : Activity() {
     private fun showEngineStatus() {
         val wg = WireGuardVpnService.lastStatus
         val xray = XrayVpnService.lastStatus
-        status.text = "WireGuard status: ${wg.state}\n" +
+        val hub = VpnHubStatusMapper.from(wg, xray, selectedProfile)
+        status.text = "Hub status: ${hub.title}\n" +
+            "Verified: ${if (hub.verified) "yes" else "no"}\n" +
+            "Message: ${hub.detail}" +
+            (hub.egressIp?.let { "\nEgress IP: $it" } ?: "") +
+            (if (hub.rxBytes != null || hub.txBytes != null) "\nRX/TX: ${hub.rxBytes ?: 0} / ${hub.txBytes ?: 0} bytes" else "") +
+            "\n\nAdvanced engine diagnostics:\n" +
+            "WireGuard status: ${wg.state}\n" +
             "Verified: ${if (wg.verified) "yes" else "no"}\n" +
             "Message: ${wg.message}" +
             (wg.detail?.let { "\nDetail: $it" } ?: "") +
@@ -457,6 +475,8 @@ class MainActivity : Activity() {
         return runCatching { profileStore.saveImportedConfig(config, displayName) }.fold(
             onSuccess = { profile ->
                 selectedProfileId = profile.id
+                selectedProfile = profile
+                refreshProfileButtons()
                 val engine = EngineRegistry.engineFor(profile.kind)
                 "\n\nSaved local profile: ${profile.displayName}\nEngine: ${engine.displayName}${if (engine.startableInApp) "" else " (handoff)"}"
             },
@@ -467,6 +487,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSavedProfiles() {
+        refreshProfileButtons()
         val profiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
             status.text = "Could not load saved profiles: ${error.message ?: error.javaClass.simpleName}"
             return
@@ -478,7 +499,28 @@ class MainActivity : Activity() {
         status.text = "Saved VPN Hub profiles:\n" + profiles.joinToString("\n") { profile ->
             val marker = if (profile.id == selectedProfileId) "*" else "•"
             "$marker ${profile.summary()} — engine ${EngineRegistry.engineFor(profile.kind).displayName}"
-        } + "\n\nUse Load latest profile, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
+        } + "\n\nTap a profile button, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
+    }
+
+    private fun refreshProfileButtons() {
+        if (!::profileListContainer.isInitialized) return
+        profileListContainer.removeAllViews()
+        val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        profileListContainer.addView(TextView(this).apply {
+            text = if (profiles.isEmpty()) "No saved profiles yet." else "Saved profiles (${profiles.size}): tap to select"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF475569.toInt())
+            setPadding(0, dp(4), 0, dp(4))
+        })
+        profiles.take(MAX_PROFILE_BUTTONS).forEach { profile ->
+            val engine = EngineRegistry.engineFor(profile.kind)
+            profileListContainer.addView(Button(this).apply {
+                val marker = if (profile.id == selectedProfileId) "✓ " else ""
+                text = "$marker${profile.displayName} — ${profile.kind.displayName} / ${engine.displayName}"
+                setOnClickListener { loadProfile(profile) }
+            })
+        }
     }
 
     private fun loadLatestProfile() {
@@ -490,15 +532,21 @@ class MainActivity : Activity() {
             status.text = "No saved profile found. Import or paste a config first."
             return
         }
+        loadProfile(profile)
+    }
+
+    private fun loadProfile(profile: VpnProfile) {
         val config = loadProfileConfig(profile) ?: return
         importedConfig = config
         selectedProfileId = profile.id
-        status.text = "Loaded profile: ${profile.displayName}\n" +
+        selectedProfile = profile
+        refreshProfileButtons()
+        status.text = "Selected profile: ${profile.displayName}\n" +
             "Kind: ${profile.kind.displayName}\n" +
             "Engine: ${EngineRegistry.engineFor(profile.kind).displayName}\n" +
             "Endpoints: ${config.endpoints.size}\n" +
             profile.endpoints.joinToString("\n") { "• ${it.summary()}" } +
-            "\n\nNext: Resolve & probe, or Start imported VPN engine."
+            "\n\nNext: Resolve & probe, or Connect selected/imported profile."
     }
 
     private fun loadLatestProfileConfigForAction(): ImportedConfig? {
@@ -506,6 +554,8 @@ class MainActivity : Activity() {
         val config = loadProfileConfig(profile) ?: return null
         importedConfig = config
         selectedProfileId = profile.id
+        selectedProfile = profile
+        refreshProfileButtons()
         return config
     }
 
@@ -702,5 +752,6 @@ class MainActivity : Activity() {
         const val EXPORT_OPENVPN_REQUEST = 1003
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
+        const val MAX_PROFILE_BUTTONS = 5
     }
 }
