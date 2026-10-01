@@ -138,10 +138,13 @@ class MainActivity : Activity() {
     private val profileStore by lazy { SecureProfileStore(this) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val appSettings by lazy { getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE) }
     private val routeHealthCache = RouteHealthCache()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, true)
 
         window.statusBarColor = 0xFFEAF6FF.toInt()
         window.navigationBarColor = 0xFFFFFFFF.toInt()
@@ -248,7 +251,8 @@ class MainActivity : Activity() {
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
         settingsCard.addView(settingsRow("✓", "Test selected config", "Run endpoint health check for the active config") { resolveAndProbeImportedConfig() })
-        settingsCard.addView(settingsRow("A", "Auto test", "Automatically test imported or selected configs", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("A", "Auto test", "Automatically rank and test configs", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("★", "Rank configs", "Test saved configs and select the fastest reachable one") { rankSavedProfilesAndSelectBest("settings") })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -321,9 +325,11 @@ class MainActivity : Activity() {
 
         setContentView(appRoot)
 
+        updateAutoTestToggle()
         restoreLatestProfileMetadata()
         refreshProfileButtons()
         updateDashboardSummary()
+        refreshAutoTestSummary()
         showSection(AppSection.HOME)
         startLiveDashboardRefresh()
     }
@@ -771,13 +777,13 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 addView(TextView(this@MainActivity).apply {
-                    text = "Auto test"
+                    text = "Smart auto test"
                     textSize = 15f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(0xFF0F172A.toInt())
                 })
                 autoTestStatusText = TextView(this@MainActivity).apply {
-                    text = "Tests selected/imported endpoints automatically"
+                    text = "Ranks saved configs and selects the best reachable one"
                     textSize = 11.5f
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
@@ -799,7 +805,7 @@ class MainActivity : Activity() {
             }
             addView(autoTestToggleButton)
             addView(TextView(this@MainActivity).apply {
-                text = "Test"
+                text = "Rank"
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -811,16 +817,17 @@ class MainActivity : Activity() {
                 }
                 isClickable = true
                 isFocusable = true
-                setOnClickListener { autoTestSelectedConfig("manual") }
+                setOnClickListener { rankSavedProfilesAndSelectBest("manual") }
             })
         })
     }
 
     private fun toggleAutoTest() {
         autoTestEnabled = !autoTestEnabled
+        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, autoTestEnabled).apply()
         updateAutoTestToggle()
         setAutoTestStatus(if (autoTestEnabled) "Auto test enabled" else "Auto test disabled")
-        if (autoTestEnabled) maybeAutoTestSelectedConfig("toggle")
+        if (autoTestEnabled) maybeAutoRankBestProfile("toggle")
     }
 
     private fun updateAutoTestToggle() {
@@ -844,8 +851,18 @@ class MainActivity : Activity() {
     }
 
     private fun setAutoTestStatus(message: String) {
-        if (::autoTestStatusText.isInitialized) autoTestStatusText.text = message.shortUi(80)
+        if (::autoTestStatusText.isInitialized) autoTestStatusText.text = message.shortUi(88)
         status.text = message
+    }
+
+    private fun refreshAutoTestSummary() {
+        if (!::autoTestStatusText.isInitialized || autoTestInFlight) return
+        autoTestStatusText.text = when {
+            !autoTestEnabled -> "Auto test disabled"
+            selectedProfile?.lastTestedEpochMs != null -> selectedProfile?.lastTestLabel()?.shortUi(88)
+                ?: "Last test saved for selected config"
+            else -> "Ranks saved configs and selects the best reachable one"
+        }
     }
 
     private fun maybeAutoTestSelectedConfig(reason: String) {
@@ -853,38 +870,239 @@ class MainActivity : Activity() {
         mainHandler.postDelayed({ autoTestSelectedConfig(reason) }, 350L)
     }
 
+    private fun maybeAutoRankBestProfile(reason: String) {
+        if (!autoTestEnabled) return
+        mainHandler.postDelayed({ rankSavedProfilesAndSelectBest(reason) }, 450L)
+    }
+
     private fun autoTestSelectedConfig(reason: String) {
         if (autoTestInFlight) {
             setAutoTestStatus("Auto test is already running")
             return
         }
-        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
+        val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
+        val config = importedConfig ?: profile?.let { loadProfileConfig(it) }
         if (config == null) {
             setAutoTestStatus("Auto test: add or select a config first")
             return
         }
         autoTestInFlight = true
-        setAutoTestStatus("Auto test running for ${config.kind}...")
+        setAutoTestStatus("Auto test running for ${compactProfileTitle(profile, fallback = config.kind.name)}...")
+        val network = currentNetworkLabel()
         Thread {
-            val text = try {
-                buildResolveAndProbeReport(config)
+            val summary = try {
+                probeConfigSummary(config)
             } catch (e: Exception) {
-                "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}"
+                ConfigProbeSummary(
+                    report = "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}",
+                    okCount = 0,
+                    failedCount = 1,
+                    bestLatencyMs = null,
+                    bestScore = null,
+                    checkedAtEpochMs = System.currentTimeMillis()
+                )
             }
-            val okCount = text.lineSequence().count { it.contains(" OK") }
-            val failedCount = text.lineSequence().count { it.contains(" failed", ignoreCase = true) }
-            val summary = when {
-                okCount > 0 -> "Auto test passed: $okCount reachable endpoint${if (okCount == 1) "" else "s"}"
-                failedCount > 0 -> "Auto test finished: $failedCount failed probe${if (failedCount == 1) "" else "s"}"
-                else -> "Auto test finished: see Settings diagnostics"
+            val updatedProfile = profile?.let { testedProfile ->
+                runCatching {
+                    profileStore.markTested(
+                        profileId = testedProfile.id,
+                        testedAtEpochMs = summary.checkedAtEpochMs,
+                        success = summary.reachable,
+                        network = network,
+                        latencyMs = summary.bestLatencyMs,
+                        score = summary.bestScore
+                    )
+                }.getOrNull()
             }
+            val message = autoTestSummaryText(summary, prefix = "Auto test")
             runOnUiThread {
                 autoTestInFlight = false
-                setAutoTestStatus(summary)
-                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = text
+                if (updatedProfile != null && (selectedProfileId == null || selectedProfileId == updatedProfile.id)) {
+                    selectedProfile = updatedProfile
+                    selectedProfileId = updatedProfile.id
+                }
+                setAutoTestStatus(message)
+                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = summary.report
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
             }
         }.start()
     }
+
+    private fun rankSavedProfilesAndSelectBest(reason: String, autoSelect: Boolean = true) {
+        if (autoTestInFlight) {
+            setAutoTestStatus("Auto ranking is already running")
+            return
+        }
+        val savedProfiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
+            setAutoTestStatus("Could not load profiles for ranking: ${error.message ?: error.javaClass.simpleName}")
+            return
+        }
+        if (savedProfiles.isEmpty()) {
+            setAutoTestStatus("Auto ranking: add configs first")
+            return
+        }
+        val rankedInput = savedProfiles.sortedWith(profileRankingComparator()).take(MAX_AUTO_RANK_PROFILES)
+        autoTestInFlight = true
+        setAutoTestStatus("Ranking ${rankedInput.size} config${if (rankedInput.size == 1) "" else "s"}...")
+        val network = currentNetworkLabel()
+        Thread {
+            val results = mutableListOf<ProfileProbeResult>()
+            rankedInput.forEachIndexed { index, profile ->
+                mainHandler.post {
+                    if (autoTestInFlight) {
+                        setAutoTestStatus("Ranking ${index + 1}/${rankedInput.size}: ${compactProfileTitle(profile)}")
+                    }
+                }
+                val config = loadProfileConfigQuiet(profile)
+                val summary = if (config == null) {
+                    ConfigProbeSummary(
+                        report = "Could not decrypt or parse ${profile.displayName}.",
+                        okCount = 0,
+                        failedCount = 1,
+                        bestLatencyMs = null,
+                        bestScore = null,
+                        checkedAtEpochMs = System.currentTimeMillis()
+                    )
+                } else {
+                    runCatching { probeConfigSummary(config) }.getOrElse { error ->
+                        ConfigProbeSummary(
+                            report = "Resolve/probe failed for ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}",
+                            okCount = 0,
+                            failedCount = 1,
+                            bestLatencyMs = null,
+                            bestScore = null,
+                            checkedAtEpochMs = System.currentTimeMillis()
+                        )
+                    }
+                }
+                val updatedProfile = runCatching {
+                    profileStore.markTested(
+                        profileId = profile.id,
+                        testedAtEpochMs = summary.checkedAtEpochMs,
+                        success = summary.reachable,
+                        network = network,
+                        latencyMs = summary.bestLatencyMs,
+                        score = summary.bestScore
+                    )
+                }.getOrNull() ?: profile
+                results += ProfileProbeResult(updatedProfile, config, summary)
+            }
+            val best = results.filter { it.summary.reachable }
+                .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
+                    .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE }
+                    .thenByDescending { it.profile.favorite })
+            val report = buildAutoRankingReport(results, best, reason)
+            val message = when {
+                best != null && autoSelect -> "Best config selected: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                best != null -> "Best config: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                else -> "Auto ranking found no reachable endpoints"
+            }
+            runOnUiThread {
+                autoTestInFlight = false
+                if (best != null && autoSelect) applyRankedProfileSelection(best)
+                setAutoTestStatus(message)
+                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = report
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
+                if (best != null && autoSelect) showSection(AppSection.HOME)
+            }
+        }.start()
+    }
+
+    private fun probeConfigSummary(config: ImportedConfig): ConfigProbeSummary {
+        val report = buildResolveAndProbeReport(config)
+        val okMatches = Regex("Probe: [^\\n]+ OK, latency (\\d+)ms, score ([0-9]+|n/a)")
+            .findAll(report)
+            .toList()
+        val best = okMatches.mapNotNull { match ->
+            val latency = match.groupValues[1].toLongOrNull() ?: return@mapNotNull null
+            val score = match.groupValues[2].toIntOrNull() ?: latency.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            latency to score
+        }.minWithOrNull(compareBy<Pair<Long, Int>> { it.second }.thenBy { it.first })
+        val failedCount = report.lineSequence().count { it.contains(" failed", ignoreCase = true) }
+        return ConfigProbeSummary(
+            report = report,
+            okCount = okMatches.size,
+            failedCount = failedCount,
+            bestLatencyMs = best?.first,
+            bestScore = best?.second,
+            checkedAtEpochMs = System.currentTimeMillis()
+        )
+    }
+
+    private fun autoTestSummaryText(summary: ConfigProbeSummary, prefix: String): String = when {
+        summary.okCount > 0 -> "$prefix passed: ${summary.okCount} reachable endpoint${if (summary.okCount == 1) "" else "s"}" +
+            summary.bestLatencyMs?.let { " • best ${it}ms" }.orEmpty()
+        summary.failedCount > 0 -> "$prefix finished: ${summary.failedCount} failed probe${if (summary.failedCount == 1) "" else "s"}"
+        else -> "$prefix finished: see Settings diagnostics"
+    }
+
+    private fun applyRankedProfileSelection(result: ProfileProbeResult): Boolean {
+        val config = result.config ?: loadProfileConfig(result.profile) ?: return false
+        val refreshed = runCatching {
+            profileStore.markTested(
+                profileId = result.profile.id,
+                testedAtEpochMs = result.summary.checkedAtEpochMs,
+                success = result.summary.reachable,
+                network = result.profile.lastTestNetwork,
+                latencyMs = result.summary.bestLatencyMs,
+                score = result.summary.bestScore
+            )
+        }.getOrNull() ?: result.profile
+        importedConfig = config
+        selectedProfileId = refreshed.id
+        selectedProfile = refreshed
+        activeConnectionProfileId = null
+        return true
+    }
+
+    private fun loadProfileConfigQuiet(profile: VpnProfile): ImportedConfig? {
+        val raw = runCatching { profileStore.loadRawConfig(profile.id) }.getOrNull() ?: return null
+        if (raw.isBlank()) return null
+        return runCatching { ConfigImporter.parse(raw, profile.name) }.getOrNull()
+    }
+
+    private fun buildAutoRankingReport(
+        results: List<ProfileProbeResult>,
+        best: ProfileProbeResult?,
+        reason: String
+    ): String {
+        val sorted = results.sortedWith(profileProbeResultComparator())
+        val lines = mutableListOf<String>()
+        lines += "Auto test ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
+        lines += currentNetworkDiagnosticNote()
+        lines += "Note: this ranks endpoint reachability only. Full VPN login is still verified after Connect."
+        if (best != null) {
+            lines += "Best now: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+        }
+        sorted.forEachIndexed { index, result ->
+            val summary = result.summary
+            val state = if (summary.reachable) {
+                "OK${summary.bestLatencyMs?.let { " ${it}ms" }.orEmpty()}${summary.bestScore?.let { " score $it" }.orEmpty()}"
+            } else {
+                "failed"
+            }
+            val selected = if (result.profile.id == best?.profile?.id) " ← best" else ""
+            lines += "${index + 1}. ${compactProfileTitle(result.profile)} — $state$selected"
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun profileProbeResultComparator(): Comparator<ProfileProbeResult> =
+        compareByDescending<ProfileProbeResult> { it.summary.reachable }
+            .thenBy { it.summary.bestScore ?: Int.MAX_VALUE }
+            .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE }
+            .thenByDescending { it.profile.favorite }
+            .thenByDescending { it.profile.lastVerifiedEpochMs ?: 0L }
+
+    private fun profileRankingComparator(): Comparator<VpnProfile> =
+        compareByDescending<VpnProfile> { it.lastTestSuccess == true }
+            .thenBy { it.lastTestScore ?: Int.MAX_VALUE }
+            .thenBy { it.lastTestLatencyMs ?: Long.MAX_VALUE }
+            .thenByDescending { it.lastVerifiedEpochMs ?: 0L }
+            .thenByDescending { it.favorite }
+            .thenByDescending { it.updatedAtEpochMs }
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -1311,6 +1529,7 @@ class MainActivity : Activity() {
         primaryActionButton.setActive(active)
         updateSelectedProfileSummary()
         updateProfileActionButtons()
+        refreshAutoTestSummary()
     }
 
     private fun dashboardTitleFor(state: VpnHubConnectionState): String = when (state) {
@@ -1383,9 +1602,13 @@ class MainActivity : Activity() {
 
     private fun homeProfileMeta(profile: VpnProfile): String {
         val subtitle = compactProfileSubtitle(profile)
-        val verified = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
-        return listOfNotNull(subtitle, verified).joinToString(" • ").ifBlank { "Ready" }.shortUi(26)
+        val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
+            ?: profile.lastTestMiniLabel()
+        return listOfNotNull(subtitle, health).joinToString(" • ").ifBlank { "Ready" }.shortUi(30)
     }
+
+    private fun compactProfileTitle(profile: VpnProfile?, fallback: String): String =
+        profile?.let { compactProfileTitle(it) } ?: fallback.shortUi(24)
 
     private fun compactProfileTitle(profile: VpnProfile): String {
         val base = primaryProfileNameSegment(profile.displayName)
@@ -1427,10 +1650,12 @@ class MainActivity : Activity() {
     }
 
     private fun profileRowSubtitle(profile: VpnProfile): String {
-        val detail = compactProfileSubtitle(profile)?.shortUi(22)
-        val latency = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
-        val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.shortUi(10)
-        return listOfNotNull(detail, latency, network).joinToString(" • ").ifBlank { "Saved config" }
+        val detail = compactProfileSubtitle(profile)?.shortUi(20)
+        val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
+            ?: profile.lastTestMiniLabel()
+        val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }
+            ?: profile.lastTestNetwork?.takeIf { it.isNotBlank() }
+        return listOfNotNull(detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
     }
 
     private fun primaryProfileNameSegment(name: String): String {
@@ -1764,28 +1989,36 @@ class MainActivity : Activity() {
     private fun profileStatusLabel(profile: VpnProfile): String = when {
         profile.id == selectedProfileId -> "Selected"
         profile.lastVerifiedEpochMs != null -> "Good"
+        profile.lastTestSuccess == true -> "Fast"
         profile.favorite -> "Fav"
+        profile.lastTestSuccess == false -> "Fail"
         else -> "New"
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId -> 0xFFEFF6FF.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFFD1FAE5.toInt()
+        profile.lastTestSuccess == true -> 0xFFDCFCE7.toInt()
         profile.favorite -> 0xFFFEF3C7.toInt()
+        profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
         else -> 0xFFF1F5F9.toInt()
     }
 
     private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId -> 0xFF93C5FD.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF6EE7B7.toInt()
+        profile.lastTestSuccess == true -> 0xFF86EFAC.toInt()
         profile.favorite -> 0xFFFCD34D.toInt()
+        profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
         else -> 0xFFE2E8F0.toInt()
     }
 
     private fun profileStatusTextColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId -> 0xFF2563EB.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF047857.toInt()
+        profile.lastTestSuccess == true -> 0xFF15803D.toInt()
         profile.favorite -> 0xFF92400E.toInt()
+        profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
         else -> 0xFF64748B.toInt()
     }
 
@@ -1800,6 +2033,8 @@ class MainActivity : Activity() {
             compactProfileSubtitle(profile),
             profile.kind.displayName,
             profile.lastVerifiedNetwork,
+            profile.lastTestNetwork,
+            profile.lastTestLabel(),
             profile.endpoints.joinToString(" ") { "${it.protocol} ${it.host}:${it.port}" }
         ).joinToString(" ").lowercase(java.util.Locale.US)
         return terms.all { haystack.contains(it) }
@@ -2216,7 +2451,7 @@ class MainActivity : Activity() {
                         status.text = "Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
                             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
                         showSection(AppSection.PROFILES)
-                        maybeAutoTestSelectedConfig("subscription")
+                        maybeAutoRankBestProfile("subscription")
                     },
                     onFailure = { error ->
                         status.text = "Subscription sync failed: ${error.message ?: error.javaClass.simpleName}"
@@ -2558,15 +2793,19 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             })
         }
-        val favorites = profiles.filter { it.favorite }
-            .sortedByDescending { it.lastVerifiedEpochMs ?: 0L }
-        val recent = profiles.filter { !it.favorite && it.lastVerifiedEpochMs != null }
+        val recommended = profiles.filter { it.lastTestSuccess == true }
+            .sortedWith(profileRankingComparator())
+        val recommendedIds = recommended.map { it.id }.toSet()
+        val favorites = profiles.filter { it.favorite && it.id !in recommendedIds }
+            .sortedWith(profileRankingComparator())
+        val recent = profiles.filter { it.id !in recommendedIds && !it.favorite && it.lastVerifiedEpochMs != null }
             .sortedByDescending { it.lastVerifiedEpochMs ?: 0L }
         val favoriteIds = favorites.map { it.id }.toSet()
         val recentIds = recent.map { it.id }.toSet()
-        val others = profiles.filter { it.id !in favoriteIds && it.id !in recentIds }
-            .sortedBy { compactProfileTitle(it).lowercase(java.util.Locale.US) }
+        val others = profiles.filter { it.id !in recommendedIds && it.id !in favoriteIds && it.id !in recentIds }
+            .sortedWith(profileRankingComparator())
         var shown = 0
+        shown += addLocationSection(profileListContainer, "Recommended", recommended, MAX_PROFILE_BUTTONS - shown)
         shown += addLocationSection(profileListContainer, "Favorites", favorites, MAX_PROFILE_BUTTONS - shown)
         shown += addLocationSection(profileListContainer, "Recently good", recent, MAX_PROFILE_BUTTONS - shown)
         shown += addLocationSection(profileListContainer, "All configs", others, MAX_PROFILE_BUTTONS - shown)
@@ -2630,6 +2869,7 @@ class MainActivity : Activity() {
         selectedProfile = profile
         refreshProfileButtons()
         status.text = "Selected profile: ${profile.displayName}. Tap Connect to start."
+        refreshAutoTestSummary()
         showSection(AppSection.HOME)
         maybeAutoTestSelectedConfig("select")
     }
@@ -2662,7 +2902,8 @@ class MainActivity : Activity() {
     }
 
     private fun resolveAndProbeImportedConfig() {
-        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
+        val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
+        val config = importedConfig ?: profile?.let { loadProfileConfig(it) }
         if (config == null) {
             status.text = "Import an OpenVPN, WireGuard, or V2Ray/Xray config first."
             return
@@ -2672,15 +2913,42 @@ class MainActivity : Activity() {
         setAdvancedVisible(true)
         status.text = "Running advanced endpoint diagnostics..."
         advancedDiagnostics.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
+        val network = currentNetworkLabel()
         Thread {
-            val text = try {
-                buildResolveAndProbeReport(config)
+            val summary = try {
+                probeConfigSummary(config)
             } catch (e: Exception) {
-                "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}"
+                ConfigProbeSummary(
+                    report = "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}",
+                    okCount = 0,
+                    failedCount = 1,
+                    bestLatencyMs = null,
+                    bestScore = null,
+                    checkedAtEpochMs = System.currentTimeMillis()
+                )
+            }
+            val updatedProfile = profile?.let { testedProfile ->
+                runCatching {
+                    profileStore.markTested(
+                        profileId = testedProfile.id,
+                        testedAtEpochMs = summary.checkedAtEpochMs,
+                        success = summary.reachable,
+                        network = network,
+                        latencyMs = summary.bestLatencyMs,
+                        score = summary.bestScore
+                    )
+                }.getOrNull()
             }
             runOnUiThread {
-                advancedDiagnostics.text = text
+                if (updatedProfile != null && (selectedProfileId == null || selectedProfileId == updatedProfile.id)) {
+                    selectedProfile = updatedProfile
+                    selectedProfileId = updatedProfile.id
+                }
+                advancedDiagnostics.text = summary.report
                 status.text = "Advanced diagnostics completed. See Settings > Advanced."
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
+                refreshAutoTestSummary()
             }
         }.start()
     }
@@ -2688,7 +2956,7 @@ class MainActivity : Activity() {
     private fun buildResolveAndProbeReport(config: ImportedConfig): String {
         val lines = mutableListOf<String>()
         val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
-        lines += "Phase 2/4 results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
+        lines += "Endpoint test results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
         lines += currentNetworkDiagnosticNote()
 
         for (endpoint in config.endpoints) {
@@ -2850,6 +3118,27 @@ class MainActivity : Activity() {
         return "Last good: $latency$network"
     }
 
+    private fun VpnProfile.lastTestMiniLabel(): String? {
+        if (lastTestedEpochMs == null) return null
+        return if (lastTestSuccess == true) {
+            lastTestLatencyMs?.let { "Test ${it}ms" } ?: "Test OK"
+        } else {
+            "Test failed"
+        }
+    }
+
+    private fun VpnProfile.lastTestLabel(): String? {
+        if (lastTestedEpochMs == null) return null
+        val result = if (lastTestSuccess == true) {
+            lastTestLatencyMs?.let { "OK ${it}ms" } ?: "OK"
+        } else {
+            "failed"
+        }
+        val score = lastTestScore?.let { " • score $it" }.orEmpty()
+        val network = lastTestNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
+        return "Last test: $result$score$network"
+    }
+
     private fun VpnProfileEndpoint.cleanEndpointLabel(): String {
         val shortHost = host.shortHost()
         return "$protocol $shortHost:$port"
@@ -2889,6 +3178,23 @@ class MainActivity : Activity() {
         val skippedCount: Int
     )
 
+    private data class ConfigProbeSummary(
+        val report: String,
+        val okCount: Int,
+        val failedCount: Int,
+        val bestLatencyMs: Long?,
+        val bestScore: Int?,
+        val checkedAtEpochMs: Long
+    ) {
+        val reachable: Boolean get() = okCount > 0
+    }
+
+    private data class ProfileProbeResult(
+        val profile: VpnProfile,
+        val config: ImportedConfig?,
+        val summary: ConfigProbeSummary
+    )
+
     private enum class AppSection {
         HOME,
         PROFILES,
@@ -2910,11 +3216,14 @@ class MainActivity : Activity() {
         const val MAX_PROFILE_BUTTONS = 40
         const val MAX_PROFILE_SHEET_CHOICES = 40
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
+        const val MAX_AUTO_RANK_PROFILES = 12
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
+        const val SETTINGS_PREFS_NAME = "vpn_project_settings"
+        const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
     }
 }
 

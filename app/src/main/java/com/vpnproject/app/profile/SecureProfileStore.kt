@@ -43,6 +43,11 @@ class SecureProfileStore(context: Context) {
                 lastVerifiedEpochMs = existing?.lastVerifiedEpochMs,
                 lastVerifiedNetwork = existing?.lastVerifiedNetwork,
                 lastVerifiedLatencyMs = existing?.lastVerifiedLatencyMs,
+                lastTestedEpochMs = existing?.lastTestedEpochMs,
+                lastTestSuccess = existing?.lastTestSuccess,
+                lastTestLatencyMs = existing?.lastTestLatencyMs,
+                lastTestScore = existing?.lastTestScore,
+                lastTestNetwork = existing?.lastTestNetwork,
                 favorite = existing?.favorite ?: generated.favorite
             )
         }
@@ -59,6 +64,16 @@ class SecureProfileStore(context: Context) {
                 ?: remove(key(profile.id, FIELD_LAST_VERIFIED_NETWORK))
             profile.lastVerifiedLatencyMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED_LATENCY), it) }
                 ?: remove(key(profile.id, FIELD_LAST_VERIFIED_LATENCY))
+            profile.lastTestedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_TESTED), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TESTED))
+            profile.lastTestSuccess?.let { putBoolean(key(profile.id, FIELD_LAST_TEST_SUCCESS), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TEST_SUCCESS))
+            profile.lastTestLatencyMs?.let { putLong(key(profile.id, FIELD_LAST_TEST_LATENCY), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TEST_LATENCY))
+            profile.lastTestScore?.let { putInt(key(profile.id, FIELD_LAST_TEST_SCORE), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TEST_SCORE))
+            profile.lastTestNetwork?.let { putString(key(profile.id, FIELD_LAST_TEST_NETWORK), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TEST_NETWORK))
             putString(key(profile.id, FIELD_RAW_CONFIG), crypto.encrypt(config.originalText))
             putString(KEY_PROFILE_IDS, mergeProfileIds(profile.id))
             putString(KEY_LAST_PROFILE_ID, profile.id)
@@ -165,6 +180,29 @@ class SecureProfileStore(context: Context) {
         return loadProfileMetadata(profileId)
     }
 
+    fun markTested(
+        profileId: String,
+        testedAtEpochMs: Long = System.currentTimeMillis(),
+        success: Boolean,
+        network: String? = null,
+        latencyMs: Long? = null,
+        score: Int? = null
+    ): VpnProfile? {
+        prefs.edit().apply {
+            putLong(key(profileId, FIELD_LAST_TESTED), testedAtEpochMs)
+            putBoolean(key(profileId, FIELD_LAST_TEST_SUCCESS), success)
+            network?.takeIf { it.isNotBlank() }?.let { putString(key(profileId, FIELD_LAST_TEST_NETWORK), it) }
+                ?: remove(key(profileId, FIELD_LAST_TEST_NETWORK))
+            if (latencyMs != null && latencyMs >= 0L) putLong(key(profileId, FIELD_LAST_TEST_LATENCY), latencyMs)
+            else remove(key(profileId, FIELD_LAST_TEST_LATENCY))
+            if (score != null && score >= 0) putInt(key(profileId, FIELD_LAST_TEST_SCORE), score)
+            else remove(key(profileId, FIELD_LAST_TEST_SCORE))
+            putLong(key(profileId, FIELD_UPDATED), testedAtEpochMs)
+            putString(KEY_LAST_PROFILE_ID, profileId)
+        }.apply()
+        return loadProfileMetadata(profileId)
+    }
+
     fun deleteProfile(profileId: String) {
         val remaining = profileIds().filterNot { it == profileId }
         prefs.edit().apply {
@@ -177,6 +215,11 @@ class SecureProfileStore(context: Context) {
             remove(key(profileId, FIELD_LAST_VERIFIED))
             remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
             remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
+            remove(key(profileId, FIELD_LAST_TESTED))
+            remove(key(profileId, FIELD_LAST_TEST_SUCCESS))
+            remove(key(profileId, FIELD_LAST_TEST_LATENCY))
+            remove(key(profileId, FIELD_LAST_TEST_SCORE))
+            remove(key(profileId, FIELD_LAST_TEST_NETWORK))
             remove(key(profileId, FIELD_RAW_CONFIG))
             putString(KEY_PROFILE_IDS, remaining.joinToString(ID_SEPARATOR))
             if (prefs.getString(KEY_LAST_PROFILE_ID, null) == profileId) {
@@ -193,6 +236,10 @@ class SecureProfileStore(context: Context) {
         val updated = prefs.getLong(key(id, FIELD_UPDATED), created)
         val lastVerified = prefs.getLong(key(id, FIELD_LAST_VERIFIED), 0L).takeIf { it > 0L }
         val lastVerifiedLatency = prefs.getLong(key(id, FIELD_LAST_VERIFIED_LATENCY), -1L).takeIf { it >= 0L }
+        val lastTested = prefs.getLong(key(id, FIELD_LAST_TESTED), 0L).takeIf { it > 0L }
+        val hasLastTestSuccess = prefs.contains(key(id, FIELD_LAST_TEST_SUCCESS))
+        val lastTestLatency = prefs.getLong(key(id, FIELD_LAST_TEST_LATENCY), -1L).takeIf { it >= 0L }
+        val lastTestScore = prefs.getInt(key(id, FIELD_LAST_TEST_SCORE), -1).takeIf { it >= 0 }
         return VpnProfile(
             id = id,
             name = name,
@@ -203,6 +250,11 @@ class SecureProfileStore(context: Context) {
             lastVerifiedEpochMs = lastVerified,
             lastVerifiedNetwork = prefs.getString(key(id, FIELD_LAST_VERIFIED_NETWORK), null),
             lastVerifiedLatencyMs = lastVerifiedLatency,
+            lastTestedEpochMs = lastTested,
+            lastTestSuccess = if (hasLastTestSuccess) prefs.getBoolean(key(id, FIELD_LAST_TEST_SUCCESS), false) else null,
+            lastTestLatencyMs = lastTestLatency,
+            lastTestScore = lastTestScore,
+            lastTestNetwork = prefs.getString(key(id, FIELD_LAST_TEST_NETWORK), null),
             favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false)
         )
     }
@@ -305,6 +357,11 @@ class SecureProfileStore(context: Context) {
         const val FIELD_LAST_VERIFIED = "last_verified_at"
         const val FIELD_LAST_VERIFIED_NETWORK = "last_verified_network"
         const val FIELD_LAST_VERIFIED_LATENCY = "last_verified_latency_ms"
+        const val FIELD_LAST_TESTED = "last_tested_at"
+        const val FIELD_LAST_TEST_SUCCESS = "last_test_success"
+        const val FIELD_LAST_TEST_LATENCY = "last_test_latency_ms"
+        const val FIELD_LAST_TEST_SCORE = "last_test_score"
+        const val FIELD_LAST_TEST_NETWORK = "last_test_network"
         const val FIELD_RAW_CONFIG = "raw_config"
         const val FIELD_URL = "url"
         const val FIELD_LAST_SYNC = "last_sync_at"
