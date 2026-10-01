@@ -17,6 +17,7 @@ class VpnHubStatusMapperTest {
                 kind = EngineKind.XRAY_CORE,
                 state = EngineState.VERIFIED,
                 message = "Xray verified in 126ms.",
+                latencyMs = 126L,
                 verified = true
             )
         )
@@ -24,6 +25,7 @@ class VpnHubStatusMapperTest {
         assertEquals(VpnHubConnectionState.CONNECTED, hub.state)
         assertEquals(EngineKind.XRAY_CORE, hub.activeEngine)
         assertTrue(hub.verified)
+        assertEquals(126L, hub.latencyMs)
         assertTrue(hub.detail.contains("Embedded Xray"))
     }
 

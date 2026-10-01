@@ -32,6 +32,9 @@ class SecureProfileStore(context: Context) {
             putLong(key(profile.id, FIELD_CREATED), profile.createdAtEpochMs)
             putLong(key(profile.id, FIELD_UPDATED), profile.updatedAtEpochMs)
             putBoolean(key(profile.id, FIELD_FAVORITE), profile.favorite)
+            profile.lastVerifiedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED), it) }
+            profile.lastVerifiedNetwork?.let { putString(key(profile.id, FIELD_LAST_VERIFIED_NETWORK), it) }
+            profile.lastVerifiedLatencyMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED_LATENCY), it) }
             putString(key(profile.id, FIELD_RAW_CONFIG), crypto.encrypt(config.originalText))
             putString(KEY_PROFILE_IDS, mergeProfileIds(profile.id))
             putString(KEY_LAST_PROFILE_ID, profile.id)
@@ -73,6 +76,24 @@ class SecureProfileStore(context: Context) {
         return loadProfileMetadata(profileId)
     }
 
+    fun markVerified(
+        profileId: String,
+        verifiedAtEpochMs: Long = System.currentTimeMillis(),
+        network: String? = null,
+        latencyMs: Long? = null
+    ): VpnProfile? {
+        prefs.edit().apply {
+            putLong(key(profileId, FIELD_LAST_VERIFIED), verifiedAtEpochMs)
+            network?.takeIf { it.isNotBlank() }?.let { putString(key(profileId, FIELD_LAST_VERIFIED_NETWORK), it) }
+                ?: remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
+            if (latencyMs != null && latencyMs >= 0L) putLong(key(profileId, FIELD_LAST_VERIFIED_LATENCY), latencyMs)
+            else remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
+            putLong(key(profileId, FIELD_UPDATED), verifiedAtEpochMs)
+            putString(KEY_LAST_PROFILE_ID, profileId)
+        }.apply()
+        return loadProfileMetadata(profileId)
+    }
+
     fun deleteProfile(profileId: String) {
         val remaining = profileIds().filterNot { it == profileId }
         prefs.edit().apply {
@@ -82,6 +103,9 @@ class SecureProfileStore(context: Context) {
             remove(key(profileId, FIELD_CREATED))
             remove(key(profileId, FIELD_UPDATED))
             remove(key(profileId, FIELD_FAVORITE))
+            remove(key(profileId, FIELD_LAST_VERIFIED))
+            remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
+            remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
             remove(key(profileId, FIELD_RAW_CONFIG))
             putString(KEY_PROFILE_IDS, remaining.joinToString(ID_SEPARATOR))
             if (prefs.getString(KEY_LAST_PROFILE_ID, null) == profileId) {
@@ -96,6 +120,8 @@ class SecureProfileStore(context: Context) {
             ?: VpnProfileKind.UNKNOWN
         val created = prefs.getLong(key(id, FIELD_CREATED), 0L).takeIf { it > 0L } ?: return null
         val updated = prefs.getLong(key(id, FIELD_UPDATED), created)
+        val lastVerified = prefs.getLong(key(id, FIELD_LAST_VERIFIED), 0L).takeIf { it > 0L }
+        val lastVerifiedLatency = prefs.getLong(key(id, FIELD_LAST_VERIFIED_LATENCY), -1L).takeIf { it >= 0L }
         return VpnProfile(
             id = id,
             name = name,
@@ -103,6 +129,9 @@ class SecureProfileStore(context: Context) {
             endpoints = decodeEndpoints(prefs.getString(key(id, FIELD_ENDPOINTS), null).orEmpty()),
             createdAtEpochMs = created,
             updatedAtEpochMs = updated,
+            lastVerifiedEpochMs = lastVerified,
+            lastVerifiedNetwork = prefs.getString(key(id, FIELD_LAST_VERIFIED_NETWORK), null),
+            lastVerifiedLatencyMs = lastVerifiedLatency,
             favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false)
         )
     }
@@ -159,6 +188,9 @@ class SecureProfileStore(context: Context) {
         const val FIELD_CREATED = "created_at"
         const val FIELD_UPDATED = "updated_at"
         const val FIELD_FAVORITE = "favorite"
+        const val FIELD_LAST_VERIFIED = "last_verified_at"
+        const val FIELD_LAST_VERIFIED_NETWORK = "last_verified_network"
+        const val FIELD_LAST_VERIFIED_LATENCY = "last_verified_latency_ms"
         const val FIELD_RAW_CONFIG = "raw_config"
         const val ID_SEPARATOR = ","
         const val ENDPOINT_SEPARATOR = ";"

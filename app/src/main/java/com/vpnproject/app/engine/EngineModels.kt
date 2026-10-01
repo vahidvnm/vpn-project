@@ -27,5 +27,6 @@ data class EngineStatus(
     val rxBytes: Long? = null,
     val txBytes: Long? = null,
     val egressIp: String? = null,
+    val latencyMs: Long? = null,
     val verified: Boolean = false
 )

@@ -343,7 +343,8 @@ explainFailure()
   - [x] rename selected profile در UI و persistence
   - [x] delete selected profile در UI با confirm dialog
   - [x] mark/unmark favorite در UI و persistence
-  - [ ] last-good و last verified کامل
+  - [x] ثبت اولیه `last-good/last verified` بعد از اتصال VERIFIED
+  - [ ] نمایش/منطق کامل last verified برای همه engineها و شبکه‌ها
   - [ ] export فقط با هشدار کاربر
 
 **خروجی فاز:** app دیگر فقط proof-of-concept اتصال نیست؛ یک هسته چندموتوره قابل توسعه دارد که UI و orchestrator روی آن ساخته می‌شوند.
@@ -362,6 +363,7 @@ explainFailure()
   - [x] Status ساده: `Connected`, `Connecting`, `Failed` و summary مشترک Hub
   - [x] نمایش traffic خلاصه Xray از stats واقعی core
   - [x] live refresh خودکار dashboard/status هنگام اتصال
+  - [x] ثبت و نمایش اولیه Last good profile بعد از Xray VERIFIED
   - [x] دکمه Diagnostics جدا از مسیر کاربر عادی
   - [x] navigation اولیه بین Home / Profiles / Tools برای کمتر شدن شلوغی صفحه
   - [ ] polish نهایی UI، settings/drawer، empty states بهتر
@@ -530,6 +532,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] live dashboard refresh و delete selected profile اولیه.
 - [x] compact کردن Advanced diagnostics تا statsهای Xray هر ۲ ثانیه تکراری جمع نشوند.
 - [x] rename/favorite اولیه برای profile manager.
+- [x] ثبت اولیه Last good / Last verified برای پروفایل Xray موفق.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

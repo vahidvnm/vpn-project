@@ -86,6 +86,8 @@ class MainActivity : Activity() {
     private var importedConfig: ImportedConfig? = null
     private var selectedProfileId: String? = null
     private var selectedProfile: VpnProfile? = null
+    private var activeConnectionProfileId: String? = null
+    private var lastRecordedVerificationKey: String? = null
     private lateinit var profileListContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
     private var pendingOpenVpnConfigText: String? = null
@@ -408,6 +410,8 @@ class MainActivity : Activity() {
 
     private fun refreshDashboardLive() {
         if (!::hubStatusTitle.isInitialized) return
+        val hub = currentHubStatus()
+        recordVerifiedProfileIfNeeded(hub)
         updateDashboardSummary()
         if (::advancedDiagnostics.isInitialized && advancedVisible && ::toolsSection.isInitialized && toolsSection.visibility == View.VISIBLE) {
             advancedDiagnostics.text = engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus)
@@ -421,6 +425,27 @@ class MainActivity : Activity() {
         VpnHubConnectionState.IDLE,
         VpnHubConnectionState.STOPPED,
         VpnHubConnectionState.FAILED -> false
+    }
+
+    private fun recordVerifiedProfileIfNeeded(hub: com.vpnproject.app.engine.VpnHubStatus) {
+        if (!hub.verified || hub.state != VpnHubConnectionState.CONNECTED) return
+        val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
+        val network = currentNetworkLabel()
+        val key = "$profileId:${hub.activeEngine}:${hub.latencyMs ?: -1}:${network.orEmpty()}:${hub.verified}"
+        if (lastRecordedVerificationKey == key) return
+        val updated = runCatching {
+            profileStore.markVerified(
+                profileId = profileId,
+                network = network,
+                latencyMs = hub.latencyMs
+            )
+        }.getOrNull()
+        if (updated != null) {
+            lastRecordedVerificationKey = key
+            if (selectedProfileId == updated.id) selectedProfile = updated
+            activeConnectionProfileId = updated.id
+            refreshProfileButtons()
+        }
     }
 
     private fun handlePrimaryAction() {
@@ -446,7 +471,7 @@ class MainActivity : Activity() {
     private fun currentHubStatus() = VpnHubStatusMapper.from(
         wireGuard = WireGuardVpnService.lastStatus,
         xray = XrayVpnService.lastStatus,
-        selectedProfile = selectedProfile
+        selectedProfile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
     )
 
     private fun updateDashboardSummary() {
@@ -468,7 +493,7 @@ class MainActivity : Activity() {
             }
         )
         hubStatusDetail.text = hub.detail
-        connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine)
+        connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
         primaryActionButton.text = if (active) "Disconnect" else "Connect"
         primaryActionButton.setTextColor(0xFFFFFFFF.toInt())
         primaryActionButton.background = roundedBackground(
@@ -485,12 +510,14 @@ class MainActivity : Activity() {
         rxBytes: Long?,
         txBytes: Long?,
         egressIp: String?,
-        engine: com.vpnproject.app.engine.EngineKind?
+        engine: com.vpnproject.app.engine.EngineKind?,
+        latencyMs: Long?
     ): String {
         val parts = mutableListOf(
             "Verified: ${if (verified) "yes" else "no"}",
             "Traffic: ${formatBytes(rxBytes ?: 0)} down / ${formatBytes(txBytes ?: 0)} up"
         )
+        latencyMs?.let { parts += "Latency: ${it}ms" }
         engine?.let { parts += "Engine: ${engineLabel(it)}" }
         egressIp?.let { parts += "IP: $it" }
         return parts.joinToString(" • ")
@@ -695,6 +722,8 @@ class MainActivity : Activity() {
             updateDashboardSummary()
             return
         }
+        activeConnectionProfileId = selectedProfileId
+        lastRecordedVerificationKey = null
         when (config.kind) {
             ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
             ConfigKind.V2RAY -> prepareAndStartXrayEngine(config)
@@ -771,6 +800,8 @@ class MainActivity : Activity() {
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         status.text = "Disconnect requested for active engines."
+        activeConnectionProfileId = null
+        lastRecordedVerificationKey = null
         hubStatusTitle.text = "Disconnecting"
         hubStatusDetail.text = "Stopping WireGuard and Xray engines."
         primaryActionButton.text = "Connect"
@@ -1159,6 +1190,20 @@ class MainActivity : Activity() {
         return lines.joinToString("\n")
     }
 
+    private fun currentNetworkLabel(): String? {
+        return try {
+            val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork) ?: return null
+            val transports = mutableListOf<String>()
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) transports += "cellular"
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) transports += "wifi"
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) transports += "vpn"
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) transports += "ethernet"
+            transports.ifEmpty { listOf("unknown") }.joinToString("+")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun currentNetworkDiagnosticNote(): String {
         return try {
             val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
@@ -1256,6 +1301,13 @@ class MainActivity : Activity() {
             }
         }
         return uri.lastPathSegment
+    }
+
+    private fun VpnProfile.lastVerifiedLabel(): String? {
+        if (lastVerifiedEpochMs == null) return null
+        val latency = lastVerifiedLatencyMs?.let { "${it}ms" } ?: "verified"
+        val network = lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
+        return "Last good: $latency$network"
     }
 
     private fun VpnProfileEndpoint.cleanEndpointLabel(): String {

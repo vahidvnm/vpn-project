@@ -15,7 +15,8 @@ data class VpnHubStatus(
     val verified: Boolean = false,
     val rxBytes: Long? = null,
     val txBytes: Long? = null,
-    val egressIp: String? = null
+    val egressIp: String? = null,
+    val latencyMs: Long? = null
 )
 
 enum class VpnHubConnectionState {
@@ -45,7 +46,8 @@ object VpnHubStatusMapper {
                 verified = true,
                 rxBytes = status.rxBytes,
                 txBytes = status.txBytes,
-                egressIp = status.egressIp
+                egressIp = status.egressIp,
+                latencyMs = status.latencyMs
             )
         }
 
@@ -58,7 +60,8 @@ object VpnHubStatusMapper {
                 verified = false,
                 rxBytes = status.rxBytes,
                 txBytes = status.txBytes,
-                egressIp = status.egressIp
+                egressIp = status.egressIp,
+                latencyMs = status.latencyMs
             )
         }
 
@@ -71,7 +74,8 @@ object VpnHubStatusMapper {
                 verified = false,
                 rxBytes = status.rxBytes,
                 txBytes = status.txBytes,
-                egressIp = status.egressIp
+                egressIp = status.egressIp,
+                latencyMs = status.latencyMs
             )
         }
 
@@ -84,7 +88,8 @@ object VpnHubStatusMapper {
                 verified = false,
                 rxBytes = status.rxBytes,
                 txBytes = status.txBytes,
-                egressIp = status.egressIp
+                egressIp = status.egressIp,
+                latencyMs = status.latencyMs
             )
         }
 

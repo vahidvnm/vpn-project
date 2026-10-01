@@ -90,7 +90,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 appendDetailLine(previous.detail, "xray: ${s.shortForStatus()}"),
                 verified = previous.verified,
                 rxBytes = previous.rxBytes,
-                txBytes = previous.txBytes
+                txBytes = previous.txBytes,
+                latencyMs = previous.latencyMs
             )
         }
         return 0L
@@ -219,7 +220,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                         verificationDetail(note, attempts, stats, verifiedUrl),
                         verified = true,
                         rxBytes = traffic.rxBytes,
-                        txBytes = traffic.txBytes
+                        txBytes = traffic.txBytes,
+                        latencyMs = verifiedDelayMs
                     )
                     startForegroundNotification("Xray verified through proxy: ${verifiedDelayMs}ms")
                 } else {
@@ -388,7 +390,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         detail: String? = null,
         verified: Boolean = false,
         rxBytes: Long? = null,
-        txBytes: Long? = null
+        txBytes: Long? = null,
+        latencyMs: Long? = null
     ) {
         lastStatus = EngineStatus(
             kind = EngineKind.XRAY_CORE,
@@ -397,6 +400,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             detail = detail,
             rxBytes = rxBytes,
             txBytes = txBytes,
+            latencyMs = latencyMs,
             verified = verified
         )
     }

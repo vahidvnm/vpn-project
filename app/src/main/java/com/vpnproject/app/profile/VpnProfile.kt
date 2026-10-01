@@ -23,6 +23,7 @@ data class VpnProfile(
     val updatedAtEpochMs: Long,
     val lastVerifiedEpochMs: Long? = null,
     val lastVerifiedNetwork: String? = null,
+    val lastVerifiedLatencyMs: Long? = null,
     val favorite: Boolean = false
 ) {
     val displayName: String get() = name.ifBlank { kind.displayName }
@@ -31,7 +32,7 @@ data class VpnProfile(
         val endpointText = endpoints.take(maxEndpoints).joinToString(", ") { it.summary() }
             .ifBlank { "no endpoints" }
         val more = if (endpoints.size > maxEndpoints) ", +${endpoints.size - maxEndpoints} more" else ""
-        val verifiedText = lastVerifiedEpochMs?.let { ", last verified" }.orEmpty()
+        val verifiedText = lastVerifiedEpochMs?.let { ", last verified${lastVerifiedLatencyMs?.let { latency -> " ${latency}ms" }.orEmpty()}" }.orEmpty()
         return "$displayName — ${kind.displayName}: $endpointText$more$verifiedText"
     }
 }
