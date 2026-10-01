@@ -535,12 +535,13 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] rename/favorite اولیه برای profile manager.
 - [x] ثبت اولیه Last good / Last verified برای پروفایل Xray موفق.
 - [x] sync کردن Last good هنگام refresh/status/profile-tab تا نمایش آن بعد از VERIFIED پایدارتر شود.
-- [x] شروع redesign ظاهری NexaVPN-style با hero card، power button، protocol grid و bottom navigation.
+- [x] شروع redesign ظاهری reference-style با hero card، power button، protocol grid و bottom navigation.
 - [x] pass دوم redesign: bottom nav ثابت، حذف ظاهر debug از Tools/Profiles، stats کارت‌بندی‌شده، LTR layout برای متن انگلیسی، و حذف glyphهای مشکل‌دار از power button.
 - [x] pass سوم redesign: حذف N/PRO/SET و subtitle غیرضروری، اضافه کردن دکمه + برای clipboard/file import، و جمع‌کردن protocol/quick options پشت فلش پایین تا تصمیم نهایی پروتکل‌ها.
 - [x] اضافه کردن Add subscription URL به دکمه + و لیست گروه‌های subscription در Profiles.
-- [x] pass چهارم redesign: چیدمان Home به سبک مرجع NexaVPN با هدر لوگو، hero تصویری/کوهستانی، کارت‌های Protected/Stats، دکمه power حلقه‌ای، کارت location/profile، protocol grid پنج‌ستونه و bottom nav چهارآیتمی.
-- [x] pass پنجم redesign: انتقال protocol grid پشت فلش شیک بدون متن، اضافه‌کردن کارت Selected configs با مربع +، و افزودن Auto test با toggle روشن/خاموش و تست دستی.
+- [x] pass چهارم redesign: چیدمان Home به سبک تصویر مرجع با هدر لوگو، hero تصویری/کوهستانی، کارت‌های Protected/Stats، دکمه power حلقه‌ای، کارت location/profile، protocol grid پنج‌ستونه و bottom nav چهارآیتمی.
+- [x] pass پنجم redesign: انتقال protocol grid پشت فلش شیک بدون متن، اضافه‌کردن ناحیه Selected configs، و افزودن Auto test با toggle روشن/خاموش و تست دستی.
+- [x] pass ششم redesign: کوچک‌کردن hero کانکت، حذف نام/لوگوی مرجع، تبدیل کارت کشور/کانفیگ به selector کشویی داخل همان صفحه Home، و حذف ورودی‌های add/clipboard تکراری از صفحات دیگر.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

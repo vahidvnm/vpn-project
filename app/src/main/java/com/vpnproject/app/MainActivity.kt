@@ -80,6 +80,9 @@ class MainActivity : Activity() {
     private lateinit var liveStatsBadge: TextView
     private lateinit var homeProfileNameText: TextView
     private lateinit var homeProfileMetaText: TextView
+    private lateinit var homeProfileListContainer: LinearLayout
+    private lateinit var homeProfileArrowText: TextView
+    private var homeProfileSelectorExpanded = false
     private lateinit var statLatencyText: TextView
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
@@ -179,7 +182,7 @@ class MainActivity : Activity() {
         content.addView(profilesSection)
         content.addView(toolsSection)
 
-        homeSection.addView(createNexaHomeDashboard())
+        homeSection.addView(createCompactHomeDashboard())
         homeSection.addView(createSelectedConfigsCard())
         homeSection.addView(createAutoTestCard())
         homeOptionsToggle = createHomeOptionsToggle()
@@ -202,7 +205,6 @@ class MainActivity : Activity() {
             setPadding(dp(8), 0, dp(8), dp(12))
         }
         profileCard.addView(selectedProfileText)
-        profileCard.addView(createActionButton("+ Add config", primary = true) { showAddConfigMenu() })
         profileCard.addView(createProfileManageRow())
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -321,13 +323,20 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, dp(12))
+        setPadding(0, 0, 0, dp(10))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        addView(NexaLogoView(this@MainActivity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply {
+        addView(TextView(this@MainActivity).apply {
+            text = "VPN"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFFFFFFFF.toInt())
+            background = verticalGradient(0xFF2563EB.toInt(), 0xFF06B6D4.toInt(), 0xFF22C55E.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply {
                 setMargins(0, 0, dp(10), 0)
             }
         })
@@ -336,21 +345,19 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             addView(TextView(this@MainActivity).apply {
-                text = "NexaVPN"
+                text = "MultiVPN"
                 textSize = 20f
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
                 setTextColor(0xFF0F172A.toInt())
             })
             addView(TextView(this@MainActivity).apply {
-                text = "Fast • Private • Open"
+                text = "Your configs • Smart connect"
                 textSize = 12f
                 includeFontPadding = false
                 setTextColor(0xFF64748B.toInt())
             })
         })
-        addView(headerIconButton("♕") { status.text = "Premium/provider account features will stay optional." })
-        addView(headerIconButton("⚙") { showSection(AppSection.TOOLS) })
         addView(headerIconButton("+") { showAddConfigMenu() })
     }
 
@@ -370,7 +377,7 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun createNexaHomeDashboard(): LinearLayout = LinearLayout(this).apply {
+    private fun createCompactHomeDashboard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
@@ -385,7 +392,7 @@ class MainActivity : Activity() {
             clipToOutline = false
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(364)
+                dp(270)
             ).apply {
                 setMargins(0, 0, 0, dp(10))
             }
@@ -397,11 +404,11 @@ class MainActivity : Activity() {
             )
         })
 
-        hero.addView(createProtectionCard(), FrameLayout.LayoutParams(dp(112), dp(154), Gravity.START or Gravity.TOP).apply {
-            setMargins(0, dp(6), 0, 0)
+        hero.addView(createProtectionCard(), FrameLayout.LayoutParams(dp(108), dp(132), Gravity.START or Gravity.TOP).apply {
+            setMargins(0, dp(4), 0, 0)
         })
-        hero.addView(createSpeedCard(), FrameLayout.LayoutParams(dp(108), dp(164), Gravity.END or Gravity.TOP).apply {
-            setMargins(0, dp(6), 0, 0)
+        hero.addView(createSpeedCard(), FrameLayout.LayoutParams(dp(104), dp(138), Gravity.END or Gravity.TOP).apply {
+            setMargins(0, dp(4), 0, 0)
         })
 
         primaryActionButton = PowerRingButton(this@MainActivity).apply {
@@ -409,8 +416,8 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener { handlePrimaryAction() }
         }
-        hero.addView(primaryActionButton, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-            topMargin = dp(56)
+        hero.addView(primaryActionButton, FrameLayout.LayoutParams(dp(132), dp(132), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+            topMargin = dp(36)
         })
 
         hubStatusTitle = TextView(this@MainActivity).apply {
@@ -421,8 +428,8 @@ class MainActivity : Activity() {
             includeFontPadding = false
             setTextColor(0xFF0F172A.toInt())
         }
-        hero.addView(hubStatusTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34), Gravity.TOP).apply {
-            topMargin = dp(224)
+        hero.addView(hubStatusTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30), Gravity.TOP).apply {
+            topMargin = dp(174)
         })
 
         hubStatusDetail = TextView(this@MainActivity).apply {
@@ -434,9 +441,9 @@ class MainActivity : Activity() {
             setTextColor(0xFF059669.toInt())
         }
         hero.addView(hubStatusDetail, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42), Gravity.TOP).apply {
-            topMargin = dp(258)
-            leftMargin = dp(60)
-            rightMargin = dp(60)
+            topMargin = dp(202)
+            leftMargin = dp(42)
+            rightMargin = dp(42)
         })
         addView(hero)
 
@@ -450,7 +457,7 @@ class MainActivity : Activity() {
     private fun createProtectionCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(10), dp(10), dp(8), dp(10))
+        setPadding(dp(9), dp(9), dp(7), dp(9))
         background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
         protectionBadge = TextView(this@MainActivity).apply {
             text = "✓  Protected  ›"
@@ -468,10 +475,10 @@ class MainActivity : Activity() {
         ).forEach { row ->
             addView(TextView(this@MainActivity).apply {
                 text = row
-                textSize = 10.5f
+                textSize = 9.5f
                 setTextColor(0xFF64748B.toInt())
                 maxLines = 1
-                setPadding(0, dp(8), 0, 0)
+                setPadding(0, dp(5), 0, 0)
             })
         }
     }
@@ -479,10 +486,10 @@ class MainActivity : Activity() {
     private fun createSpeedCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
-        setPadding(dp(10), dp(10), dp(10), dp(10))
+        setPadding(dp(9), dp(9), dp(9), dp(9))
         background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
         addView(MiniChartView(this@MainActivity).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
         })
         statDownText = speedLine("↓", "0 B", "Download", 0xFF10B981.toInt())
         statUpText = speedLine("↑", "0 B", "Upload", 0xFF7C3AED.toInt())
@@ -501,11 +508,11 @@ class MainActivity : Activity() {
 
     private fun speedLine(icon: String, value: String, label: String, color: Int): TextView = TextView(this).apply {
         text = "$icon  $value\n     $label"
-        textSize = 11f
+        textSize = 10f
         typeface = Typeface.DEFAULT_BOLD
         includeFontPadding = false
         setTextColor(0xFF0F172A.toInt())
-        setPadding(0, dp(8), 0, 0)
+        setPadding(0, dp(5), 0, 0)
     }
 
     private fun createHeroCard(): LinearLayout = LinearLayout(this).apply {
@@ -661,77 +668,88 @@ class MainActivity : Activity() {
         setOnClickListener { showSection(AppSection.PROFILES) }
     }
 
-    private fun createSelectedConfigsCard(): LinearLayout = createCard().apply {
-        addView(LinearLayout(this@MainActivity).apply {
+    private fun createSelectedConfigsCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 26)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(10))
+        }
+
+        val selectorRow = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(TextView(this@MainActivity).apply {
-                text = "Selected configs"
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(0xFF0F172A.toInt())
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "Auto country after connect"
-                textSize = 11f
-                setTextColor(0xFF64748B.toInt())
-            })
-        })
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(8), dp(8), dp(8))
+            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 22)
+            isClickable = true
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72))
+            setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
+        }
+        selectorRow.addView(TextView(this@MainActivity).apply {
+            text = "🌐"
+            textSize = 22f
             gravity = Gravity.CENTER
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(0, dp(10), 0, 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(8), dp(10), dp(8), dp(10))
-                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
-                isClickable = true
-                isFocusable = true
-                layoutParams = LinearLayout.LayoutParams(0, dp(104), 2f).apply {
-                    setMargins(0, 0, dp(8), 0)
-                }
-                homeProfileNameText = TextView(this@MainActivity).apply {
-                    text = "Auto location"
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF0F172A.toInt())
-                }
-                homeProfileMetaText = TextView(this@MainActivity).apply {
-                    text = "Connect once or add a config"
-                    textSize = 11f
-                    gravity = Gravity.CENTER
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
-                    setPadding(0, dp(4), 0, 0)
-                }
-                addView(homeProfileNameText)
-                addView(homeProfileMetaText)
-                setOnClickListener { showSection(AppSection.PROFILES) }
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "+"
-                textSize = 36f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
-                isClickable = true
-                isFocusable = true
-                layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
-                setOnClickListener { showAddConfigMenu() }
-            })
+            includeFontPadding = false
+            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                setMargins(0, 0, dp(10), 0)
+            }
         })
+        selectorRow.addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            homeProfileNameText = TextView(this@MainActivity).apply {
+                text = "Choose location"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF0F172A.toInt())
+            }
+            homeProfileMetaText = TextView(this@MainActivity).apply {
+                text = "Tap arrow to pick saved configs"
+                textSize = 11f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF64748B.toInt())
+                setPadding(0, dp(2), 0, 0)
+            }
+            addView(homeProfileNameText)
+            addView(homeProfileMetaText)
+        })
+        homeProfileArrowText = TextView(this@MainActivity).apply {
+            text = "⌄"
+            textSize = 28f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
+        }
+        selectorRow.addView(homeProfileArrowText)
+        addView(selectorRow)
+
+        homeProfileListContainer = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        addView(homeProfileListContainer)
     }
 
     private fun createAutoTestCard(): LinearLayout = createCard().apply {
@@ -950,7 +968,7 @@ class MainActivity : Activity() {
     private fun createQuickActionsCard(): LinearLayout = createCard().apply {
         addView(sectionLabel("Quick actions"))
         addView(createFeatureRow(
-            featureTile("IMPORT", "Profiles", "Paste or file") { showSection(AppSection.PROFILES) },
+            featureTile("AUTO", "Smart test", "Health checks") { autoTestSelectedConfig("quick") },
             featureTile("CHECK", "Diagnostics", "Status tools") { showSection(AppSection.TOOLS) }
         ))
         addView(createFeatureRow(
@@ -1236,7 +1254,7 @@ class MainActivity : Activity() {
             VpnHubConnectionState.FAILED -> {
                 val hasProfile = importedConfig != null || selectedProfile != null || runCatching { profileStore.latestProfile() }.getOrNull() != null
                 if (!hasProfile) {
-                    status.text = "No profile selected. Import a config from clipboard/file first."
+                    status.text = "No profile selected. Use the top + to add a config first."
                     showSection(AppSection.PROFILES)
                 } else {
                     requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
@@ -1362,18 +1380,19 @@ class MainActivity : Activity() {
     }
 
     private fun updateSelectedProfileSummary() {
-        val profile = selectedProfile
+        val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         if (::selectedProfileText.isInitialized) {
             selectedProfileText.text = if (profile == null) {
-                "No profile selected yet. Import a config or pick a saved profile."
+                "No profile selected yet. Use the top + or pick a saved profile."
             } else {
                 selectedProfileSummary(profile)
             }
         }
         if (::homeProfileNameText.isInitialized) {
-            homeProfileNameText.text = profile?.displayName?.shortUi(32) ?: "Choose profile"
-            homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Paste or import a config to begin"
+            homeProfileNameText.text = profile?.displayName?.shortUi(32) ?: "Choose location"
+            homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap arrow to pick saved configs"
         }
+        if (homeProfileSelectorExpanded) refreshHomeProfileList()
     }
 
     private fun homeProfileMeta(profile: VpnProfile): String {
@@ -1385,6 +1404,63 @@ class MainActivity : Activity() {
             endpoint,
             verified
         ).joinToString(" • ")
+    }
+
+    private fun setHomeProfileListExpanded(expanded: Boolean) {
+        homeProfileSelectorExpanded = expanded
+        if (::homeProfileArrowText.isInitialized) homeProfileArrowText.text = if (expanded) "⌃" else "⌄"
+        if (::homeProfileListContainer.isInitialized) {
+            homeProfileListContainer.visibility = if (expanded) View.VISIBLE else View.GONE
+            if (expanded) refreshHomeProfileList()
+        }
+    }
+
+    private fun refreshHomeProfileList() {
+        if (!::homeProfileListContainer.isInitialized) return
+        homeProfileListContainer.removeAllViews()
+        val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        if (profiles.isEmpty()) {
+            homeProfileListContainer.addView(TextView(this).apply {
+                text = "No saved configs yet. Use + at the top."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            })
+            return
+        }
+        profiles.take(MAX_HOME_PROFILE_CHOICES).forEach { profile ->
+            homeProfileListContainer.addView(homeProfileChoice(profile))
+        }
+    }
+
+    private fun homeProfileChoice(profile: VpnProfile): TextView = TextView(this).apply {
+        val marker = if (profile.id == selectedProfileId) "✓ " else ""
+        text = marker + profileButtonLabel(profile).replace("\n", "  •  ").shortUi(96)
+        textSize = 12f
+        typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        gravity = Gravity.CENTER_VERTICAL
+        maxLines = 2
+        ellipsize = TextUtils.TruncateAt.END
+        setTextColor(0xFF0F172A.toInt())
+        background = roundedBackground(
+            fillColor = if (profile.id == selectedProfileId) 0xFFEFF6FF.toInt() else 0xFFF8FAFC.toInt(),
+            strokeColor = if (profile.id == selectedProfileId) 0xFF93C5FD.toInt() else 0xFFE2E8F0.toInt(),
+            radiusDp = 16
+        )
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(4), 0, 0)
+        }
+        isClickable = true
+        isFocusable = true
+        setOnClickListener {
+            setHomeProfileListExpanded(false)
+            loadProfile(profile)
+        }
     }
 
     private fun updateProfileActionButtons() {
@@ -2063,7 +2139,7 @@ class MainActivity : Activity() {
             return
         }
         if (profiles.isEmpty()) {
-            status.text = "No saved profiles yet. Import or paste a config first."
+            status.text = "No saved profiles yet. Use the top + to add one."
             return
         }
         status.text = "Saved VPN Hub profiles:\n" + profiles.joinToString("\n") { profile ->
@@ -2090,6 +2166,7 @@ class MainActivity : Activity() {
             ) { loadProfile(profile) })
         }
         refreshSubscriptionGroupButtons()
+        refreshHomeProfileList()
         updateDashboardSummary()
     }
 
@@ -2127,7 +2204,7 @@ class MainActivity : Activity() {
             return
         }
         if (profile == null) {
-            status.text = "No saved profile found. Import or paste a config first."
+            status.text = "No saved profile found. Use the top + to add one."
             return
         }
         loadProfile(profile)
@@ -2403,41 +2480,13 @@ class MainActivity : Activity() {
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val MAX_PROFILE_BUTTONS = 5
+        const val MAX_HOME_PROFILE_CHOICES = 6
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
-    }
-}
-
-private class NexaLogoView(context: Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        paint.strokeWidth = w * 0.18f
-        paint.shader = LinearGradient(0f, h, w, 0f, intArrayOf(0xFF0EA5E9.toInt(), 0xFF2563EB.toInt(), 0xFF8B5CF6.toInt()), null, Shader.TileMode.CLAMP)
-        val left = Path().apply {
-            moveTo(w * 0.18f, h * 0.76f)
-            lineTo(w * 0.38f, h * 0.24f)
-            lineTo(w * 0.56f, h * 0.76f)
-        }
-        val right = Path().apply {
-            moveTo(w * 0.47f, h * 0.72f)
-            lineTo(w * 0.68f, h * 0.24f)
-            lineTo(w * 0.84f, h * 0.36f)
-        }
-        canvas.drawPath(left, paint)
-        canvas.drawPath(right, paint)
-        paint.shader = null
     }
 }
 
