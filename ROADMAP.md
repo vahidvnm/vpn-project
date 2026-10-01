@@ -536,6 +536,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] sync کردن Last good هنگام refresh/status/profile-tab تا نمایش آن بعد از VERIFIED پایدارتر شود.
 - [x] شروع redesign ظاهری NexaVPN-style با hero card، power button، protocol grid و bottom navigation.
 - [x] pass دوم redesign: bottom nav ثابت، حذف ظاهر debug از Tools/Profiles، stats کارت‌بندی‌شده، LTR layout برای متن انگلیسی، و حذف glyphهای مشکل‌دار از power button.
+- [x] pass سوم redesign: حذف N/PRO/SET و subtitle غیرضروری، اضافه کردن دکمه + برای clipboard/file import، و جمع‌کردن protocol/quick options پشت فلش پایین تا تصمیم نهایی پروتکل‌ها.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

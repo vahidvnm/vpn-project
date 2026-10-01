@@ -70,6 +70,9 @@ class MainActivity : Activity() {
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
     private lateinit var statEngineText: TextView
+    private lateinit var homeOptionsToggle: TextView
+    private lateinit var homeOptionsPanel: LinearLayout
+    private var homeOptionsExpanded = false
     private lateinit var favoriteActionButton: Button
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
@@ -138,7 +141,6 @@ class MainActivity : Activity() {
         }
 
         content.addView(createTopBar())
-        content.addView(createIdentityPill())
         status = TextView(this).apply {
             text = "Ready. Import your own config, then connect."
             textSize = 13f
@@ -209,8 +211,14 @@ class MainActivity : Activity() {
         heroCard.addView(createSelectedProfilePanel())
 
         homeSection.addView(heroCard)
-        homeSection.addView(createProtocolCard())
-        homeSection.addView(createQuickActionsCard())
+        homeOptionsToggle = createHomeOptionsToggle()
+        homeSection.addView(homeOptionsToggle)
+        homeOptionsPanel = createSectionContainer().apply {
+            visibility = View.GONE
+            addView(createProtocolCard())
+            addView(createQuickActionsCard())
+        }
+        homeSection.addView(homeOptionsPanel)
 
         val profileCard = createCard()
         profileCard.addView(sectionLabel("My configs"))
@@ -223,8 +231,7 @@ class MainActivity : Activity() {
             setPadding(dp(8), 0, dp(8), dp(12))
         }
         profileCard.addView(selectedProfileText)
-        profileCard.addView(createActionButton("Paste config from clipboard", primary = true) { importConfigFromClipboard() })
-        profileCard.addView(createActionButton("Import config file") { openConfigPicker() })
+        profileCard.addView(createActionButton("+ Add config", primary = true) { showAddConfigMenu() })
         profileCard.addView(createProfileManageRow())
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -301,7 +308,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(dp(18), dp(4), dp(18), dp(12))
+                setMargins(dp(18), dp(4), dp(18), dp(28))
             }
         }
         navHomeButton = createNavButton("Home") { showSection(AppSection.HOME) }
@@ -335,61 +342,32 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, dp(8))
+        setPadding(0, 0, 0, dp(12))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
         addView(TextView(this@MainActivity).apply {
-            text = "N"
-            textSize = 26f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 18)
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
-        })
-        addView(TextView(this@MainActivity).apply {
-            text = "VPN Hub\nSmart VPN connector"
+            text = "VPN Hub"
             textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(0xFF0F172A.toInt())
             includeFontPadding = false
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(dp(12), 0, dp(8), 0)
-            }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(topIconButton("PRO"))
-        addView(topIconButton("SET"))
-    }
-
-    private fun createIdentityPill(): TextView = TextView(this).apply {
-        text = "Fast • Private • Bring your own config"
-        textSize = 13f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0x99FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
-        setPadding(dp(14), dp(8), dp(14), dp(8))
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, dp(14))
-        }
-    }
-
-    private fun topIconButton(textValue: String): TextView = TextView(this).apply {
-        text = textValue
-        textSize = 11f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
-        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).apply {
-            setMargins(dp(5), 0, 0, 0)
-        }
+        addView(TextView(this@MainActivity).apply {
+            text = "+"
+            textSize = 30f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFFFFFFFF.toInt())
+            background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = 20)
+            isClickable = true
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54))
+            setOnClickListener { showAddConfigMenu() }
+        })
     }
 
     private fun createHeroCard(): LinearLayout = LinearLayout(this).apply {
@@ -545,8 +523,44 @@ class MainActivity : Activity() {
         setOnClickListener { showSection(AppSection.PROFILES) }
     }
 
+    private fun createHomeOptionsToggle(): TextView = TextView(this).apply {
+        text = "More options ↓"
+        textSize = 15f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(0xFF2563EB.toInt())
+        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        isClickable = true
+        isFocusable = true
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(14))
+        }
+        setOnClickListener { setHomeOptionsExpanded(!homeOptionsExpanded) }
+    }
+
+    private fun setHomeOptionsExpanded(expanded: Boolean) {
+        homeOptionsExpanded = expanded
+        if (::homeOptionsPanel.isInitialized) {
+            homeOptionsPanel.visibility = if (expanded) View.VISIBLE else View.GONE
+        }
+        if (::homeOptionsToggle.isInitialized) {
+            homeOptionsToggle.text = if (expanded) "Hide options ↑" else "More options ↓"
+        }
+    }
+
     private fun createProtocolCard(): LinearLayout = createCard().apply {
-        addView(sectionLabel("Smart protocol"))
+        addView(sectionLabel("Protocol ideas"))
+        addView(TextView(this@MainActivity).apply {
+            text = "Draft list only. Final protocol buttons will be decided later."
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF64748B.toInt())
+            setPadding(dp(8), 0, dp(8), dp(8))
+        })
         addView(protocolRow(
             protocolTile("AUTO", "Best path", "Recommended", selected = true),
             protocolTile("XRAY", "Iran-first", "VLESS/VMess", selected = true)
@@ -1322,6 +1336,20 @@ class MainActivity : Activity() {
         if (::advancedDiagnostics.isInitialized) {
             advancedDiagnostics.text = engineDiagnosticsText(wg, xray)
         }
+    }
+
+    private fun showAddConfigMenu() {
+        AlertDialog.Builder(this)
+            .setTitle("Add config")
+            .setItems(arrayOf("Paste from clipboard", "Import from file", "Load latest saved profile")) { _, which ->
+                when (which) {
+                    0 -> importConfigFromClipboard()
+                    1 -> openConfigPicker()
+                    2 -> loadLatestProfile()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun openConfigPicker() {
