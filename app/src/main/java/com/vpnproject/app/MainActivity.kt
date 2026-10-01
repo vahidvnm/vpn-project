@@ -87,6 +87,10 @@ class MainActivity : Activity() {
     private lateinit var homeOptionsToggle: TextView
     private lateinit var homeOptionsPanel: LinearLayout
     private var homeOptionsExpanded = false
+    private lateinit var autoTestToggleButton: TextView
+    private lateinit var autoTestStatusText: TextView
+    private var autoTestEnabled = true
+    private var autoTestInFlight = false
     private lateinit var favoriteActionButton: Button
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
@@ -176,8 +180,16 @@ class MainActivity : Activity() {
         content.addView(toolsSection)
 
         homeSection.addView(createNexaHomeDashboard())
-        homeSection.addView(createProtocolCard())
-        homeSection.addView(createQuickActionsCard())
+        homeSection.addView(createSelectedConfigsCard())
+        homeSection.addView(createAutoTestCard())
+        homeOptionsToggle = createHomeOptionsToggle()
+        homeSection.addView(homeOptionsToggle)
+        homeOptionsPanel = createSectionContainer().apply {
+            visibility = View.GONE
+            addView(createProtocolCard())
+            addView(createQuickActionsCard())
+        }
+        homeSection.addView(homeOptionsPanel)
 
         val profileCard = createCard()
         profileCard.addView(sectionLabel("My configs"))
@@ -427,7 +439,6 @@ class MainActivity : Activity() {
             rightMargin = dp(60)
         })
         addView(hero)
-        addView(createSelectedProfilePanel())
 
         connectionStatsText = TextView(this@MainActivity).apply {
             text = "Verified: no • Traffic: 0 B down / 0 B up"
@@ -650,20 +661,145 @@ class MainActivity : Activity() {
         setOnClickListener { showSection(AppSection.PROFILES) }
     }
 
+    private fun createSelectedConfigsCard(): LinearLayout = createCard().apply {
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addView(TextView(this@MainActivity).apply {
+                text = "Selected configs"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(0xFF0F172A.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Auto country after connect"
+                textSize = 11f
+                setTextColor(0xFF64748B.toInt())
+            })
+        })
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(0, dp(10), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(0, dp(104), 2f).apply {
+                    setMargins(0, 0, dp(8), 0)
+                }
+                homeProfileNameText = TextView(this@MainActivity).apply {
+                    text = "Auto location"
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF0F172A.toInt())
+                }
+                homeProfileMetaText = TextView(this@MainActivity).apply {
+                    text = "Connect once or add a config"
+                    textSize = 11f
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(0, dp(4), 0, 0)
+                }
+                addView(homeProfileNameText)
+                addView(homeProfileMetaText)
+                setOnClickListener { showSection(AppSection.PROFILES) }
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "+"
+                textSize = 36f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
+                setOnClickListener { showAddConfigMenu() }
+            })
+        })
+    }
+
+    private fun createAutoTestCard(): LinearLayout = createCard().apply {
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = "Auto test"
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(0xFF0F172A.toInt())
+                })
+                autoTestStatusText = TextView(this@MainActivity).apply {
+                    text = "Tests selected/imported endpoints automatically"
+                    textSize = 11.5f
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                }
+                addView(autoTestStatusText)
+            })
+            autoTestToggleButton = TextView(this@MainActivity).apply {
+                text = "ON"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(0xFFFFFFFF.toInt())
+                background = roundedBackground(0xFF10B981.toInt(), 0xFF059669.toInt(), radiusDp = 18)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { toggleAutoTest() }
+            }
+            addView(autoTestToggleButton)
+            addView(TextView(this@MainActivity).apply {
+                text = "Test"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(8), 0, 0, 0)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { autoTestSelectedConfig("manual") }
+            })
+        })
+    }
+
     private fun createHomeOptionsToggle(): TextView = TextView(this).apply {
-        text = "More options ↓"
-        textSize = 15f
+        text = "⌄"
+        textSize = 30f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
+        includeFontPadding = false
         setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
-        setPadding(dp(14), dp(14), dp(14), dp(14))
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
         isClickable = true
         isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(72), dp(42)).apply {
             setMargins(0, 0, 0, dp(14))
         }
         setOnClickListener { setHomeOptionsExpanded(!homeOptionsExpanded) }
@@ -675,8 +811,69 @@ class MainActivity : Activity() {
             homeOptionsPanel.visibility = if (expanded) View.VISIBLE else View.GONE
         }
         if (::homeOptionsToggle.isInitialized) {
-            homeOptionsToggle.text = if (expanded) "Hide options ↑" else "More options ↓"
+            homeOptionsToggle.text = if (expanded) "⌃" else "⌄"
         }
+    }
+
+    private fun toggleAutoTest() {
+        autoTestEnabled = !autoTestEnabled
+        updateAutoTestToggle()
+        setAutoTestStatus(if (autoTestEnabled) "Auto test enabled" else "Auto test disabled")
+        if (autoTestEnabled) maybeAutoTestSelectedConfig("toggle")
+    }
+
+    private fun updateAutoTestToggle() {
+        if (!::autoTestToggleButton.isInitialized) return
+        autoTestToggleButton.text = if (autoTestEnabled) "ON" else "OFF"
+        autoTestToggleButton.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+        autoTestToggleButton.background = roundedBackground(
+            fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
+            strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+            radiusDp = 18
+        )
+    }
+
+    private fun setAutoTestStatus(message: String) {
+        if (::autoTestStatusText.isInitialized) autoTestStatusText.text = message.shortUi(80)
+        status.text = message
+    }
+
+    private fun maybeAutoTestSelectedConfig(reason: String) {
+        if (!autoTestEnabled) return
+        mainHandler.postDelayed({ autoTestSelectedConfig(reason) }, 350L)
+    }
+
+    private fun autoTestSelectedConfig(reason: String) {
+        if (autoTestInFlight) {
+            setAutoTestStatus("Auto test is already running")
+            return
+        }
+        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
+        if (config == null) {
+            setAutoTestStatus("Auto test: add or select a config first")
+            return
+        }
+        autoTestInFlight = true
+        setAutoTestStatus("Auto test running for ${config.kind}...")
+        Thread {
+            val text = try {
+                buildResolveAndProbeReport(config)
+            } catch (e: Exception) {
+                "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}"
+            }
+            val okCount = text.lineSequence().count { it.contains(" OK") }
+            val failedCount = text.lineSequence().count { it.contains(" failed", ignoreCase = true) }
+            val summary = when {
+                okCount > 0 -> "Auto test passed: $okCount reachable endpoint${if (okCount == 1) "" else "s"}"
+                failedCount > 0 -> "Auto test finished: $failedCount failed probe${if (failedCount == 1) "" else "s"}"
+                else -> "Auto test finished: see Stats/diagnostics"
+            }
+            runOnUiThread {
+                autoTestInFlight = false
+                setAutoTestStatus(summary)
+                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = text
+            }
+        }.start()
     }
 
     private fun createProtocolCard(): LinearLayout = createCard().apply {
@@ -939,7 +1136,7 @@ class MainActivity : Activity() {
         styleNavButton(navHomeButton, section == AppSection.HOME)
         styleNavButton(navProfilesButton, section == AppSection.PROFILES)
         styleNavButton(navToolsButton, section == AppSection.TOOLS)
-        if (::navAccountButton.isInitialized) styleNavButton(navAccountButton, section == AppSection.PROFILES)
+        if (::navAccountButton.isInitialized) styleNavButton(navAccountButton, false)
         when (section) {
             AppSection.HOME -> updateDashboardSummary()
             AppSection.PROFILES -> refreshProfileButtons()
@@ -1560,6 +1757,7 @@ class MainActivity : Activity() {
                         status.text = "Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
                             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
                         showSection(AppSection.PROFILES)
+                        maybeAutoTestSelectedConfig("subscription")
                     },
                     onFailure = { error ->
                         status.text = "Subscription sync failed: ${error.message ?: error.javaClass.simpleName}"
@@ -1716,6 +1914,7 @@ class MainActivity : Activity() {
                 nextStep +
                 warnings
             showSection(AppSection.HOME)
+            maybeAutoTestSelectedConfig("import")
         } catch (e: Exception) {
             importedConfig = null
             status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
@@ -1942,6 +2141,7 @@ class MainActivity : Activity() {
         refreshProfileButtons()
         status.text = "Selected profile: ${profile.displayName}. Tap Connect to start."
         showSection(AppSection.HOME)
+        maybeAutoTestSelectedConfig("select")
     }
 
     private fun loadSelectedOrLatestProfileConfigForAction(): ImportedConfig? {
