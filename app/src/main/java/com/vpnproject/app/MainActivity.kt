@@ -11,8 +11,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.provider.OpenableColumns
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -34,9 +37,11 @@ import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.engine.EngineRegistry
+import com.vpnproject.app.engine.EngineStatus
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
+import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
@@ -47,6 +52,15 @@ import com.vpnproject.app.vpn.XrayVpnService
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
+    private lateinit var hubStatusTitle: TextView
+    private lateinit var hubStatusDetail: TextView
+    private lateinit var connectionStatsText: TextView
+    private lateinit var selectedProfileText: TextView
+    private lateinit var primaryActionButton: Button
+    private lateinit var advancedToggleButton: Button
+    private lateinit var advancedPanel: LinearLayout
+    private lateinit var advancedDiagnostics: TextView
+    private var advancedVisible = false
     private var importedConfig: ImportedConfig? = null
     private var selectedProfileId: String? = null
     private var selectedProfile: VpnProfile? = null
@@ -68,7 +82,8 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(24), dp(32), dp(24), dp(24))
+            setPadding(dp(20), dp(28), dp(20), dp(24))
+            setBackgroundColor(0xFFF8FAFC.toInt())
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -76,98 +91,304 @@ class MainActivity : Activity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "VPN Project"
-            textSize = 28f
+            text = "VPN Hub"
+            textSize = 30f
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(0xFF0F172A.toInt())
         })
 
         root.addView(TextView(this).apply {
-            text = "Multi-engine VPN hub: import your own OpenVPN, WireGuard, or V2Ray/Xray config; save local profiles; connect with the best available engine."
+            text = "کانفیگ خودت را وارد کن؛ اپ موتور مناسب را انتخاب و وضعیت اتصال را ساده نشان می‌دهد."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(12), 0, dp(24))
+            setPadding(0, dp(10), 0, dp(18))
         })
 
+        val statusCard = createCard()
+        statusCard.addView(sectionLabel("Connection"))
+        hubStatusTitle = TextView(this).apply {
+            text = "Disconnected"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(0xFF0F172A.toInt())
+        }
+        statusCard.addView(hubStatusTitle)
+        hubStatusDetail = TextView(this).apply {
+            text = "Import or select a profile, then connect."
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF334155.toInt())
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        statusCard.addView(hubStatusDetail)
+        connectionStatsText = TextView(this).apply {
+            text = "Verified: no • Traffic: 0 / 0"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF64748B.toInt())
+            setPadding(0, 0, 0, dp(14))
+        }
+        statusCard.addView(connectionStatsText)
+        primaryActionButton = createActionButton("Connect", primary = true) { handlePrimaryAction() }
+        statusCard.addView(primaryActionButton)
+        statusCard.addView(createActionButton("Refresh status") { showEngineStatus() })
         status = TextView(this).apply {
-            text = "Phase 4.5: Xray/V2Ray is verified on phone. Next step is turning this debug screen into a multi-engine VPN hub with local profiles."
-            textSize = 16f
+            text = "Ready. Import from clipboard/file or pick a saved profile."
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF475569.toInt())
+            setPadding(0, dp(10), 0, 0)
+        }
+        statusCard.addView(status)
+        root.addView(statusCard)
+
+        val profileCard = createCard()
+        profileCard.addView(sectionLabel("Profiles"))
+        selectedProfileText = TextView(this).apply {
+            text = "No profile selected yet."
+            textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF1E293B.toInt())
-            setPadding(0, 0, 0, dp(18))
+            setPadding(0, 0, 0, dp(10))
         }
-        root.addView(status)
-
-        root.addView(Button(this).apply {
-            text = "Prepare VPN permission"
-            setOnClickListener { requestVpnPermission(PendingVpnAction.NONE) }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Import OpenVPN / WireGuard / V2Ray file"
-            setOnClickListener { openConfigPicker() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Import config from clipboard"
-            setOnClickListener { importConfigFromClipboard() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Show saved profiles"
-            setOnClickListener { showSavedProfiles() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Load latest profile"
-            setOnClickListener { loadLatestProfile() }
-        })
-
+        profileCard.addView(selectedProfileText)
+        profileCard.addView(createActionButton("Import config from clipboard") { importConfigFromClipboard() })
+        profileCard.addView(createActionButton("Import OpenVPN / WireGuard / V2Ray file") { openConfigPicker() })
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        profileCard.addView(profileListContainer)
+        root.addView(profileCard)
+
+        val advancedCard = createCard()
+        advancedToggleButton = createActionButton("Show advanced diagnostics & tools") { toggleAdvancedPanel() }
+        advancedCard.addView(advancedToggleButton)
+        advancedPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            setPadding(0, dp(10), 0, 0)
+        }
+        advancedDiagnostics = TextView(this).apply {
+            text = "Advanced diagnostics will appear here."
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF334155.toInt())
             setPadding(0, 0, 0, dp(12))
         }
-        root.addView(profileListContainer)
-        refreshProfileButtons()
-
-        root.addView(Button(this).apply {
-            text = "Resolve & probe selected/imported endpoints"
-            setOnClickListener { resolveAndProbeImportedConfig() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Save pinned OpenVPN TCP config"
-            setOnClickListener { prepareAndSaveOpenVpnConfig() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Connect selected/imported profile"
-            setOnClickListener { requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE) }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Disconnect active engines"
-            setOnClickListener { stopImportedEngines() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Refresh connection status"
-            setOnClickListener { showEngineStatus() }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Start TUN bootstrap VPN"
-            setOnClickListener { requestVpnPermission(PendingVpnAction.BOOTSTRAP) }
-        })
-
-        root.addView(Button(this).apply {
-            text = "Stop bootstrap VPN"
-            setOnClickListener { stopBootstrapVpn() }
-        })
+        advancedPanel.addView(advancedDiagnostics)
+        advancedPanel.addView(createActionButton("Prepare VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
+        advancedPanel.addView(createActionButton("Show saved profiles") { showSavedProfiles() })
+        advancedPanel.addView(createActionButton("Load latest profile") { loadLatestProfile() })
+        advancedPanel.addView(createActionButton("Resolve & probe selected/imported endpoints") { resolveAndProbeImportedConfig() })
+        advancedPanel.addView(createActionButton("Save pinned OpenVPN TCP config") { prepareAndSaveOpenVpnConfig() })
+        advancedPanel.addView(createActionButton("Start TUN bootstrap VPN") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
+        advancedPanel.addView(createActionButton("Stop bootstrap VPN") { stopBootstrapVpn() })
+        advancedCard.addView(advancedPanel)
+        root.addView(advancedCard)
 
         setContentView(ScrollView(this).apply { addView(root) })
+
+        restoreLatestProfileMetadata()
+        refreshProfileButtons()
+        updateDashboardSummary()
+    }
+
+    private fun createCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(16), dp(16), dp(16), dp(16))
+        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(14))
+        }
+    }
+
+    private fun sectionLabel(textValue: String): TextView = TextView(this).apply {
+        text = textValue.uppercase()
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(0xFF64748B.toInt())
+        setPadding(0, 0, 0, dp(8))
+    }
+
+    private fun createActionButton(
+        textValue: String,
+        primary: Boolean = false,
+        onClick: () -> Unit
+    ): Button = Button(this).apply {
+        text = textValue
+        textSize = if (primary) 18f else 15f
+        setAllCaps(false)
+        setTextColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        background = roundedBackground(
+            fillColor = if (primary) 0xFF2563EB.toInt() else 0xFFE2E8F0.toInt(),
+            strokeColor = if (primary) 0xFF1D4ED8.toInt() else 0xFFCBD5E1.toInt(),
+            radiusDp = 12
+        )
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(5), 0, dp(5))
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun roundedBackground(
+        fillColor: Int,
+        strokeColor: Int,
+        radiusDp: Int = 18
+    ): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(radiusDp).toFloat()
+        setColor(fillColor)
+        setStroke(dp(1), strokeColor)
+    }
+
+    private fun toggleAdvancedPanel() {
+        setAdvancedVisible(!advancedVisible)
+    }
+
+    private fun setAdvancedVisible(visible: Boolean) {
+        if (!::advancedPanel.isInitialized) return
+        advancedVisible = visible
+        advancedPanel.visibility = if (visible) View.VISIBLE else View.GONE
+        advancedToggleButton.text = if (visible) {
+            "Hide advanced diagnostics & tools"
+        } else {
+            "Show advanced diagnostics & tools"
+        }
+    }
+
+    private fun handlePrimaryAction() {
+        val hub = currentHubStatus()
+        when (hub.state) {
+            VpnHubConnectionState.CONNECTED,
+            VpnHubConnectionState.CONNECTING,
+            VpnHubConnectionState.RUNNING_UNVERIFIED -> stopImportedEngines()
+            VpnHubConnectionState.IDLE,
+            VpnHubConnectionState.STOPPED,
+            VpnHubConnectionState.FAILED -> {
+                val hasProfile = importedConfig != null || selectedProfile != null || runCatching { profileStore.latestProfile() }.getOrNull() != null
+                if (!hasProfile) {
+                    status.text = "No profile selected. Import a config from clipboard/file first."
+                    updateDashboardSummary()
+                } else {
+                    requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
+                }
+            }
+        }
+    }
+
+    private fun currentHubStatus() = VpnHubStatusMapper.from(
+        wireGuard = WireGuardVpnService.lastStatus,
+        xray = XrayVpnService.lastStatus,
+        selectedProfile = selectedProfile
+    )
+
+    private fun updateDashboardSummary() {
+        if (!::hubStatusTitle.isInitialized) return
+        val hub = currentHubStatus()
+        val active = hub.state == VpnHubConnectionState.CONNECTED ||
+            hub.state == VpnHubConnectionState.CONNECTING ||
+            hub.state == VpnHubConnectionState.RUNNING_UNVERIFIED
+
+        hubStatusTitle.text = hub.title
+        hubStatusTitle.setTextColor(
+            when (hub.state) {
+                VpnHubConnectionState.CONNECTED -> 0xFF047857.toInt()
+                VpnHubConnectionState.CONNECTING,
+                VpnHubConnectionState.RUNNING_UNVERIFIED -> 0xFFB45309.toInt()
+                VpnHubConnectionState.FAILED -> 0xFFB91C1C.toInt()
+                VpnHubConnectionState.IDLE,
+                VpnHubConnectionState.STOPPED -> 0xFF0F172A.toInt()
+            }
+        )
+        hubStatusDetail.text = hub.detail
+        connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine)
+        primaryActionButton.text = if (active) "Disconnect" else "Connect"
+        primaryActionButton.setTextColor(0xFFFFFFFF.toInt())
+        primaryActionButton.background = roundedBackground(
+            fillColor = if (active) 0xFFDC2626.toInt() else 0xFF2563EB.toInt(),
+            strokeColor = if (active) 0xFFB91C1C.toInt() else 0xFF1D4ED8.toInt(),
+            radiusDp = 12
+        )
+        updateSelectedProfileSummary()
+    }
+
+    private fun buildStatsLine(
+        verified: Boolean,
+        rxBytes: Long?,
+        txBytes: Long?,
+        egressIp: String?,
+        engine: com.vpnproject.app.engine.EngineKind?
+    ): String {
+        val parts = mutableListOf(
+            "Verified: ${if (verified) "yes" else "no"}",
+            "Traffic: ${formatBytes(rxBytes ?: 0)} down / ${formatBytes(txBytes ?: 0)} up"
+        )
+        engine?.let { parts += "Engine: ${engineLabel(it)}" }
+        egressIp?.let { parts += "IP: $it" }
+        return parts.joinToString(" • ")
+    }
+
+    private fun engineLabel(kind: com.vpnproject.app.engine.EngineKind): String = when (kind) {
+        com.vpnproject.app.engine.EngineKind.XRAY_CORE -> "Xray"
+        com.vpnproject.app.engine.EngineKind.WIREGUARD_GO -> "WireGuard"
+        com.vpnproject.app.engine.EngineKind.OPENVPN_UNAVAILABLE -> "OpenVPN handoff"
+    }
+
+    private fun updateSelectedProfileSummary() {
+        if (!::selectedProfileText.isInitialized) return
+        val profile = selectedProfile
+        selectedProfileText.text = if (profile == null) {
+            "No profile selected yet. Import a config or pick a saved profile."
+        } else {
+            val engine = EngineRegistry.engineFor(profile.kind)
+            val endpointText = profile.endpoints.take(2).joinToString("\n") { "• ${it.summary()}" }
+            "${profile.displayName}\n${profile.kind.displayName} • ${engine.displayName}" +
+                if (endpointText.isBlank()) "" else "\n$endpointText"
+        }
+    }
+
+    private fun restoreLatestProfileMetadata() {
+        val profile = runCatching { profileStore.latestProfile() }.getOrNull() ?: return
+        selectedProfile = profile
+        selectedProfileId = profile.id
+        status.text = "Latest saved profile selected. Tap Connect to start, or choose another profile below."
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return "${String.format(java.util.Locale.US, "%.1f", kb)} KB"
+        val mb = kb / 1024.0
+        return "${String.format(java.util.Locale.US, "%.1f", mb)} MB"
+    }
+
+    private fun engineDiagnosticsText(wireGuard: EngineStatus, xray: EngineStatus): String {
+        return "Advanced engine diagnostics:\n" +
+            "WireGuard status: ${wireGuard.state}\n" +
+            "Verified: ${if (wireGuard.verified) "yes" else "no"}\n" +
+            "Message: ${wireGuard.message}" +
+            (wireGuard.detail?.let { "\nDetail: $it" } ?: "") +
+            (wireGuard.egressIp?.let { "\nEgress IP: $it" } ?: "") +
+            "\nRX/TX: ${wireGuard.rxBytes ?: 0} / ${wireGuard.txBytes ?: 0} bytes" +
+            "\n\nXray status: ${xray.state}\n" +
+            "Verified: ${if (xray.verified) "yes" else "no"}\n" +
+            "Message: ${xray.message}" +
+            (xray.detail?.let { "\nDetail: $it" } ?: "")
     }
 
     @Deprecated("Deprecated in Android framework, acceptable for this no-AndroidX skeleton.")
@@ -292,9 +513,10 @@ class MainActivity : Activity() {
     }
 
     private fun prepareAndStartImportedEngine() {
-        val config = importedConfig ?: loadLatestProfileConfigForAction()
+        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
         if (config == null) {
             status.text = "Import or load a saved WireGuard or V2Ray/Xray profile first."
+            updateDashboardSummary()
             return
         }
         when (config.kind) {
@@ -307,6 +529,8 @@ class MainActivity : Activity() {
 
     private fun prepareAndStartWireGuardEngine(config: ImportedConfig) {
         status.text = "Preparing WireGuard runtime config: resolving endpoint and pinning a public IPv4 candidate..."
+        hubStatusTitle.text = "Preparing"
+        hubStatusDetail.text = "WireGuard is preparing its runtime config."
         Thread {
             val result = runCatching { runtimeConfigPreparer.prepareWireGuard(config) }
             runOnUiThread {
@@ -329,12 +553,16 @@ class MainActivity : Activity() {
             putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting WireGuard engine.\n${selection.note}\n\nVerification starts in the background now: RX/TX traffic plus public egress IP. Engine status will refresh automatically."
+        status.text = "Starting WireGuard engine. Verification will refresh automatically."
+        hubStatusTitle.text = "Connecting"
+        hubStatusDetail.text = "WireGuard engine is starting. ${selection.note}"
         scheduleEngineStatusRefreshes()
     }
 
     private fun prepareAndStartXrayEngine(config: ImportedConfig) {
         status.text = "Preparing embedded Xray/V2Ray runtime config from the imported link..."
+        hubStatusTitle.text = "Preparing"
+        hubStatusDetail.text = "Embedded Xray is preparing its runtime config."
         Thread {
             val result = runCatching { V2RayRuntimeConfigBuilder.build(config) }
             runOnUiThread {
@@ -357,14 +585,21 @@ class MainActivity : Activity() {
             putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting embedded Xray engine.\n${runtime.note}\n\nThe app will auto-refresh status shortly. If no VPN icon appears, the refreshed status should now show the exact Android/Xray failure instead of staying on this starting screen."
+        status.text = "Starting embedded Xray engine. Verification will refresh automatically."
+        hubStatusTitle.text = "Connecting"
+        hubStatusDetail.text = "Embedded Xray is starting. ${runtime.note}"
         scheduleEngineStatusRefreshes()
     }
 
     private fun stopImportedEngines() {
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
-        status.text = "Stop requested for WireGuard and Xray engines."
+        status.text = "Disconnect requested for active engines."
+        hubStatusTitle.text = "Disconnecting"
+        hubStatusDetail.text = "Stopping WireGuard and Xray engines."
+        primaryActionButton.text = "Connect"
+        primaryActionButton.background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = 12)
+        mainHandler.postDelayed({ showEngineStatus() }, 1_500L)
     }
 
     private fun scheduleEngineStatusRefreshes() {
@@ -377,22 +612,11 @@ class MainActivity : Activity() {
         val wg = WireGuardVpnService.lastStatus
         val xray = XrayVpnService.lastStatus
         val hub = VpnHubStatusMapper.from(wg, xray, selectedProfile)
-        status.text = "Hub status: ${hub.title}\n" +
-            "Verified: ${if (hub.verified) "yes" else "no"}\n" +
-            "Message: ${hub.detail}" +
-            (hub.egressIp?.let { "\nEgress IP: $it" } ?: "") +
-            (if (hub.rxBytes != null || hub.txBytes != null) "\nRX/TX: ${hub.rxBytes ?: 0} / ${hub.txBytes ?: 0} bytes" else "") +
-            "\n\nAdvanced engine diagnostics:\n" +
-            "WireGuard status: ${wg.state}\n" +
-            "Verified: ${if (wg.verified) "yes" else "no"}\n" +
-            "Message: ${wg.message}" +
-            (wg.detail?.let { "\nDetail: $it" } ?: "") +
-            (wg.egressIp?.let { "\nEgress IP: $it" } ?: "") +
-            "\nRX/TX: ${wg.rxBytes ?: 0} / ${wg.txBytes ?: 0} bytes" +
-            "\n\nXray status: ${xray.state}\n" +
-            "Verified: ${if (xray.verified) "yes" else "no"}\n" +
-            "Message: ${xray.message}" +
-            (xray.detail?.let { "\nDetail: $it" } ?: "")
+        updateDashboardSummary()
+        status.text = "Latest status: ${hub.title}. Verified: ${if (hub.verified) "yes" else "no"}."
+        if (::advancedDiagnostics.isInitialized) {
+            advancedDiagnostics.text = engineDiagnosticsText(wg, xray)
+        }
     }
 
     private fun openConfigPicker() {
@@ -451,11 +675,11 @@ class MainActivity : Activity() {
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
             val nextStep = when (config.kind) {
                 ConfigKind.WIREGUARD ->
-                    "\n\nNext: tap Start imported VPN engine. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
+                    "\n\nNext: tap Connect. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
                 ConfigKind.OPENVPN ->
-                    "\n\nNext: tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
+                    "\n\nNext: open Advanced, tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
                 ConfigKind.V2RAY ->
-                    "\n\nNext: tap Resolve & probe imported endpoints, then Start imported VPN engine to try the embedded Xray core."
+                    "\n\nNext: tap Connect. Advanced endpoint probe is optional."
                 else -> ""
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
@@ -515,12 +739,11 @@ class MainActivity : Activity() {
         })
         profiles.take(MAX_PROFILE_BUTTONS).forEach { profile ->
             val engine = EngineRegistry.engineFor(profile.kind)
-            profileListContainer.addView(Button(this).apply {
-                val marker = if (profile.id == selectedProfileId) "✓ " else ""
-                text = "$marker${profile.displayName} — ${profile.kind.displayName} / ${engine.displayName}"
-                setOnClickListener { loadProfile(profile) }
-            })
+            profileListContainer.addView(createActionButton(
+                textValue = "${if (profile.id == selectedProfileId) "✓ " else ""}${profile.displayName} — ${profile.kind.displayName} / ${engine.displayName}"
+            ) { loadProfile(profile) })
         }
+        updateDashboardSummary()
     }
 
     private fun loadLatestProfile() {
@@ -549,8 +772,8 @@ class MainActivity : Activity() {
             "\n\nNext: Resolve & probe, or Connect selected/imported profile."
     }
 
-    private fun loadLatestProfileConfigForAction(): ImportedConfig? {
-        val profile = runCatching { profileStore.latestProfile() }.getOrNull() ?: return null
+    private fun loadSelectedOrLatestProfileConfigForAction(): ImportedConfig? {
+        val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull() ?: return null
         val config = loadProfileConfig(profile) ?: return null
         importedConfig = config
         selectedProfileId = profile.id
@@ -577,20 +800,25 @@ class MainActivity : Activity() {
     }
 
     private fun resolveAndProbeImportedConfig() {
-        val config = importedConfig
+        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
         if (config == null) {
             status.text = "Import an OpenVPN, WireGuard, or V2Ray/Xray config first."
             return
         }
 
-        status.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
+        setAdvancedVisible(true)
+        status.text = "Running advanced endpoint diagnostics..."
+        advancedDiagnostics.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
         Thread {
             val text = try {
                 buildResolveAndProbeReport(config)
             } catch (e: Exception) {
                 "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}"
             }
-            runOnUiThread { status.text = text }
+            runOnUiThread {
+                advancedDiagnostics.text = text
+                status.text = "Advanced diagnostics completed. See the expanded diagnostics panel."
+            }
         }.start()
     }
 

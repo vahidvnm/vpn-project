@@ -326,10 +326,11 @@ explainFailure()
 
 - [x] تبدیل اولیه statusهای WireGuard و Xray به summary مشترک UI با `VpnHubStatusMapper`.
 - [x] ساخت `EngineRegistry` اولیه برای انتخاب engine بر اساس نوع profile.
-- [ ] جداسازی diagnostics از مسیر connect عادی:
-  - [ ] import/probe report طولانی در Advanced
+- [x] جداسازی اولیه diagnostics از مسیر connect عادی:
+  - [x] import/probe report طولانی در Advanced diagnostics
   - [x] شروع صفحه status ساده با `Hub status` بالای diagnostics
-  - [ ] صفحه اصلی نهایی فقط وضعیت ساده و action بعدی
+  - [x] صفحه اصلی ساده با کارت اتصال، پروفایل، و action اصلی
+  - [ ] صفحه اصلی نهایی با navigation/settings کامل و polish گرافیکی
 - [x] storage امن اولیه برای raw configها:
   - [x] Android Keystore + AES-GCM روی SharedPreferences
   - [ ] عدم log کردن secretها در همه مسیرهای آینده
@@ -352,15 +353,17 @@ explainFailure()
 هدف: مسیر موفق Xray را از حالت debug به تجربه کاربری قابل فهم تبدیل کنیم؛ کاربر گیج نشود و اتصال دروغین نبیند.
 
 - [x] اصل verification واقعی برای Xray پیاده و روی گوشی تأیید شد: فقط وقتی status `VERIFIED` می‌شود که HTTP check از داخل proxy موفق باشد و stats core حرکت کند.
-- [ ] صفحه اصلی بسیار ساده:
-  - [ ] Import config / Paste link
-  - [ ] Profile list
-  - [ ] Connect / Disconnect
-  - [ ] Status ساده: `Connected`, `Connecting`, `Needs working config`, `Failed`
-  - [ ] دکمه Diagnostics جدا از مسیر کاربر عادی
-- [ ] تفکیک UI عادی از UI debug:
-  - [ ] کاربر عادی فقط نتیجه و علت ساده را ببیند.
-  - [ ] متن‌های طولانی DoH/probe/stats در Advanced diagnostics قرار بگیرد.
+- [x] شروع صفحه اصلی بسیار ساده:
+  - [x] Import config / Paste link
+  - [x] Profile list
+  - [x] Connect / Disconnect با یک دکمه اصلی dynamic
+  - [x] Status ساده: `Connected`, `Connecting`, `Failed` و summary مشترک Hub
+  - [x] دکمه Diagnostics جدا از مسیر کاربر عادی
+  - [ ] polish نهایی UI، settings/drawer، empty states بهتر
+- [x] تفکیک اولیه UI عادی از UI debug:
+  - [x] کاربر عادی اول نتیجه و علت ساده را ببیند.
+  - [x] متن‌های طولانی DoH/probe/stats در Advanced diagnostics قرار بگیرد.
+  - [ ] تکمیل redaction و کوتاه‌سازی پیام‌ها برای انتشار عمومی
 - [ ] وضعیت‌های داخلی engine:
 
 ```text
@@ -513,8 +516,9 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] شروع تبدیل اسکلت به VPN Hub چندموتوره: `VpnProfile`, `SecureProfileStore`, `EngineRegistry` اولیه.
 - [x] شروع status مشترک و انتخاب profile از لیست.
 - [ ] تکمیل status/stats مشترک برای همه engineها و طراحی UI نهایی.
-- [ ] تبدیل UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
-- [ ] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
+- [x] تبدیل اولیه UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
+- [x] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
+- [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
 - [ ] public egress IP + DNS leak verification برای Xray.
