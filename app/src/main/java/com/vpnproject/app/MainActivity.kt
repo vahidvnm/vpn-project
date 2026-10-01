@@ -295,6 +295,12 @@ class MainActivity : Activity() {
         advancedPanel.addView(settingsRow("■", "Stop bootstrap VPN", "Stop only the technical bootstrap tunnel") { stopBootstrapVpn() })
         settingsCard.addView(advancedPanel)
         toolsSection.addView(settingsCard)
+        content.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                navigationBarBottomPadding() + dp(28)
+            )
+        })
 
         val scrollView = ScrollView(this).apply {
             isFillViewport = false
@@ -872,17 +878,28 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun autoTestsShouldPauseForLiveVpn(): Boolean = isLiveState(currentHubStatus().state)
+
+    private fun pauseAutoTestsForConnection(message: String = "Auto test paused while VPN is running") {
+        if (autoTestInFlight) autoTestInFlight = false
+        setAutoTestStatus(message)
+    }
+
     private fun maybeAutoTestSelectedConfig(reason: String) {
-        if (!autoTestEnabled) return
+        if (!autoTestEnabled || autoTestsShouldPauseForLiveVpn()) return
         mainHandler.postDelayed({ autoTestSelectedConfig(reason) }, 350L)
     }
 
     private fun maybeAutoRankBestProfile(reason: String) {
-        if (!autoTestEnabled) return
+        if (!autoTestEnabled || autoTestsShouldPauseForLiveVpn()) return
         mainHandler.postDelayed({ rankSavedProfilesAndSelectBest(reason) }, 450L)
     }
 
     private fun autoTestSelectedConfig(reason: String) {
+        if (autoTestsShouldPauseForLiveVpn()) {
+            setAutoTestStatus("Auto test paused while VPN is running")
+            return
+        }
         if (autoTestInFlight) {
             setAutoTestStatus("Auto test is already running")
             return
@@ -937,6 +954,10 @@ class MainActivity : Activity() {
     }
 
     private fun rankSavedProfilesAndSelectBest(reason: String, autoSelect: Boolean = true) {
+        if (autoTestsShouldPauseForLiveVpn()) {
+            setAutoTestStatus("Auto ranking paused while VPN is running")
+            return
+        }
         if (autoTestInFlight) {
             setAutoTestStatus("Auto ranking is already running")
             return
@@ -956,6 +977,14 @@ class MainActivity : Activity() {
         Thread {
             val results = mutableListOf<ProfileProbeResult>()
             rankedInput.forEachIndexed { index, profile ->
+                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) {
+                    mainHandler.post {
+                        autoTestInFlight = false
+                        setAutoTestStatus("Auto ranking paused while VPN is running")
+                        refreshAutoTestSummary()
+                    }
+                    return@Thread
+                }
                 mainHandler.post {
                     if (autoTestInFlight) {
                         setAutoTestStatus("Ranking ${index + 1}/${rankedInput.size}: ${compactProfileTitle(profile)}")
@@ -1470,6 +1499,7 @@ class MainActivity : Activity() {
                     status.text = "No profile selected. Use the top + to add a config first."
                     showSection(AppSection.PROFILES)
                 } else {
+                    pauseAutoTestsForConnection("Auto test paused while connecting")
                     requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
                 }
             }
@@ -2427,34 +2457,60 @@ class MainActivity : Activity() {
     }
 
     private fun promptAddSubscriptionGroup() {
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(4), dp(12), dp(4))
-        }
-        val nameInput = EditText(this).apply {
-            hint = "Group name, e.g. Provider A"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            setSingleLine(true)
-        }
-        val urlInput = EditText(this).apply {
-            hint = "https://provider.example/sub/..."
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine(true)
-        }
-        form.addView(nameInput)
-        form.addView(urlInput)
-
-        AlertDialog.Builder(this)
-            .setTitle("Add subscription group")
-            .setMessage("Paste only your own/provider subscription URL. The URL is stored encrypted and is never shown in diagnostics.")
-            .setView(form)
-            .setPositiveButton("Fetch") { _, _ ->
+        showBottomSheet(
+            title = "Add subscription group",
+            subtitle = "Encrypted local URL. Never shown in diagnostics."
+        ) { dialog ->
+            addView(TextView(this@MainActivity).apply {
+                text = "Only paste your own or provider-approved subscription URL. The app stores it encrypted on this phone."
+                textSize = 12.5f
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(8), dp(10), dp(8), dp(6))
+            })
+            val nameInput = EditText(this@MainActivity).apply {
+                hint = "Group name, e.g. Provider A"
+                textSize = 14f
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                setSingleLine(true)
+                setPadding(dp(14), 0, dp(14), 0)
+                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(54)
+                ).apply {
+                    setMargins(0, dp(8), 0, dp(8))
+                }
+            }
+            val urlInput = EditText(this@MainActivity).apply {
+                hint = "https://provider.example/sub/..."
+                textSize = 14f
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                setSingleLine(true)
+                setPadding(dp(14), 0, dp(14), 0)
+                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(54)
+                ).apply {
+                    setMargins(0, 0, 0, dp(8))
+                }
+            }
+            addView(nameInput)
+            addView(urlInput)
+            addView(bottomSheetActionRow("↻", "Fetch subscription", "Download profiles and save them encrypted") {
                 val url = urlInput.text?.toString().orEmpty().trim()
                 val name = nameInput.text?.toString().orEmpty().trim().ifBlank { "Subscription" }
+                if (url.isBlank()) {
+                    status.text = "Subscription URL is empty."
+                    return@bottomSheetActionRow
+                }
+                dialog.dismiss()
                 addOrRefreshSubscriptionGroup(name, url, existingGroup = null)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+            })
+            addView(bottomSheetActionRow("×", "Cancel", "Close without saving") {
+                dialog.dismiss()
+            })
+        }
     }
 
     private fun refreshSubscriptionGroup(group: SubscriptionGroup) {
