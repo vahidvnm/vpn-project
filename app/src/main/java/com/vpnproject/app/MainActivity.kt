@@ -1,6 +1,7 @@
 package com.vpnproject.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -46,6 +47,7 @@ import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.VpnProfile
+import com.vpnproject.app.profile.VpnProfileEndpoint
 import com.vpnproject.app.vpn.AutoVpnService
 import com.vpnproject.app.vpn.WireGuardVpnService
 import com.vpnproject.app.vpn.XrayVpnService
@@ -67,6 +69,17 @@ class MainActivity : Activity() {
     private lateinit var advancedPanel: LinearLayout
     private lateinit var advancedDiagnostics: TextView
     private var advancedVisible = false
+    private var liveRefreshRunning = false
+    private val dashboardRefreshRunnable = object : Runnable {
+        override fun run() {
+            refreshDashboardLive()
+            if (liveRefreshRunning) {
+                val hub = currentHubStatus()
+                val delayMs = if (isLiveState(hub.state)) LIVE_REFRESH_CONNECTED_MS else LIVE_REFRESH_IDLE_MS
+                mainHandler.postDelayed(this, delayMs)
+            }
+        }
+    }
     private var importedConfig: ImportedConfig? = null
     private var selectedProfileId: String? = null
     private var selectedProfile: VpnProfile? = null
@@ -193,6 +206,7 @@ class MainActivity : Activity() {
         profileCard.addView(selectedProfileText)
         profileCard.addView(createActionButton("Import config from clipboard") { importConfigFromClipboard() })
         profileCard.addView(createActionButton("Import OpenVPN / WireGuard / V2Ray file") { openConfigPicker() })
+        profileCard.addView(createActionButton("Delete selected profile") { confirmDeleteSelectedProfile() })
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -237,6 +251,17 @@ class MainActivity : Activity() {
         refreshProfileButtons()
         updateDashboardSummary()
         showSection(AppSection.HOME)
+        startLiveDashboardRefresh()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startLiveDashboardRefresh()
+    }
+
+    override fun onPause() {
+        stopLiveDashboardRefresh()
+        super.onPause()
     }
 
     private fun createCard(): LinearLayout = LinearLayout(this).apply {
@@ -361,6 +386,37 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startLiveDashboardRefresh() {
+        if (!::hubStatusTitle.isInitialized) return
+        liveRefreshRunning = true
+        mainHandler.removeCallbacks(dashboardRefreshRunnable)
+        mainHandler.post(dashboardRefreshRunnable)
+    }
+
+    private fun stopLiveDashboardRefresh() {
+        liveRefreshRunning = false
+        if (::hubStatusTitle.isInitialized) {
+            mainHandler.removeCallbacks(dashboardRefreshRunnable)
+        }
+    }
+
+    private fun refreshDashboardLive() {
+        if (!::hubStatusTitle.isInitialized) return
+        updateDashboardSummary()
+        if (::advancedDiagnostics.isInitialized && advancedVisible && ::toolsSection.isInitialized && toolsSection.visibility == View.VISIBLE) {
+            advancedDiagnostics.text = engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus)
+        }
+    }
+
+    private fun isLiveState(state: VpnHubConnectionState): Boolean = when (state) {
+        VpnHubConnectionState.CONNECTED,
+        VpnHubConnectionState.CONNECTING,
+        VpnHubConnectionState.RUNNING_UNVERIFIED -> true
+        VpnHubConnectionState.IDLE,
+        VpnHubConnectionState.STOPPED,
+        VpnHubConnectionState.FAILED -> false
+    }
+
     private fun handlePrimaryAction() {
         val hub = currentHubStatus()
         when (hub.state) {
@@ -445,11 +501,22 @@ class MainActivity : Activity() {
         selectedProfileText.text = if (profile == null) {
             "No profile selected yet. Import a config or pick a saved profile."
         } else {
-            val engine = EngineRegistry.engineFor(profile.kind)
-            val endpointText = profile.endpoints.take(2).joinToString("\n") { "• ${it.summary().shortUi(82)}" }
-            "${profile.displayName}\n${profile.kind.displayName} • ${engine.displayName}" +
-                if (endpointText.isBlank()) "" else "\n$endpointText"
+            selectedProfileSummary(profile)
         }
+    }
+
+    private fun selectedProfileSummary(profile: VpnProfile): String {
+        val engine = EngineRegistry.engineFor(profile.kind)
+        val endpointText = profile.endpoints.firstOrNull()?.let { "\n${it.cleanEndpointLabel()}" }.orEmpty()
+        return "${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText"
+    }
+
+    private fun profileButtonLabel(profile: VpnProfile): String {
+        val engine = EngineRegistry.engineFor(profile.kind)
+        val marker = if (profile.id == selectedProfileId) "✓ " else ""
+        val endpoint = profile.endpoints.firstOrNull()?.cleanEndpointLabel()?.shortUi(48)
+        return "$marker${profile.displayName.shortUi(28)}\n${profile.kind.displayName} • ${engine.displayName}" +
+            (endpoint?.let { "\n$it" } ?: "")
     }
 
     private fun restoreLatestProfileMetadata() {
@@ -801,6 +868,45 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun confirmDeleteSelectedProfile() {
+        val profile = selectedProfile
+        if (profile == null) {
+            status.text = "No selected profile to delete. Pick a profile first."
+            showSection(AppSection.PROFILES)
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Delete profile?")
+            .setMessage("Remove ${profile.displayName} from this phone? The encrypted local config for this profile will be deleted. Active VPN traffic is not stopped automatically.")
+            .setPositiveButton("Delete") { _, _ -> deleteProfile(profile) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteProfile(profile: VpnProfile) {
+        runCatching { profileStore.deleteProfile(profile.id) }.fold(
+            onSuccess = {
+                if (selectedProfileId == profile.id) {
+                    importedConfig = null
+                    selectedProfile = runCatching { profileStore.latestProfile() }.getOrNull()
+                    selectedProfileId = selectedProfile?.id
+                }
+                refreshProfileButtons()
+                updateDashboardSummary()
+                status.text = if (selectedProfile == null) {
+                    "Deleted profile ${profile.displayName}. No saved profiles remain."
+                } else {
+                    "Deleted profile ${profile.displayName}. Latest remaining profile is selected."
+                }
+                showSection(AppSection.PROFILES)
+            },
+            onFailure = { error ->
+                status.text = "Could not delete profile ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}"
+            }
+        )
+    }
+
     private fun showSavedProfiles() {
         showSection(AppSection.PROFILES)
         refreshProfileButtons()
@@ -830,9 +936,8 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(4))
         })
         profiles.take(MAX_PROFILE_BUTTONS).forEach { profile ->
-            val engine = EngineRegistry.engineFor(profile.kind)
             profileListContainer.addView(createActionButton(
-                textValue = "${if (profile.id == selectedProfileId) "✓ " else ""}${profile.displayName} — ${profile.kind.displayName} / ${engine.displayName}"
+                textValue = profileButtonLabel(profile)
             ) { loadProfile(profile) })
         }
         updateDashboardSummary()
@@ -1055,6 +1160,16 @@ class MainActivity : Activity() {
         return uri.lastPathSegment
     }
 
+    private fun VpnProfileEndpoint.cleanEndpointLabel(): String {
+        val shortHost = host.shortHost()
+        return "$protocol $shortHost:$port"
+    }
+
+    private fun String.shortHost(): String {
+        val compact = substringBefore('/').trim()
+        return if (compact.length <= 44) compact else compact.take(21) + "…" + compact.takeLast(18)
+    }
+
     private fun String.shortUi(maxLength: Int): String {
         val compact = replace(Regex("\\s+"), " ").trim()
         return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
@@ -1081,5 +1196,7 @@ class MainActivity : Activity() {
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val MAX_PROFILE_BUTTONS = 5
+        const val LIVE_REFRESH_CONNECTED_MS = 2_000L
+        const val LIVE_REFRESH_IDLE_MS = 6_000L
     }
 }

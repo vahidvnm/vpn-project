@@ -341,7 +341,7 @@ explainFailure()
   - [x] profile list قابل انتخاب اولیه با دکمه‌های dynamic در UI ساده فعلی
   - [ ] profile list نهایی با طراحی بهتر/scroll و انتخاب پایدار
   - [ ] rename
-  - [ ] delete در UI
+  - [x] delete selected profile در UI با confirm dialog
   - [ ] mark as favorite/last-good
   - [ ] export فقط با هشدار کاربر
 
@@ -360,6 +360,7 @@ explainFailure()
   - [x] Connect / Disconnect با یک دکمه اصلی dynamic
   - [x] Status ساده: `Connected`, `Connecting`, `Failed` و summary مشترک Hub
   - [x] نمایش traffic خلاصه Xray از stats واقعی core
+  - [x] live refresh خودکار dashboard/status هنگام اتصال
   - [x] دکمه Diagnostics جدا از مسیر کاربر عادی
   - [x] navigation اولیه بین Home / Profiles / Tools برای کمتر شدن شلوغی صفحه
   - [ ] polish نهایی UI، settings/drawer، empty states بهتر
@@ -386,6 +387,7 @@ Failed
   - [ ] public egress IP check بعد از Xray بدون leak.
   - [ ] DNS leak check از داخل تونل.
   - [x] نمایش RX/TX خلاصه برای Xray از `queryAllOutboundTrafficStats`.
+  - [x] live polling اولیه traffic counter از Xray service به dashboard.
   - [ ] پایدارسازی/تست طولانی traffic counter روی چند دستگاه.
 - [ ] پیام‌های خلاصه قابل فهم:
 
@@ -523,6 +525,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] تبدیل اولیه UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
 - [x] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
 - [x] navigation اولیه Home / Profiles / Tools و fix نمایش traffic Xray در dashboard.
+- [x] live dashboard refresh و delete selected profile اولیه.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
