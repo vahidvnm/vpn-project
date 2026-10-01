@@ -65,6 +65,7 @@ import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.SubscriptionGroup
 import com.vpnproject.app.profile.VpnProfile
+import com.vpnproject.app.profile.VpnProfileKind
 import com.vpnproject.app.profile.VpnProfileEndpoint
 import com.vpnproject.app.vpn.AutoVpnService
 import com.vpnproject.app.vpn.WireGuardVpnService
@@ -1274,10 +1275,10 @@ class MainActivity : Activity() {
         return listOf("🇮🇷", "🇳🇱", "🇺🇸", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺", "🇸🇬")
             .firstOrNull { profile.displayName.contains(it) }
             ?: when (profile.kind) {
-                ConfigKind.V2RAY -> "✦"
-                ConfigKind.WIREGUARD -> "◎"
-                ConfigKind.OPENVPN -> "◉"
-                else -> "🌐"
+                VpnProfileKind.XRAY -> "✦"
+                VpnProfileKind.WIREGUARD -> "◎"
+                VpnProfileKind.OPENVPN -> "◉"
+                VpnProfileKind.UNKNOWN -> "🌐"
             }
     }
 
