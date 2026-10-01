@@ -427,7 +427,10 @@ class MainActivity : Activity() {
         VpnHubConnectionState.FAILED -> false
     }
 
-    private fun recordVerifiedProfileIfNeeded(hub: com.vpnproject.app.engine.VpnHubStatus) {
+    private fun recordVerifiedProfileIfNeeded(
+        hub: com.vpnproject.app.engine.VpnHubStatus,
+        refreshProfiles: Boolean = true
+    ) {
         if (!hub.verified || hub.state != VpnHubConnectionState.CONNECTED) return
         val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
         val network = currentNetworkLabel()
@@ -444,7 +447,7 @@ class MainActivity : Activity() {
             lastRecordedVerificationKey = key
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
-            refreshProfileButtons()
+            if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
     }
 
@@ -818,7 +821,8 @@ class MainActivity : Activity() {
     private fun showEngineStatus() {
         val wg = WireGuardVpnService.lastStatus
         val xray = XrayVpnService.lastStatus
-        val hub = VpnHubStatusMapper.from(wg, xray, selectedProfile)
+        val hub = currentHubStatus()
+        recordVerifiedProfileIfNeeded(hub)
         updateDashboardSummary()
         status.text = "Latest status: ${hub.title}. Verified: ${if (hub.verified) "yes" else "no"}."
         if (::advancedDiagnostics.isInitialized) {
@@ -1053,8 +1057,9 @@ class MainActivity : Activity() {
         } + "\n\nTap a profile button, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
     }
 
-    private fun refreshProfileButtons() {
+    private fun refreshProfileButtons(syncVerified: Boolean = true) {
         if (!::profileListContainer.isInitialized) return
+        if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
         profileListContainer.removeAllViews()
         val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         profileListContainer.addView(TextView(this).apply {
