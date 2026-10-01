@@ -106,46 +106,22 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(20), dp(28), dp(20), dp(24))
-            setBackgroundColor(0xFFF8FAFC.toInt())
+            setPadding(dp(18), dp(24), dp(18), dp(18))
+            background = verticalGradient(0xFFEFF6FF.toInt(), 0xFFF8FAFC.toInt(), 0xFFFFFFFF.toInt())
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
+        root.addView(createTopBar())
         root.addView(TextView(this).apply {
-            text = "VPN Hub"
-            textSize = 30f
-            typeface = Typeface.DEFAULT_BOLD
+            text = "Fast • Private • Open"
+            textSize = 14f
             gravity = Gravity.CENTER
-            setTextColor(0xFF0F172A.toInt())
+            setTextColor(0xFF64748B.toInt())
+            setPadding(0, dp(2), 0, dp(14))
         })
-
-        root.addView(TextView(this).apply {
-            text = "خانه ساده، پروفایل‌ها جدا، ابزارهای فنی جدا."
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(10), 0, dp(14))
-        })
-
-        val navRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(14))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-        navHomeButton = createNavButton("خانه") { showSection(AppSection.HOME) }
-        navProfilesButton = createNavButton("پروفایل‌ها") { showSection(AppSection.PROFILES) }
-        navToolsButton = createNavButton("ابزار") { showSection(AppSection.TOOLS) }
-        navRow.addView(navHomeButton)
-        navRow.addView(navProfilesButton)
-        navRow.addView(navToolsButton)
-        root.addView(navRow)
 
         homeSection = createSectionContainer()
         profilesSection = createSectionContainer()
@@ -154,49 +130,116 @@ class MainActivity : Activity() {
         root.addView(profilesSection)
         root.addView(toolsSection)
 
-        val statusCard = createCard()
-        statusCard.addView(sectionLabel("Connection"))
+        val heroCard = createHeroCard()
+        heroCard.addView(createHeroTopRow())
+
+        primaryActionButton = Button(this).apply {
+            text = "⏻\nConnect"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setAllCaps(false)
+            setTextColor(0xFF0F172A.toInt())
+            gravity = Gravity.CENTER
+            background = powerButtonBackground(active = false)
+            layoutParams = LinearLayout.LayoutParams(dp(142), dp(142)).apply {
+                setMargins(0, dp(10), 0, dp(10))
+            }
+            setOnClickListener { handlePrimaryAction() }
+        }
+        heroCard.addView(primaryActionButton)
+
         hubStatusTitle = TextView(this).apply {
             text = "Disconnected"
-            textSize = 26f
+            textSize = 28f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(0xFF0F172A.toInt())
         }
-        statusCard.addView(hubStatusTitle)
+        heroCard.addView(hubStatusTitle)
+
         hubStatusDetail = TextView(this).apply {
             text = "Import or select a profile, then connect."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF334155.toInt())
-            setPadding(0, dp(8), 0, dp(8))
+            setPadding(0, dp(6), 0, dp(6))
         }
-        statusCard.addView(hubStatusDetail)
+        heroCard.addView(hubStatusDetail)
+
         connectionStatsText = TextView(this).apply {
             text = "Verified: no • Traffic: 0 B down / 0 B up"
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
-            setPadding(0, 0, 0, dp(14))
+            setPadding(0, dp(2), 0, dp(10))
         }
-        statusCard.addView(connectionStatsText)
-        primaryActionButton = createActionButton("Connect", primary = true) { handlePrimaryAction() }
-        statusCard.addView(primaryActionButton)
-        statusCard.addView(createActionButton("Refresh status") { showEngineStatus() })
-        status = TextView(this).apply {
-            text = "Ready. Paste/import a config, then tap Connect."
+        heroCard.addView(connectionStatsText)
+
+        val selectedServerCard = createGlassCard(12).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        selectedServerCard.addView(TextView(this).apply {
+            text = "🌐"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        selectedServerCard.addView(TextView(this).apply {
+            text = "Selected profile\nAuto engine"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF0F172A.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        selectedServerCard.addView(TextView(this).apply {
+            text = "Change ›"
             textSize = 14f
+            setTextColor(0xFF2563EB.toInt())
+        })
+        selectedServerCard.setOnClickListener { showSection(AppSection.PROFILES) }
+        heroCard.addView(selectedServerCard)
+
+        status = TextView(this).apply {
+            text = "Ready. Paste/import a config, then tap the power button."
+            textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
             setPadding(0, dp(10), 0, 0)
         }
-        statusCard.addView(status)
-        homeSection.addView(statusCard)
+        heroCard.addView(status)
+        homeSection.addView(heroCard)
+
+        val protocolCard = createCard()
+        protocolCard.addView(sectionLabel("Protocol"))
+        protocolCard.addView(protocolRow(
+            protocolTile("⚡", "Auto", "Best path", selected = true),
+            protocolTile("✕", "Xray", "Iran-first", selected = true),
+            protocolTile("🔒", "WireGuard", "Secondary", selected = false)
+        ))
+        protocolCard.addView(protocolRow(
+            protocolTile("◉", "OpenVPN", "Handoff", selected = false),
+            protocolTile("◆", "Trojan", "Xray", selected = false),
+            protocolTile("●", "VMess", "Xray", selected = false)
+        ))
+        protocolCard.addView(protocolRow(
+            protocolTile("◇", "Reality", "Anti-block", selected = false),
+            protocolTile("S", "Shadowsocks", "Xray", selected = false),
+            protocolTile("…", "More", "Coming", selected = false)
+        ))
+        homeSection.addView(protocolCard)
 
         val quickCard = createCard()
         quickCard.addView(sectionLabel("Quick actions"))
-        quickCard.addView(createActionButton("Paste / import config") { showSection(AppSection.PROFILES) })
-        quickCard.addView(createActionButton("Diagnostics & tools") { showSection(AppSection.TOOLS) })
+        quickCard.addView(createFeatureRow(
+            featureTile("📋", "Profiles", "Import & manage") { showSection(AppSection.PROFILES) },
+            featureTile("🧪", "Diagnostics", "Debug tools") { showSection(AppSection.TOOLS) }
+        ))
+        quickCard.addView(createFeatureRow(
+            featureTile("🛡", "Kill switch", "Android setting") { status.text = "Use Android Always-on VPN / Block connections without VPN for kill-switch behavior." },
+            featureTile("⚙", "Settings", "Next step") { status.text = "Settings page is the next UI milestone." }
+        ))
         homeSection.addView(quickCard)
 
         val profileCard = createCard()
@@ -253,6 +296,26 @@ class MainActivity : Activity() {
         advancedCard.addView(advancedPanel)
         toolsSection.addView(advancedCard)
 
+        val navRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 28)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, dp(6), 0, 0)
+            }
+        }
+        navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
+        navProfilesButton = createNavButton("◎\nProfiles") { showSection(AppSection.PROFILES) }
+        navToolsButton = createNavButton("▦\nTools") { showSection(AppSection.TOOLS) }
+        navRow.addView(navHomeButton)
+        navRow.addView(navProfilesButton)
+        navRow.addView(navToolsButton)
+        root.addView(navRow)
+
         setContentView(ScrollView(this).apply { addView(root) })
 
         restoreLatestProfileMetadata()
@@ -270,6 +333,148 @@ class MainActivity : Activity() {
     override fun onPause() {
         stopLiveDashboardRefresh()
         super.onPause()
+    }
+
+    private fun createTopBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, 0, 0, dp(6))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        addView(TextView(this@MainActivity).apply {
+            text = "N"
+            textSize = 30f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54))
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "VPN Hub\nSecure Your World"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF0F172A.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(dp(10), 0, dp(10), 0)
+            }
+        })
+        addView(topIconButton("♕"))
+        addView(topIconButton("⚙"))
+    }
+
+    private fun topIconButton(textValue: String): TextView = TextView(this).apply {
+        text = textValue
+        textSize = 20f
+        gravity = Gravity.CENTER
+        setTextColor(0xFF0F172A.toInt())
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).apply {
+            setMargins(dp(4), 0, 0, 0)
+        }
+    }
+
+    private fun createHeroCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(16), dp(16), dp(16), dp(16))
+        background = verticalGradient(0xFFFFFFFF.toInt(), 0xFFE0F2FE.toInt(), 0xFFF8FAFC.toInt(), radiusDp = 28)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(14))
+        }
+    }
+
+    private fun createHeroTopRow(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        addView(statusBadge("✓", "Protected", 0xFF059669.toInt()))
+        addView(statusBadge("↓↑", "Live stats", 0xFF2563EB.toInt()))
+    }
+
+    private fun statusBadge(icon: String, label: String, color: Int): TextView = TextView(this).apply {
+        text = "$icon  $label"
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(color)
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            setMargins(dp(4), 0, dp(4), 0)
+        }
+    }
+
+    private fun createGlassCard(radiusDp: Int = 18): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = radiusDp)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(8), 0, dp(8))
+        }
+    }
+
+    private fun protocolRow(vararg tiles: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        tiles.forEach { addView(it) }
+    }
+
+    private fun protocolTile(icon: String, title: String, subtitle: String, selected: Boolean): TextView = TextView(this).apply {
+        text = "$icon\n$title\n$subtitle"
+        textSize = 12f
+        typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        gravity = Gravity.CENTER
+        setTextColor(if (selected) 0xFF0F172A.toInt() else 0xFF475569.toInt())
+        background = roundedBackground(
+            fillColor = if (selected) 0xFFEFF6FF.toInt() else 0xF2FFFFFF.toInt(),
+            strokeColor = if (selected) 0xFF2563EB.toInt() else 0xFFE2E8F0.toInt(),
+            radiusDp = 18
+        )
+        setPadding(dp(6), dp(10), dp(6), dp(10))
+        layoutParams = LinearLayout.LayoutParams(0, dp(92), 1f).apply {
+            setMargins(dp(4), dp(4), dp(4), dp(4))
+        }
+    }
+
+    private fun createFeatureRow(left: View, right: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        addView(left)
+        addView(right)
+    }
+
+    private fun featureTile(icon: String, title: String, subtitle: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = "$icon\n$title\n$subtitle"
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(0xFF0F172A.toInt())
+        background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+        setPadding(dp(8), dp(12), dp(8), dp(12))
+        layoutParams = LinearLayout.LayoutParams(0, dp(108), 1f).apply {
+            setMargins(dp(5), dp(5), dp(5), dp(5))
+        }
+        setOnClickListener { onClick() }
     }
 
     private fun createCard(): LinearLayout = LinearLayout(this).apply {
@@ -342,6 +547,31 @@ class MainActivity : Activity() {
             setMargins(0, dp(5), 0, dp(5))
         }
         setOnClickListener { onClick() }
+    }
+
+    private fun verticalGradient(
+        topColor: Int,
+        centerColor: Int,
+        bottomColor: Int,
+        radiusDp: Int = 0
+    ): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(topColor, centerColor, bottomColor)
+    ).apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(radiusDp).toFloat()
+    }
+
+    private fun powerButtonBackground(active: Boolean): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        if (active) {
+            intArrayOf(0xFF22C55E.toInt(), 0xFF06B6D4.toInt(), 0xFF2563EB.toInt())
+        } else {
+            intArrayOf(0xFFFFFFFF.toInt(), 0xFFE0F2FE.toInt(), 0xFFCCFBF1.toInt())
+        }
+    ).apply {
+        shape = GradientDrawable.OVAL
+        setStroke(dp(6), if (active) 0x9934D399.toInt() else 0x992563EB.toInt())
     }
 
     private fun roundedBackground(
@@ -497,13 +727,10 @@ class MainActivity : Activity() {
         )
         hubStatusDetail.text = hub.detail
         connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
-        primaryActionButton.text = if (active) "Disconnect" else "Connect"
-        primaryActionButton.setTextColor(0xFFFFFFFF.toInt())
-        primaryActionButton.background = roundedBackground(
-            fillColor = if (active) 0xFFDC2626.toInt() else 0xFF2563EB.toInt(),
-            strokeColor = if (active) 0xFFB91C1C.toInt() else 0xFF1D4ED8.toInt(),
-            radiusDp = 12
-        )
+        primaryActionButton.text = if (active) "⏻\nDisconnect" else "⏻\nConnect"
+        primaryActionButton.textSize = 22f
+        primaryActionButton.setTextColor(if (active) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        primaryActionButton.background = powerButtonBackground(active)
         updateSelectedProfileSummary()
         updateProfileActionButtons()
     }
@@ -556,7 +783,8 @@ class MainActivity : Activity() {
         val engine = EngineRegistry.engineFor(profile.kind)
         val endpointText = profile.endpoints.firstOrNull()?.let { "\n${it.cleanEndpointLabel()}" }.orEmpty()
         val favoriteText = if (profile.favorite) "★ Favorite\n" else ""
-        return "$favoriteText${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText"
+        val verifiedText = profile.lastVerifiedLabel()?.let { "\n$it" }.orEmpty()
+        return "$favoriteText${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText$verifiedText"
     }
 
     private fun profileButtonLabel(profile: VpnProfile): String {
@@ -564,8 +792,10 @@ class MainActivity : Activity() {
         val marker = if (profile.id == selectedProfileId) "✓ " else ""
         val favorite = if (profile.favorite) "★ " else ""
         val endpoint = profile.endpoints.firstOrNull()?.cleanEndpointLabel()?.shortUi(48)
+        val verified = profile.lastVerifiedLabel()?.shortUi(56)
         return "$marker$favorite${profile.displayName.shortUi(28)}\n${profile.kind.displayName} • ${engine.displayName}" +
-            (endpoint?.let { "\n$it" } ?: "")
+            (endpoint?.let { "\n$it" } ?: "") +
+            (verified?.let { "\n$it" } ?: "")
     }
 
     private fun restoreLatestProfileMetadata() {
@@ -807,8 +1037,9 @@ class MainActivity : Activity() {
         lastRecordedVerificationKey = null
         hubStatusTitle.text = "Disconnecting"
         hubStatusDetail.text = "Stopping WireGuard and Xray engines."
-        primaryActionButton.text = "Connect"
-        primaryActionButton.background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = 12)
+        primaryActionButton.text = "⏻\nConnect"
+        primaryActionButton.setTextColor(0xFF0F172A.toInt())
+        primaryActionButton.background = powerButtonBackground(active = false)
         mainHandler.postDelayed({ showEngineStatus() }, 1_500L)
     }
 

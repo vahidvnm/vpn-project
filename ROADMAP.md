@@ -534,6 +534,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] rename/favorite اولیه برای profile manager.
 - [x] ثبت اولیه Last good / Last verified برای پروفایل Xray موفق.
 - [x] sync کردن Last good هنگام refresh/status/profile-tab تا نمایش آن بعد از VERIFIED پایدارتر شود.
+- [x] شروع redesign ظاهری NexaVPN-style با hero card، power button، protocol grid و bottom navigation.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
