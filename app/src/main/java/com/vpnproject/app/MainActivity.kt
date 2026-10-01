@@ -1430,7 +1430,7 @@ class MainActivity : Activity() {
     }
 
     private fun primaryProfileNameSegment(name: String): String {
-        val segments = name.replace(Regex("\s+"), " ")
+        val segments = name.replace(Regex("\\s+"), " ")
             .split("•")
             .map { it.trim() }
             .filter { it.isNotBlank() }
