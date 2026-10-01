@@ -340,9 +340,10 @@ explainFailure()
   - [x] add/import و Load latest profile
   - [x] profile list قابل انتخاب اولیه با دکمه‌های dynamic در UI ساده فعلی
   - [ ] profile list نهایی با طراحی بهتر/scroll و انتخاب پایدار
-  - [ ] rename
+  - [x] rename selected profile در UI و persistence
   - [x] delete selected profile در UI با confirm dialog
-  - [ ] mark as favorite/last-good
+  - [x] mark/unmark favorite در UI و persistence
+  - [ ] last-good و last verified کامل
   - [ ] export فقط با هشدار کاربر
 
 **خروجی فاز:** app دیگر فقط proof-of-concept اتصال نیست؛ یک هسته چندموتوره قابل توسعه دارد که UI و orchestrator روی آن ساخته می‌شوند.
@@ -528,6 +529,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] navigation اولیه Home / Profiles / Tools و fix نمایش traffic Xray در dashboard.
 - [x] live dashboard refresh و delete selected profile اولیه.
 - [x] compact کردن Advanced diagnostics تا statsهای Xray هر ۲ ثانیه تکراری جمع نشوند.
+- [x] rename/favorite اولیه برای profile manager.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.provider.OpenableColumns
@@ -19,6 +20,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -59,6 +61,7 @@ class MainActivity : Activity() {
     private lateinit var connectionStatsText: TextView
     private lateinit var selectedProfileText: TextView
     private lateinit var primaryActionButton: Button
+    private lateinit var favoriteActionButton: Button
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
     private lateinit var navToolsButton: Button
@@ -206,6 +209,9 @@ class MainActivity : Activity() {
         profileCard.addView(selectedProfileText)
         profileCard.addView(createActionButton("Import config from clipboard") { importConfigFromClipboard() })
         profileCard.addView(createActionButton("Import OpenVPN / WireGuard / V2Ray file") { openConfigPicker() })
+        profileCard.addView(createActionButton("Rename selected profile") { promptRenameSelectedProfile() })
+        favoriteActionButton = createActionButton("Mark selected favorite") { toggleSelectedFavorite() }
+        profileCard.addView(favoriteActionButton)
         profileCard.addView(createActionButton("Delete selected profile") { confirmDeleteSelectedProfile() })
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -471,6 +477,7 @@ class MainActivity : Activity() {
             radiusDp = 12
         )
         updateSelectedProfileSummary()
+        updateProfileActionButtons()
     }
 
     private fun buildStatsLine(
@@ -505,17 +512,29 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun updateProfileActionButtons() {
+        if (!::favoriteActionButton.isInitialized) return
+        val profile = selectedProfile
+        favoriteActionButton.text = when {
+            profile == null -> "Mark selected favorite"
+            profile.favorite -> "Unmark favorite"
+            else -> "Mark selected favorite"
+        }
+    }
+
     private fun selectedProfileSummary(profile: VpnProfile): String {
         val engine = EngineRegistry.engineFor(profile.kind)
         val endpointText = profile.endpoints.firstOrNull()?.let { "\n${it.cleanEndpointLabel()}" }.orEmpty()
-        return "${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText"
+        val favoriteText = if (profile.favorite) "★ Favorite\n" else ""
+        return "$favoriteText${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText"
     }
 
     private fun profileButtonLabel(profile: VpnProfile): String {
         val engine = EngineRegistry.engineFor(profile.kind)
         val marker = if (profile.id == selectedProfileId) "✓ " else ""
+        val favorite = if (profile.favorite) "★ " else ""
         val endpoint = profile.endpoints.firstOrNull()?.cleanEndpointLabel()?.shortUi(48)
-        return "$marker${profile.displayName.shortUi(28)}\n${profile.kind.displayName} • ${engine.displayName}" +
+        return "$marker$favorite${profile.displayName.shortUi(28)}\n${profile.kind.displayName} • ${engine.displayName}" +
             (endpoint?.let { "\n$it" } ?: "")
     }
 
@@ -864,6 +883,85 @@ class MainActivity : Activity() {
             },
             onFailure = { error ->
                 "\n\nProfile store warning: config imported for this session, but saving failed (${error.message ?: error.javaClass.simpleName})."
+            }
+        )
+    }
+
+    private fun promptRenameSelectedProfile() {
+        val profile = selectedProfile
+        if (profile == null) {
+            status.text = "No selected profile to rename. Pick a profile first."
+            showSection(AppSection.PROFILES)
+            return
+        }
+
+        val input = EditText(this).apply {
+            setText(profile.displayName)
+            selectAll()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setSingleLine(true)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Rename profile")
+            .setMessage("Choose a local display name. This does not change the provider config or credentials.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ -> renameSelectedProfile(input.text?.toString().orEmpty()) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun renameSelectedProfile(newName: String) {
+        val current = selectedProfile
+        if (current == null) {
+            status.text = "No selected profile to rename."
+            return
+        }
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) {
+            status.text = "Profile name cannot be empty."
+            showSection(AppSection.PROFILES)
+            return
+        }
+        runCatching { profileStore.renameProfile(current.id, trimmed) }.fold(
+            onSuccess = { updated ->
+                selectedProfile = updated ?: profileStore.profile(current.id) ?: current.copy(name = trimmed)
+                selectedProfileId = selectedProfile?.id
+                refreshProfileButtons()
+                updateDashboardSummary()
+                status.text = "Renamed profile to ${selectedProfile?.displayName ?: trimmed}."
+                showSection(AppSection.PROFILES)
+            },
+            onFailure = { error ->
+                status.text = "Could not rename profile ${current.displayName}: ${error.message ?: error.javaClass.simpleName}"
+            }
+        )
+    }
+
+    private fun toggleSelectedFavorite() {
+        val current = selectedProfile
+        if (current == null) {
+            status.text = "No selected profile to favorite. Pick a profile first."
+            showSection(AppSection.PROFILES)
+            return
+        }
+        val newFavorite = !current.favorite
+        runCatching { profileStore.setFavorite(current.id, newFavorite) }.fold(
+            onSuccess = { updated ->
+                selectedProfile = updated ?: current.copy(favorite = newFavorite)
+                selectedProfileId = selectedProfile?.id
+                refreshProfileButtons()
+                updateDashboardSummary()
+                status.text = if (newFavorite) {
+                    "Marked ${selectedProfile?.displayName ?: current.displayName} as favorite."
+                } else {
+                    "Removed favorite mark from ${selectedProfile?.displayName ?: current.displayName}."
+                }
+                showSection(AppSection.PROFILES)
+            },
+            onFailure = { error ->
+                status.text = "Could not update favorite for ${current.displayName}: ${error.message ?: error.javaClass.simpleName}"
             }
         )
     }

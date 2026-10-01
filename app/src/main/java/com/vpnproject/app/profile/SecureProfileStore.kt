@@ -31,6 +31,7 @@ class SecureProfileStore(context: Context) {
             putString(key(profile.id, FIELD_ENDPOINTS), encodeEndpoints(profile.endpoints))
             putLong(key(profile.id, FIELD_CREATED), profile.createdAtEpochMs)
             putLong(key(profile.id, FIELD_UPDATED), profile.updatedAtEpochMs)
+            putBoolean(key(profile.id, FIELD_FAVORITE), profile.favorite)
             putString(key(profile.id, FIELD_RAW_CONFIG), crypto.encrypt(config.originalText))
             putString(KEY_PROFILE_IDS, mergeProfileIds(profile.id))
             putString(KEY_LAST_PROFILE_ID, profile.id)
@@ -40,7 +41,9 @@ class SecureProfileStore(context: Context) {
 
     fun listProfiles(): List<VpnProfile> = profileIds()
         .mapNotNull { id -> loadProfileMetadata(id) }
-        .sortedByDescending { it.updatedAtEpochMs }
+        .sortedWith(compareByDescending<VpnProfile> { it.favorite }.thenByDescending { it.updatedAtEpochMs })
+
+    fun profile(profileId: String): VpnProfile? = loadProfileMetadata(profileId)
 
     fun latestProfile(): VpnProfile? = prefs.getString(KEY_LAST_PROFILE_ID, null)
         ?.let { loadProfileMetadata(it) }
@@ -51,6 +54,25 @@ class SecureProfileStore(context: Context) {
         return crypto.decrypt(encrypted)
     }
 
+    fun renameProfile(profileId: String, newName: String): VpnProfile? {
+        val sanitized = newName.sanitizedProfileName().takeIf { it.isNotBlank() } ?: return loadProfileMetadata(profileId)
+        prefs.edit()
+            .putString(key(profileId, FIELD_NAME), sanitized)
+            .putLong(key(profileId, FIELD_UPDATED), System.currentTimeMillis())
+            .putString(KEY_LAST_PROFILE_ID, profileId)
+            .apply()
+        return loadProfileMetadata(profileId)
+    }
+
+    fun setFavorite(profileId: String, favorite: Boolean): VpnProfile? {
+        prefs.edit()
+            .putBoolean(key(profileId, FIELD_FAVORITE), favorite)
+            .putLong(key(profileId, FIELD_UPDATED), System.currentTimeMillis())
+            .putString(KEY_LAST_PROFILE_ID, profileId)
+            .apply()
+        return loadProfileMetadata(profileId)
+    }
+
     fun deleteProfile(profileId: String) {
         val remaining = profileIds().filterNot { it == profileId }
         prefs.edit().apply {
@@ -59,6 +81,7 @@ class SecureProfileStore(context: Context) {
             remove(key(profileId, FIELD_ENDPOINTS))
             remove(key(profileId, FIELD_CREATED))
             remove(key(profileId, FIELD_UPDATED))
+            remove(key(profileId, FIELD_FAVORITE))
             remove(key(profileId, FIELD_RAW_CONFIG))
             putString(KEY_PROFILE_IDS, remaining.joinToString(ID_SEPARATOR))
             if (prefs.getString(KEY_LAST_PROFILE_ID, null) == profileId) {
@@ -79,7 +102,8 @@ class SecureProfileStore(context: Context) {
             kind = kind,
             endpoints = decodeEndpoints(prefs.getString(key(id, FIELD_ENDPOINTS), null).orEmpty()),
             createdAtEpochMs = created,
-            updatedAtEpochMs = updated
+            updatedAtEpochMs = updated,
+            favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false)
         )
     }
 
@@ -115,6 +139,10 @@ class SecureProfileStore(context: Context) {
         }
     }
 
+    private fun String.sanitizedProfileName(): String = replace(Regex("\\s+"), " ")
+        .trim()
+        .take(80)
+
     private fun String.encodeField(): String = Base64.encodeToString(toByteArray(Charsets.UTF_8), Base64.NO_WRAP or Base64.URL_SAFE)
 
     private fun String.decodeField(): String = String(Base64.decode(this, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
@@ -130,6 +158,7 @@ class SecureProfileStore(context: Context) {
         const val FIELD_ENDPOINTS = "endpoints"
         const val FIELD_CREATED = "created_at"
         const val FIELD_UPDATED = "updated_at"
+        const val FIELD_FAVORITE = "favorite"
         const val FIELD_RAW_CONFIG = "raw_config"
         const val ID_SEPARATOR = ","
         const val ENDPOINT_SEPARATOR = ";"
