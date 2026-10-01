@@ -2,6 +2,7 @@ package com.vpnproject.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.content.ClipboardManager
 import android.content.Intent
@@ -16,6 +17,7 @@ import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -23,11 +25,13 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -78,11 +82,9 @@ class MainActivity : Activity() {
     private lateinit var primaryActionButton: PowerRingButton
     private lateinit var protectionBadge: TextView
     private lateinit var liveStatsBadge: TextView
+    private lateinit var homeProfileIconText: TextView
     private lateinit var homeProfileNameText: TextView
     private lateinit var homeProfileMetaText: TextView
-    private lateinit var homeProfileListContainer: LinearLayout
-    private lateinit var homeProfileArrowText: TextView
-    private var homeProfileSelectorExpanded = false
     private lateinit var statLatencyText: TextView
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
@@ -660,6 +662,8 @@ class MainActivity : Activity() {
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(6), dp(6), dp(6), dp(6))
         background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
+        isClickable = true
+        isFocusable = true
         layoutParams = LinearLayout.LayoutParams(
             compactSelectorWidth(),
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -667,75 +671,63 @@ class MainActivity : Activity() {
             setMargins(0, 0, 0, dp(10))
         }
 
-        val selectorRow = LinearLayout(this@MainActivity).apply {
+        addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(8), dp(6), dp(6), dp(6))
             background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
-            isClickable = true
-            isFocusable = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58))
-            setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
-        }
-        selectorRow.addView(TextView(this@MainActivity).apply {
-            text = "🌐"
-            textSize = 18f
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                setMargins(0, 0, dp(8), 0)
+            homeProfileIconText = TextView(this@MainActivity).apply {
+                text = "🌐"
+                textSize = 18f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                    setMargins(0, 0, dp(8), 0)
+                }
             }
-        })
-        selectorRow.addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            homeProfileNameText = TextView(this@MainActivity).apply {
-                text = "Choose location"
-                textSize = 13f
+            addView(homeProfileIconText)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                homeProfileNameText = TextView(this@MainActivity).apply {
+                    text = "Choose location"
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF0F172A.toInt())
+                }
+                homeProfileMetaText = TextView(this@MainActivity).apply {
+                    text = "Tap to pick"
+                    textSize = 10f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(0, dp(2), 0, 0)
+                }
+                addView(homeProfileNameText)
+                addView(homeProfileMetaText)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "⌄"
+                textSize = 24f
                 typeface = Typeface.DEFAULT_BOLD
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF0F172A.toInt())
-            }
-            homeProfileMetaText = TextView(this@MainActivity).apply {
-                text = "Tap to pick"
-                textSize = 10f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF64748B.toInt())
-                setPadding(0, dp(2), 0, 0)
-            }
-            addView(homeProfileNameText)
-            addView(homeProfileMetaText)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+            })
         })
-        homeProfileArrowText = TextView(this@MainActivity).apply {
-            text = "⌄"
-            textSize = 24f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-            setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
+        setOnClickListener { showConfigSelectorSheet() }
+        setOnLongClickListener {
+            selectedProfile?.let { showProfileActionsSheet(it) } ?: showConfigSelectorSheet()
+            true
         }
-        selectorRow.addView(homeProfileArrowText)
-        addView(selectorRow)
-
-        homeProfileListContainer = LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            visibility = View.GONE
-            setPadding(0, dp(6), 0, 0)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-        addView(homeProfileListContainer)
     }
 
     private fun createAutoTestCard(): LinearLayout = createCard().apply {
@@ -1238,10 +1230,10 @@ class MainActivity : Activity() {
             }
         }
         if (::homeProfileNameText.isInitialized) {
+            if (::homeProfileIconText.isInitialized) homeProfileIconText.text = profile?.let { profileFlagOrIcon(it) } ?: "🌐"
             homeProfileNameText.text = profile?.let { compactProfileTitle(it).shortUi(24) } ?: "Choose location"
             homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap to pick"
         }
-        if (homeProfileSelectorExpanded) refreshHomeProfileList()
     }
 
     private fun homeProfileMeta(profile: VpnProfile): String {
@@ -1278,6 +1270,24 @@ class MainActivity : Activity() {
             ?: profile.endpoints.firstOrNull()?.let { "${it.host.shortHost().shortUi(16)}:${it.port}" }
     }
 
+    private fun profileFlagOrIcon(profile: VpnProfile): String {
+        return listOf("🇮🇷", "🇳🇱", "🇺🇸", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺", "🇸🇬")
+            .firstOrNull { profile.displayName.contains(it) }
+            ?: when (profile.kind) {
+                ConfigKind.V2RAY -> "✦"
+                ConfigKind.WIREGUARD -> "◎"
+                ConfigKind.OPENVPN -> "◉"
+                else -> "🌐"
+            }
+    }
+
+    private fun profileRowSubtitle(profile: VpnProfile): String {
+        val detail = compactProfileSubtitle(profile)?.shortUi(22)
+        val latency = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
+        val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.shortUi(10)
+        return listOfNotNull(detail, latency, network).joinToString(" • ").ifBlank { "Saved config" }
+    }
+
     private fun primaryProfileNameSegment(name: String): String {
         val segments = name.replace(Regex("\\s+"), " ")
             .split("•")
@@ -1293,87 +1303,295 @@ class MainActivity : Activity() {
         } ?: segments.firstOrNull().orEmpty().ifBlank { name }
     }
 
-    private fun setHomeProfileListExpanded(expanded: Boolean) {
-        homeProfileSelectorExpanded = expanded
-        if (::homeProfileArrowText.isInitialized) homeProfileArrowText.text = if (expanded) "⌃" else "⌄"
-        if (::homeProfileListContainer.isInitialized) {
-            homeProfileListContainer.visibility = if (expanded) View.VISIBLE else View.GONE
-            if (expanded) refreshHomeProfileList()
-        }
-    }
-
-    private fun refreshHomeProfileList() {
-        if (!::homeProfileListContainer.isInitialized) return
-        homeProfileListContainer.removeAllViews()
+    private fun showConfigSelectorSheet() {
         val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
-        if (profiles.isEmpty()) {
-            homeProfileListContainer.addView(TextView(this).apply {
-                text = "No configs yet. Use +"
-                textSize = 11f
-                gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
-                setPadding(dp(8), dp(8), dp(8), dp(8))
+        showBottomSheet(
+            title = "Choose location",
+            subtitle = "Tap to select. Long press a config for actions."
+        ) { dialog ->
+            addView(bottomSheetActionRow("+", "Add config", "Clipboard, file, or subscription") {
+                dialog.dismiss()
+                showAddConfigMenu()
             })
-            return
-        }
-        profiles.take(MAX_HOME_PROFILE_CHOICES).forEach { profile ->
-            homeProfileListContainer.addView(homeProfileChoice(profile))
+            if (profiles.isEmpty()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "No saved configs yet. Use + to add one."
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(dp(10), dp(14), dp(10), dp(14))
+                })
+                return@showBottomSheet
+            }
+            val listContainer = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(0, dp(6), 0, 0)
+            }
+            profiles.take(MAX_PROFILE_SHEET_CHOICES).forEach { profile ->
+                listContainer.addView(profileListRow(
+                    profile = profile,
+                    compact = true,
+                    onSelect = {
+                        dialog.dismiss()
+                        loadProfile(profile)
+                    },
+                    onActions = {
+                        dialog.dismiss()
+                        showProfileActionsSheet(profile)
+                    }
+                ))
+            }
+            addView(ScrollView(this@MainActivity).apply {
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    if (profiles.size > 5) dp(360) else ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                addView(listContainer)
+            })
         }
     }
 
-    private fun homeProfileChoice(profile: VpnProfile): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        layoutDirection = View.LAYOUT_DIRECTION_LTR
-        background = roundedBackground(
-            fillColor = if (profile.id == selectedProfileId) 0xFFEFF6FF.toInt() else 0xFFF8FAFC.toInt(),
-            strokeColor = if (profile.id == selectedProfileId) 0xFF93C5FD.toInt() else 0xFFE2E8F0.toInt(),
-            radiusDp = 16
-        )
-        setPadding(dp(8), dp(6), dp(8), dp(6))
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(52)
-        ).apply {
-            setMargins(0, dp(4), 0, 0)
+    private fun showProfileActionsSheet(profile: VpnProfile) {
+        selectedProfile = profile
+        selectedProfileId = profile.id
+        updateDashboardSummary()
+        showBottomSheet(
+            title = compactProfileTitle(profile),
+            subtitle = compactProfileSubtitle(profile)?.shortUi(34) ?: "Saved config"
+        ) { dialog ->
+            addView(bottomSheetActionRow("✓", "Select", "Use this config on Home") {
+                dialog.dismiss()
+                loadProfile(profile)
+            })
+            addView(bottomSheetActionRow("⟳", "Test", "Run endpoint health check") {
+                dialog.dismiss()
+                loadProfile(profile)
+                autoTestSelectedConfig("actions")
+            })
+            addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
+                dialog.dismiss()
+                promptRenameSelectedProfile()
+            })
+            addView(bottomSheetActionRow("★", if (profile.favorite) "Unfavorite" else "Favorite", "Prioritize this config") {
+                dialog.dismiss()
+                toggleSelectedFavorite()
+            })
+            addView(bottomSheetActionRow("ℹ", "Details", "Open Locations for metadata") {
+                dialog.dismiss()
+                showSection(AppSection.PROFILES)
+            })
+            addView(bottomSheetActionRow("×", "Delete", "Remove encrypted local config") {
+                dialog.dismiss()
+                confirmDeleteSelectedProfile()
+            })
         }
-        addView(LinearLayout(this@MainActivity).apply {
+    }
+
+    private fun showBottomSheet(
+        title: String,
+        subtitle: String? = null,
+        buildContent: LinearLayout.(Dialog) -> Unit
+    ) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(18), dp(10), dp(18), navigationBarBottomPadding() + dp(14))
+            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 30)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(TextView(this@MainActivity).apply {
+                text = ""
+                background = roundedBackground(0xFFCBD5E1.toInt(), 0xFFCBD5E1.toInt(), radiusDp = 4)
+                layoutParams = LinearLayout.LayoutParams(dp(54), dp(5)).apply {
+                    setMargins(0, 0, 0, dp(12))
+                }
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    addView(TextView(this@MainActivity).apply {
+                        text = title.shortUi(42)
+                        textSize = 18f
+                        typeface = Typeface.DEFAULT_BOLD
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(0xFF0F172A.toInt())
+                    })
+                    subtitle?.takeIf { it.isNotBlank() }?.let { sub ->
+                        addView(TextView(this@MainActivity).apply {
+                            text = sub.shortUi(70)
+                            textSize = 12f
+                            maxLines = 2
+                            ellipsize = TextUtils.TruncateAt.END
+                            setTextColor(0xFF64748B.toInt())
+                        })
+                    }
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = "×"
+                    textSize = 24f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(0xFF64748B.toInt())
+                    background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+                    layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    }
+                    setOnClickListener { dialog.dismiss() }
+                })
+            })
+            buildContent(dialog)
+        }
+        dialog.setContentView(container)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+    }
+
+    private fun bottomSheetActionRow(icon: String, title: String, subtitle: String, onClick: () -> Unit): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, dp(8), 0, 0)
+            }
             addView(TextView(this@MainActivity).apply {
-                text = compactProfileTitle(profile)
-                textSize = 12f
-                typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF0F172A.toInt())
+                text = icon
+                textSize = 18f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 15)
+                layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
+                    setMargins(0, 0, dp(10), 0)
+                }
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF0F172A.toInt())
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 11f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                })
             })
             addView(TextView(this@MainActivity).apply {
-                text = compactProfileSubtitle(profile)?.shortUi(20) ?: "Saved config"
-                textSize = 9.5f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF64748B.toInt())
+                text = "›"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF94A3B8.toInt())
+                layoutParams = LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.MATCH_PARENT)
             })
-        })
-        if (profile.id == selectedProfileId) {
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun profileListRow(
+        profile: VpnProfile,
+        compact: Boolean,
+        onSelect: () -> Unit,
+        onActions: () -> Unit = { showProfileActionsSheet(profile) }
+    ): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            background = roundedBackground(
+                fillColor = if (profile.id == selectedProfileId) 0xFFEFF6FF.toInt() else 0xFFF8FAFC.toInt(),
+                strokeColor = if (profile.id == selectedProfileId) 0xFF93C5FD.toInt() else 0xFFE2E8F0.toInt(),
+                radiusDp = if (compact) 16 else 20
+            )
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                if (compact) dp(58) else dp(68)
+            ).apply {
+                setMargins(0, dp(6), 0, 0)
+            }
             addView(TextView(this@MainActivity).apply {
-                text = "✓"
-                textSize = 14f
+                text = profileFlagOrIcon(profile)
+                textSize = if (compact) 18f else 20f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                    setMargins(0, 0, dp(10), 0)
+                }
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = compactProfileTitle(profile)
+                    textSize = if (compact) 13f else 14f
+                    typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF0F172A.toInt())
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = profileRowSubtitle(profile)
+                    textSize = if (compact) 10f else 11f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                })
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = if (profile.id == selectedProfileId) "✓" else "⋯"
+                textSize = if (profile.id == selectedProfileId) 15f else 20f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                setTextColor(0xFF2563EB.toInt())
-                layoutParams = LinearLayout.LayoutParams(dp(20), ViewGroup.LayoutParams.MATCH_PARENT)
+                includeFontPadding = false
+                setTextColor(if (profile.id == selectedProfileId) 0xFF2563EB.toInt() else 0xFF94A3B8.toInt())
+                layoutParams = LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.MATCH_PARENT)
+                setOnClickListener { onActions() }
             })
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onSelect() }
+            setOnLongClickListener {
+                onActions()
+                true
+            }
         }
-        isClickable = true
-        isFocusable = true
-        setOnClickListener {
-            setHomeProfileListExpanded(false)
-            loadProfile(profile)
-        }
-    }
 
     private fun updateProfileActionButtons() {
         if (!::favoriteActionButton.isInitialized) return
@@ -1394,16 +1612,6 @@ class MainActivity : Activity() {
             subtitle,
             verified
         ).joinToString("\n")
-    }
-
-    private fun profileButtonLabel(profile: VpnProfile): String {
-        val marker = if (profile.id == selectedProfileId) "✓ " else ""
-        val favorite = if (profile.favorite) "★ " else ""
-        val subtitle = compactProfileSubtitle(profile)?.shortUi(22) ?: "Saved config"
-        val verified = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
-            ?: profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.shortUi(12)
-        val secondLine = listOfNotNull(subtitle, verified).joinToString(" • ").shortUi(34)
-        return "$marker$favorite${compactProfileTitle(profile).shortUi(28)}\n$secondLine"
     }
 
     private fun restoreLatestProfileMetadata() {
@@ -1668,18 +1876,27 @@ class MainActivity : Activity() {
     }
 
     private fun showAddConfigMenu() {
-        AlertDialog.Builder(this)
-            .setTitle("Add config")
-            .setItems(arrayOf("Paste from clipboard", "Import from file", "Add subscription URL", "Load latest saved profile")) { _, which ->
-                when (which) {
-                    0 -> importConfigFromClipboard()
-                    1 -> openConfigPicker()
-                    2 -> promptAddSubscriptionGroup()
-                    3 -> loadLatestProfile()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        showBottomSheet(
+            title = "Add config",
+            subtitle = "Only use your own or provider-approved configs."
+        ) { dialog ->
+            addView(bottomSheetActionRow("⌘", "Paste from clipboard", "vless, vmess, trojan, ss, WireGuard, OpenVPN") {
+                dialog.dismiss()
+                importConfigFromClipboard()
+            })
+            addView(bottomSheetActionRow("□", "Import from file", "Pick a .conf, .ovpn, or text file") {
+                dialog.dismiss()
+                openConfigPicker()
+            })
+            addView(bottomSheetActionRow("↻", "Add subscription URL", "Encrypted provider subscription group") {
+                dialog.dismiss()
+                promptAddSubscriptionGroup()
+            })
+            addView(bottomSheetActionRow("◷", "Load latest saved", "Select the newest local profile") {
+                dialog.dismiss()
+                loadLatestProfile()
+            })
+        }
     }
 
     private fun promptAddSubscriptionGroup() {
@@ -2075,12 +2292,9 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(4))
         })
         profiles.take(MAX_PROFILE_BUTTONS).forEach { profile ->
-            profileListContainer.addView(createActionButton(
-                textValue = profileButtonLabel(profile)
-            ) { loadProfile(profile) })
+            profileListContainer.addView(profileListRow(profile, compact = false, onSelect = { loadProfile(profile) }))
         }
         refreshSubscriptionGroupButtons()
-        refreshHomeProfileList()
         updateDashboardSummary()
     }
 
@@ -2408,8 +2622,8 @@ class MainActivity : Activity() {
         const val EXPORT_OPENVPN_REQUEST = 1003
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
-        const val MAX_PROFILE_BUTTONS = 5
-        const val MAX_HOME_PROFILE_CHOICES = 6
+        const val MAX_PROFILE_BUTTONS = 40
+        const val MAX_PROFILE_SHEET_CHOICES = 40
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
