@@ -539,6 +539,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] pass دوم redesign: bottom nav ثابت، حذف ظاهر debug از Tools/Profiles، stats کارت‌بندی‌شده، LTR layout برای متن انگلیسی، و حذف glyphهای مشکل‌دار از power button.
 - [x] pass سوم redesign: حذف N/PRO/SET و subtitle غیرضروری، اضافه کردن دکمه + برای clipboard/file import، و جمع‌کردن protocol/quick options پشت فلش پایین تا تصمیم نهایی پروتکل‌ها.
 - [x] اضافه کردن Add subscription URL به دکمه + و لیست گروه‌های subscription در Profiles.
+- [x] pass چهارم redesign: چیدمان Home به سبک مرجع NexaVPN با هدر لوگو، hero تصویری/کوهستانی، کارت‌های Protected/Stats، دکمه power حلقه‌ای، کارت location/profile، protocol grid پنج‌ستونه و bottom nav چهارآیتمی.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

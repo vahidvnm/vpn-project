@@ -2,6 +2,7 @@ package com.vpnproject.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -14,6 +15,13 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.provider.OpenableColumns
@@ -22,6 +30,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -66,7 +75,7 @@ class MainActivity : Activity() {
     private lateinit var hubStatusDetail: TextView
     private lateinit var connectionStatsText: TextView
     private lateinit var selectedProfileText: TextView
-    private lateinit var primaryActionButton: TextView
+    private lateinit var primaryActionButton: PowerRingButton
     private lateinit var protectionBadge: TextView
     private lateinit var liveStatsBadge: TextView
     private lateinit var homeProfileNameText: TextView
@@ -82,6 +91,7 @@ class MainActivity : Activity() {
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
     private lateinit var navToolsButton: Button
+    private lateinit var navAccountButton: Button
     private lateinit var homeSection: LinearLayout
     private lateinit var profilesSection: LinearLayout
     private lateinit var toolsSection: LinearLayout
@@ -139,7 +149,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(18), dp(22), dp(18), dp(12))
+            setPadding(dp(12), dp(18), dp(12), dp(10))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -149,19 +159,12 @@ class MainActivity : Activity() {
         content.addView(createTopBar())
         status = TextView(this).apply {
             text = "Ready. Import your own config, then connect."
-            textSize = 13f
+            textSize = 12f
             gravity = Gravity.CENTER
-            maxLines = 3
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             setTextColor(0xFF64748B.toInt())
-            background = roundedBackground(0x99FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 0, 0, dp(14))
-            }
+            visibility = View.GONE
         }
         content.addView(status)
 
@@ -172,59 +175,9 @@ class MainActivity : Activity() {
         content.addView(profilesSection)
         content.addView(toolsSection)
 
-        val heroCard = createHeroCard()
-        heroCard.addView(createHeroTopRow())
-
-        primaryActionButton = TextView(this).apply {
-            text = "START\nConnect"
-            textSize = 22f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F172A.toInt())
-            gravity = Gravity.CENTER
-            background = powerButtonBackground(active = false)
-            isClickable = true
-            isFocusable = true
-            includeFontPadding = false
-            layoutParams = LinearLayout.LayoutParams(dp(176), dp(176)).apply {
-                setMargins(0, dp(18), 0, dp(14))
-            }
-            setOnClickListener { handlePrimaryAction() }
-        }
-        heroCard.addView(primaryActionButton)
-
-        hubStatusTitle = TextView(this).apply {
-            text = "Ready"
-            textSize = 32f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(0xFF0F172A.toInt())
-        }
-        heroCard.addView(hubStatusTitle)
-
-        hubStatusDetail = TextView(this).apply {
-            text = "Pick a profile, then tap the circle."
-            textSize = 15f
-            gravity = Gravity.CENTER
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF475569.toInt())
-            setPadding(dp(12), dp(8), dp(12), dp(6))
-        }
-        heroCard.addView(hubStatusDetail)
-
-        heroCard.addView(createStatsGrid())
-        heroCard.addView(createSelectedProfilePanel())
-
-        homeSection.addView(heroCard)
-        homeOptionsToggle = createHomeOptionsToggle()
-        homeSection.addView(homeOptionsToggle)
-        homeOptionsPanel = createSectionContainer().apply {
-            visibility = View.GONE
-            addView(createProtocolCard())
-            addView(createQuickActionsCard())
-        }
-        homeSection.addView(homeOptionsPanel)
+        homeSection.addView(createNexaHomeDashboard())
+        homeSection.addView(createProtocolCard())
+        homeSection.addView(createQuickActionsCard())
 
         val profileCard = createCard()
         profileCard.addView(sectionLabel("My configs"))
@@ -323,12 +276,14 @@ class MainActivity : Activity() {
                 setMargins(dp(18), dp(4), dp(18), dp(28))
             }
         }
-        navHomeButton = createNavButton("Home") { showSection(AppSection.HOME) }
-        navProfilesButton = createNavButton("Profiles") { showSection(AppSection.PROFILES) }
-        navToolsButton = createNavButton("Tools") { showSection(AppSection.TOOLS) }
+        navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
+        navProfilesButton = createNavButton("◎\nLocations") { showSection(AppSection.PROFILES) }
+        navToolsButton = createNavButton("▥\nStats") { showSection(AppSection.TOOLS) }
+        navAccountButton = createNavButton("◔\nProfile") { showSection(AppSection.PROFILES) }
         navRow.addView(navHomeButton)
         navRow.addView(navProfilesButton)
         navRow.addView(navToolsButton)
+        navRow.addView(navAccountButton)
         appRoot.addView(navRow)
 
         setContentView(appRoot)
@@ -359,27 +314,187 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        addView(TextView(this@MainActivity).apply {
-            text = "VPN Hub"
-            textSize = 20f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F172A.toInt())
-            includeFontPadding = false
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        addView(NexaLogoView(this@MainActivity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply {
+                setMargins(0, 0, dp(10), 0)
+            }
         })
-        addView(TextView(this@MainActivity).apply {
-            text = "+"
-            textSize = 30f
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = "NexaVPN"
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+                setTextColor(0xFF0F172A.toInt())
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Fast • Private • Open"
+                textSize = 12f
+                includeFontPadding = false
+                setTextColor(0xFF64748B.toInt())
+            })
+        })
+        addView(headerIconButton("♕") { status.text = "Premium/provider account features will stay optional." })
+        addView(headerIconButton("⚙") { showSection(AppSection.TOOLS) })
+        addView(headerIconButton("+") { showAddConfigMenu() })
+    }
+
+    private fun headerIconButton(textValue: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = textValue
+        textSize = if (textValue == "+") 28f else 20f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTextColor(if (textValue == "+") 0xFF2563EB.toInt() else 0xFF0F172A.toInt())
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+        isClickable = true
+        isFocusable = true
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+            setMargins(dp(6), 0, 0, 0)
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun createNexaHomeDashboard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        setPadding(0, 0, 0, dp(12))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val hero = FrameLayout(this@MainActivity).apply {
+            background = roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 30)
+            clipToOutline = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(364)
+            ).apply {
+                setMargins(0, 0, 0, dp(10))
+            }
+        }
+        hero.addView(ScenicBackgroundView(this@MainActivity).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        })
+
+        hero.addView(createProtectionCard(), FrameLayout.LayoutParams(dp(112), dp(154), Gravity.START or Gravity.TOP).apply {
+            setMargins(0, dp(6), 0, 0)
+        })
+        hero.addView(createSpeedCard(), FrameLayout.LayoutParams(dp(108), dp(164), Gravity.END or Gravity.TOP).apply {
+            setMargins(0, dp(6), 0, 0)
+        })
+
+        primaryActionButton = PowerRingButton(this@MainActivity).apply {
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { handlePrimaryAction() }
+        }
+        hero.addView(primaryActionButton, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+            topMargin = dp(56)
+        })
+
+        hubStatusTitle = TextView(this@MainActivity).apply {
+            text = "Disconnected"
+            textSize = 22f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFFFFFFFF.toInt())
-            background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = 20)
-            isClickable = true
-            isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54))
-            setOnClickListener { showAddConfigMenu() }
+            setTextColor(0xFF0F172A.toInt())
+        }
+        hero.addView(hubStatusTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34), Gravity.TOP).apply {
+            topMargin = dp(224)
         })
+
+        hubStatusDetail = TextView(this@MainActivity).apply {
+            text = "Pick a profile, then tap the power button."
+            textSize = 13f
+            gravity = Gravity.CENTER
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(0xFF059669.toInt())
+        }
+        hero.addView(hubStatusDetail, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42), Gravity.TOP).apply {
+            topMargin = dp(258)
+            leftMargin = dp(60)
+            rightMargin = dp(60)
+        })
+        addView(hero)
+        addView(createSelectedProfilePanel())
+
+        connectionStatsText = TextView(this@MainActivity).apply {
+            text = "Verified: no • Traffic: 0 B down / 0 B up"
+            visibility = View.GONE
+        }
+        addView(connectionStatsText)
+    }
+
+    private fun createProtectionCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(10), dp(10), dp(8), dp(10))
+        background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
+        protectionBadge = TextView(this@MainActivity).apply {
+            text = "✓  Protected  ›"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF047857.toInt())
+            maxLines = 1
+        }
+        addView(protectionBadge)
+        listOf(
+            "◎  Real IP Hidden",
+            "▣  Encrypted Traffic",
+            "◌  No Logs",
+            "✦  Kill Switch Active"
+        ).forEach { row ->
+            addView(TextView(this@MainActivity).apply {
+                text = row
+                textSize = 10.5f
+                setTextColor(0xFF64748B.toInt())
+                maxLines = 1
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+    }
+
+    private fun createSpeedCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+        background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
+        addView(MiniChartView(this@MainActivity).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+        })
+        statDownText = speedLine("↓", "0 B", "Download", 0xFF10B981.toInt())
+        statUpText = speedLine("↑", "0 B", "Upload", 0xFF7C3AED.toInt())
+        statLatencyText = speedLine("◷", "--", "Ping", 0xFF2563EB.toInt())
+        liveStatsBadge = TextView(this@MainActivity).apply { visibility = View.GONE }
+        statEngineText = TextView(this@MainActivity).apply {
+            text = "Engine\nAuto"
+            visibility = View.GONE
+        }
+        addView(statDownText)
+        addView(statUpText)
+        addView(statLatencyText)
+        addView(liveStatsBadge)
+        addView(statEngineText)
+    }
+
+    private fun speedLine(icon: String, value: String, label: String, color: Int): TextView = TextView(this).apply {
+        text = "$icon  $value\n     $label"
+        textSize = 11f
+        typeface = Typeface.DEFAULT_BOLD
+        includeFontPadding = false
+        setTextColor(0xFF0F172A.toInt())
+        setPadding(0, dp(8), 0, 0)
     }
 
     private fun createHeroCard(): LinearLayout = LinearLayout(this).apply {
@@ -565,25 +680,44 @@ class MainActivity : Activity() {
     }
 
     private fun createProtocolCard(): LinearLayout = createCard().apply {
-        addView(sectionLabel("Protocol ideas"))
-        addView(TextView(this@MainActivity).apply {
-            text = "Draft list only. Final protocol buttons will be decided later."
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF64748B.toInt())
-            setPadding(dp(8), 0, dp(8), dp(8))
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addView(TextView(this@MainActivity).apply {
+                text = "Protocol"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(0xFF0F172A.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Auto Select  ◯"
+                textSize = 12f
+                setTextColor(0xFF64748B.toInt())
+            })
         })
         addView(protocolRow(
-            protocolTile("AUTO", "Best path", "Recommended", selected = true),
-            protocolTile("XRAY", "Iran-first", "VLESS/VMess", selected = true)
+            protocolTile("⚡", "Auto", "Best for you", selected = true),
+            protocolTile("WG", "WireGuard", "Fast", selected = false),
+            protocolTile("◉", "OpenVPN", "Secure", selected = false),
+            protocolTile("◆", "IKEv2", "Reliable", selected = false),
+            protocolTile("SS", "Shadowsocks", "Bypass", selected = false)
         ))
         addView(protocolRow(
-            protocolTile("OVPN", "TCP handoff", "Port 443", selected = false),
-            protocolTile("WG", "Secondary", "UDP only", selected = false)
+            protocolTile("V", "V2Ray", "Advanced", selected = false),
+            protocolTile("TR", "Trojan", "Stealth", selected = false),
+            protocolTile("ST", "SSTP", "For networks", selected = false),
+            protocolTile("L2", "L2TP/IPSec", "Compatible", selected = false),
+            protocolTile("PP", "PPTP", "Legacy", selected = false)
         ))
         addView(protocolRow(
-            protocolTile("TRJ", "Trojan", "Xray", selected = false),
-            protocolTile("REAL", "Reality", "Next", selected = false)
+            protocolTile("H2", "Hysteria2", "High speed", selected = false),
+            protocolTile("TU", "TUIC", "Low latency", selected = false),
+            protocolTile("VM", "VMess", "Flexible", selected = false),
+            protocolTile("RL", "Reality", "Anti-block", selected = false),
+            protocolTile("HTTP", "HTTP/HTTPS", "Web friendly", selected = false)
         ))
     }
 
@@ -600,7 +734,7 @@ class MainActivity : Activity() {
 
     private fun protocolTile(label: String, title: String, subtitle: String, selected: Boolean): TextView = TextView(this).apply {
         text = "$label\n$title\n$subtitle"
-        textSize = 12f
+        textSize = 9.5f
         typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         gravity = Gravity.CENTER
         includeFontPadding = false
@@ -608,11 +742,11 @@ class MainActivity : Activity() {
         background = roundedBackground(
             fillColor = if (selected) 0xFFEFF6FF.toInt() else 0xF7FFFFFF.toInt(),
             strokeColor = if (selected) 0xFF2563EB.toInt() else 0xFFE2E8F0.toInt(),
-            radiusDp = 22
+            radiusDp = 14
         )
-        setPadding(dp(8), dp(12), dp(8), dp(12))
-        layoutParams = LinearLayout.LayoutParams(0, dp(96), 1f).apply {
-            setMargins(dp(5), dp(5), dp(5), dp(5))
+        setPadding(dp(2), dp(6), dp(2), dp(6))
+        layoutParams = LinearLayout.LayoutParams(0, dp(74), 1f).apply {
+            setMargins(dp(3), dp(5), dp(3), dp(3))
         }
     }
 
@@ -685,8 +819,8 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 30)
+        setPadding(dp(10), dp(12), dp(10), dp(12))
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 24)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -805,6 +939,7 @@ class MainActivity : Activity() {
         styleNavButton(navHomeButton, section == AppSection.HOME)
         styleNavButton(navProfilesButton, section == AppSection.PROFILES)
         styleNavButton(navToolsButton, section == AppSection.TOOLS)
+        if (::navAccountButton.isInitialized) styleNavButton(navAccountButton, section == AppSection.PROFILES)
         when (section) {
             AppSection.HOME -> updateDashboardSummary()
             AppSection.PROFILES -> refreshProfileButtons()
@@ -942,19 +1077,19 @@ class MainActivity : Activity() {
 
         val down = formatBytes(hub.rxBytes ?: 0)
         val up = formatBytes(hub.txBytes ?: 0)
-        if (::statLatencyText.isInitialized) statLatencyText.text = "Latency\n${hub.latencyMs?.let { "${it} ms" } ?: "--"}"
+        if (::statLatencyText.isInitialized) statLatencyText.text = "◷  ${hub.latencyMs?.let { "${it} ms" } ?: "--"}\n     Ping"
         if (::statEngineText.isInitialized) statEngineText.text = "Engine\n${hub.activeEngine?.let { engineLabel(it) } ?: "Auto"}"
-        if (::statDownText.isInitialized) statDownText.text = "Down\n$down"
-        if (::statUpText.isInitialized) statUpText.text = "Up\n$up"
+        if (::statDownText.isInitialized) statDownText.text = "↓  $down\n     Download"
+        if (::statUpText.isInitialized) statUpText.text = "↑  $up\n     Upload"
 
         if (::protectionBadge.isInitialized) {
             val protectionText = when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> "SECURE\nProtected"
+                VpnHubConnectionState.CONNECTED -> "✓  Protected  ›"
                 VpnHubConnectionState.CONNECTING,
-                VpnHubConnectionState.RUNNING_UNVERIFIED -> "SECURE\nChecking"
-                VpnHubConnectionState.FAILED -> "SECURE\nFailed"
+                VpnHubConnectionState.RUNNING_UNVERIFIED -> "✓  Checking  ›"
+                VpnHubConnectionState.FAILED -> "!  Failed  ›"
                 VpnHubConnectionState.IDLE,
-                VpnHubConnectionState.STOPPED -> "SECURE\nOffline"
+                VpnHubConnectionState.STOPPED -> "✓  Offline  ›"
             }
             val protectionColor = when (hub.state) {
                 VpnHubConnectionState.CONNECTED -> 0xFF047857.toInt()
@@ -968,14 +1103,11 @@ class MainActivity : Activity() {
             protectionBadge.setTextColor(protectionColor)
         }
         if (::liveStatsBadge.isInitialized) {
-            liveStatsBadge.text = if (active) "LIVE\n$down / $up" else "LIVE\n0 B"
+            liveStatsBadge.text = if (active) "$down / $up" else "0 B"
             liveStatsBadge.setTextColor(if (active) 0xFF2563EB.toInt() else 0xFF64748B.toInt())
         }
 
-        primaryActionButton.text = if (active) "STOP\nDisconnect" else "START\nConnect"
-        primaryActionButton.textSize = 22f
-        primaryActionButton.setTextColor(if (active) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
-        primaryActionButton.background = powerButtonBackground(active)
+        primaryActionButton.setActive(active)
         updateSelectedProfileSummary()
         updateProfileActionButtons()
     }
@@ -1326,9 +1458,7 @@ class MainActivity : Activity() {
         lastRecordedVerificationKey = null
         hubStatusTitle.text = "Disconnecting"
         hubStatusDetail.text = "Stopping WireGuard and Xray engines."
-        primaryActionButton.text = "START\nConnect"
-        primaryActionButton.setTextColor(0xFF0F172A.toInt())
-        primaryActionButton.background = powerButtonBackground(active = false)
+        primaryActionButton.setActive(false)
         mainHandler.postDelayed({ showEngineStatus() }, 1_500L)
     }
 
@@ -2079,5 +2209,169 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
+    }
+}
+
+private class NexaLogoView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        paint.strokeWidth = w * 0.18f
+        paint.shader = LinearGradient(0f, h, w, 0f, intArrayOf(0xFF0EA5E9.toInt(), 0xFF2563EB.toInt(), 0xFF8B5CF6.toInt()), null, Shader.TileMode.CLAMP)
+        val left = Path().apply {
+            moveTo(w * 0.18f, h * 0.76f)
+            lineTo(w * 0.38f, h * 0.24f)
+            lineTo(w * 0.56f, h * 0.76f)
+        }
+        val right = Path().apply {
+            moveTo(w * 0.47f, h * 0.72f)
+            lineTo(w * 0.68f, h * 0.24f)
+            lineTo(w * 0.84f, h * 0.36f)
+        }
+        canvas.drawPath(left, paint)
+        canvas.drawPath(right, paint)
+        paint.shader = null
+    }
+}
+
+private class PowerRingButton(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var active = false
+
+    fun setActive(value: Boolean) {
+        active = value
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val size = width.coerceAtMost(height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        val radius = size * 0.42f
+
+        paint.style = Paint.Style.FILL
+        paint.shader = RadialGradient(cx, cy, radius * 1.35f, intArrayOf(0x66FFFFFF, 0x22FFFFFF, 0x00000000), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, radius * 1.22f, paint)
+        paint.shader = null
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = size * 0.075f
+        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(0xFF2563EB.toInt(), 0xFF06B6D4.toInt(), 0xFF22C55E.toInt()), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, radius, paint)
+        paint.shader = null
+
+        paint.strokeWidth = size * 0.018f
+        paint.color = if (active) 0x9934D399.toInt() else 0x8842A5F5.toInt()
+        canvas.drawCircle(cx, cy, radius * 1.12f, paint)
+
+        paint.style = Paint.Style.FILL
+        paint.color = 0xEFFFFFFF.toInt()
+        canvas.drawCircle(cx, cy, radius * 0.74f, paint)
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = size * 0.045f
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = 0xFF0F172A.toInt()
+        canvas.drawLine(cx, cy - radius * 0.36f, cx, cy + radius * 0.08f, paint)
+        val iconRect = RectF(cx - radius * 0.30f, cy - radius * 0.12f, cx + radius * 0.30f, cy + radius * 0.48f)
+        canvas.drawArc(iconRect, 125f, 290f, false, paint)
+    }
+}
+
+private class MiniChartView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val path = Path().apply {
+            moveTo(w * 0.05f, h * 0.72f)
+            cubicTo(w * 0.20f, h * 0.35f, w * 0.30f, h * 0.70f, w * 0.42f, h * 0.48f)
+            cubicTo(w * 0.55f, h * 0.22f, w * 0.60f, h * 0.82f, w * 0.72f, h * 0.56f)
+            cubicTo(w * 0.82f, h * 0.35f, w * 0.88f, h * 0.18f, w * 0.96f, h * 0.36f)
+        }
+        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(0xFF0EA5E9.toInt(), 0xFF2563EB.toInt(), 0xFF22C55E.toInt()), null, Shader.TileMode.CLAMP)
+        canvas.drawPath(path, paint)
+        paint.shader = null
+    }
+}
+
+private class ScenicBackgroundView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val clipPath = Path()
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val r = 32f * resources.displayMetrics.density
+        clipPath.reset()
+        clipPath.addRoundRect(RectF(0f, 0f, w, h), r, r, Path.Direction.CW)
+        canvas.save()
+        canvas.clipPath(clipPath)
+
+        paint.style = Paint.Style.FILL
+        paint.shader = LinearGradient(0f, 0f, 0f, h, intArrayOf(0xFFEAF7FF.toInt(), 0xFFF8FBFF.toInt(), 0xFFE0F2FE.toInt()), null, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, w, h, paint)
+        paint.shader = null
+
+        paint.shader = RadialGradient(w * 0.58f, h * 0.42f, w * 0.34f, intArrayOf(0x77FFFFFF, 0x22FDE68A, 0x00000000), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(w * 0.58f, h * 0.42f, w * 0.36f, paint)
+        paint.shader = null
+
+        drawMountain(canvas, w, h, 0xFFC7D2FE.toInt(), 0.42f, 0.78f)
+        drawMountain(canvas, w, h, 0xFF93C5FD.toInt(), 0.52f, 0.84f)
+        drawMountain(canvas, w, h, 0xFF64748B.toInt(), 0.62f, 0.90f)
+
+        paint.shader = LinearGradient(0f, h * 0.68f, 0f, h, intArrayOf(0xCCDBEAFE.toInt(), 0xFFE0F2FE.toInt(), 0xFFFFFFFF.toInt()), null, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, h * 0.64f, w, h, paint)
+        paint.shader = null
+
+        paint.color = 0x6638BDF8
+        paint.strokeWidth = 2f
+        paint.style = Paint.Style.STROKE
+        for (i in 0..5) {
+            val y = h * (0.72f + i * 0.045f)
+            canvas.drawLine(w * 0.05f, y, w * 0.95f, y + (i % 2) * 3f, paint)
+        }
+        canvas.restore()
+    }
+
+    private fun drawMountain(canvas: Canvas, w: Float, h: Float, color: Int, peak: Float, base: Float) {
+        paint.style = Paint.Style.FILL
+        paint.color = color
+        val path = Path().apply {
+            moveTo(-w * 0.05f, h * base)
+            lineTo(w * 0.18f, h * (peak + 0.14f))
+            lineTo(w * 0.34f, h * peak)
+            lineTo(w * 0.52f, h * (peak + 0.16f))
+            lineTo(w * 0.70f, h * (peak + 0.06f))
+            lineTo(w * 1.05f, h * base)
+            close()
+        }
+        canvas.drawPath(path, paint)
+        paint.color = 0x99FFFFFF.toInt()
+        val snow = Path().apply {
+            moveTo(w * 0.34f, h * peak)
+            lineTo(w * 0.29f, h * (peak + 0.07f))
+            lineTo(w * 0.39f, h * (peak + 0.06f))
+            close()
+        }
+        canvas.drawPath(snow, paint)
     }
 }
