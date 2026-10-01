@@ -108,6 +108,8 @@ class MainActivity : Activity() {
     private lateinit var advancedToggleButton: Button
     private lateinit var advancedPanel: LinearLayout
     private lateinit var advancedDiagnostics: TextView
+    private lateinit var settingsConnectionSummaryText: TextView
+    private lateinit var settingsAutoTestValueText: TextView
     private var advancedVisible = false
     private var liveRefreshRunning = false
     private val dashboardRefreshRunnable = object : Runnable {
@@ -217,19 +219,40 @@ class MainActivity : Activity() {
         profileCard.addView(subscriptionGroupContainer)
         profilesSection.addView(profileCard)
 
-        val toolsCard = createCard()
-        toolsCard.addView(sectionLabel("Tools"))
-        toolsCard.addView(TextView(this).apply {
-            text = "Only working checks stay here. Technical details are hidden in Advanced."
+        val settingsCard = createCard()
+        settingsCard.addView(sectionLabel("Settings"))
+        settingsCard.addView(TextView(this).apply {
+            text = "Normal controls stay simple. Technical diagnostics are tucked into Advanced."
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
             setPadding(dp(8), 0, dp(8), dp(10))
         })
-        toolsCard.addView(createActionButton("Refresh connection status", primary = true) { showEngineStatus() })
-        toolsCard.addView(createActionButton("Test selected config") { resolveAndProbeImportedConfig() })
-        advancedToggleButton = createActionButton("Advanced tools") { toggleAdvancedPanel() }
-        toolsCard.addView(advancedToggleButton)
+        settingsConnectionSummaryText = TextView(this).apply {
+            text = "Status: tap Refresh status"
+            textSize = 12.5f
+            gravity = Gravity.CENTER
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(0xFF334155.toInt())
+            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 0, 0, dp(8))
+            }
+        }
+        settingsCard.addView(settingsConnectionSummaryText)
+        settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
+        settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
+        settingsCard.addView(settingsRow("✓", "Test selected config", "Run endpoint health check for the active config") { resolveAndProbeImportedConfig() })
+        settingsCard.addView(settingsRow("A", "Auto test", "Automatically test imported or selected configs", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
+        settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
+        advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
+        settingsCard.addView(advancedToggleButton)
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -237,6 +260,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(10), 0, 0)
         }
         advancedVisible = false
+        advancedPanel.addView(sectionLabel("Advanced"))
         advancedDiagnostics = TextView(this).apply {
             text = "Advanced diagnostics will appear here after refresh/probe."
             textSize = 13f
@@ -254,12 +278,12 @@ class MainActivity : Activity() {
         advancedPanel.addView(advancedDiagnostics)
         advancedPanel.addView(createActionButton("Prepare Android VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
         advancedPanel.addView(createActionButton("Load latest saved profile") { loadLatestProfile() })
-        advancedPanel.addView(createActionButton("Show saved profiles") { showSavedProfiles() })
+        advancedPanel.addView(createActionButton("Show saved profiles text report") { showSavedProfiles() })
         advancedPanel.addView(createActionButton("Save pinned OpenVPN TCP config") { prepareAndSaveOpenVpnConfig() })
         advancedPanel.addView(createActionButton("Start TUN bootstrap VPN") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
         advancedPanel.addView(createActionButton("Stop bootstrap VPN") { stopBootstrapVpn() })
-        toolsCard.addView(advancedPanel)
-        toolsSection.addView(toolsCard)
+        settingsCard.addView(advancedPanel)
+        toolsSection.addView(settingsCard)
 
         val scrollView = ScrollView(this).apply {
             isFillViewport = false
@@ -289,7 +313,7 @@ class MainActivity : Activity() {
         }
         navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
         navProfilesButton = createNavButton("◎\nLocations") { showSection(AppSection.PROFILES) }
-        navToolsButton = createNavButton("▥\nTools") { showSection(AppSection.TOOLS) }
+        navToolsButton = createNavButton("⚙\nSettings") { showSection(AppSection.TOOLS) }
         navRow.addView(navHomeButton)
         navRow.addView(navProfilesButton)
         navRow.addView(navToolsButton)
@@ -808,6 +832,15 @@ class MainActivity : Activity() {
             strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
             radiusDp = 18
         )
+        if (::settingsAutoTestValueText.isInitialized) {
+            settingsAutoTestValueText.text = if (autoTestEnabled) "ON" else "OFF"
+            settingsAutoTestValueText.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            settingsAutoTestValueText.background = roundedBackground(
+                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
+                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                radiusDp = 14
+            )
+        }
     }
 
     private fun setAutoTestStatus(message: String) {
@@ -843,7 +876,7 @@ class MainActivity : Activity() {
             val summary = when {
                 okCount > 0 -> "Auto test passed: $okCount reachable endpoint${if (okCount == 1) "" else "s"}"
                 failedCount > 0 -> "Auto test finished: $failedCount failed probe${if (failedCount == 1) "" else "s"}"
-                else -> "Auto test finished: see Tools diagnostics"
+                else -> "Auto test finished: see Settings diagnostics"
             }
             runOnUiThread {
                 autoTestInFlight = false
@@ -986,6 +1019,84 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
+    private fun settingsRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        valueView: TextView? = null,
+        onClick: () -> Unit
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        setPadding(dp(10), dp(9), dp(10), dp(9))
+        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(6), 0, dp(4))
+        }
+        addView(TextView(this@MainActivity).apply {
+            text = icon
+            textSize = 17f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                setMargins(0, 0, dp(10), 0)
+            }
+        })
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = title
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF0F172A.toInt())
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = subtitle
+                textSize = 11f
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF64748B.toInt())
+            })
+        })
+        val trailing = valueView ?: TextView(this@MainActivity).apply {
+            text = "›"
+            textSize = 24f
+            includeFontPadding = false
+            setTextColor(0xFF94A3B8.toInt())
+        }
+        trailing.gravity = Gravity.CENTER
+        trailing.typeface = Typeface.DEFAULT_BOLD
+        if (valueView != null) {
+            trailing.textSize = 11f
+            trailing.setPadding(dp(10), dp(5), dp(10), dp(5))
+            trailing.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            trailing.background = roundedBackground(
+                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
+                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                radiusDp = 14
+            )
+            trailing.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
+                setMargins(dp(8), 0, 0, 0)
+            }
+        } else {
+            trailing.layoutParams = LinearLayout.LayoutParams(dp(24), ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        addView(trailing)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
+    }
+
     private fun verticalGradient(
         topColor: Int,
         centerColor: Int,
@@ -1055,9 +1166,9 @@ class MainActivity : Activity() {
         advancedVisible = visible
         advancedPanel.visibility = if (visible) View.VISIBLE else View.GONE
         advancedToggleButton.text = if (visible) {
-            "Hide technical diagnostics"
+            "Hide advanced tools"
         } else {
-            "Show technical diagnostics"
+            "Show advanced tools"
         }
     }
 
@@ -1985,8 +2096,34 @@ class MainActivity : Activity() {
         recordVerifiedProfileIfNeeded(hub)
         updateDashboardSummary()
         status.text = "Latest status: ${hub.title}. Verified: ${if (hub.verified) "yes" else "no"}."
+        if (::settingsConnectionSummaryText.isInitialized) {
+            val parts = listOfNotNull(
+                hub.title,
+                if (hub.verified) "Verified" else "Not verified",
+                hub.latencyMs?.let { "${it}ms" },
+                hub.activeEngine?.let { engineLabel(it) }
+            )
+            settingsConnectionSummaryText.text = parts.joinToString(" • ")
+        }
         if (::advancedDiagnostics.isInitialized) {
             advancedDiagnostics.text = engineDiagnosticsText(wg, xray)
+        }
+    }
+
+    private fun showKillSwitchInfoSheet() {
+        showBottomSheet(
+            title = "Kill switch",
+            subtitle = "Android controls this at system level."
+        ) { dialog ->
+            addView(TextView(this@MainActivity).apply {
+                text = "For strict leak protection, open Android VPN settings for this app and enable Always-on VPN and Block connections without VPN. This app should not fake a kill switch toggle until it can enforce it reliably."
+                textSize = 13f
+                setTextColor(0xFF334155.toInt())
+                setPadding(dp(8), dp(12), dp(8), dp(8))
+            })
+            addView(bottomSheetActionRow("✓", "Got it", "Keep settings honest and enforceable") {
+                dialog.dismiss()
+            })
         }
     }
 
@@ -2543,7 +2680,7 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 advancedDiagnostics.text = text
-                status.text = "Advanced diagnostics completed. See the expanded diagnostics panel."
+                status.text = "Advanced diagnostics completed. See Settings > Advanced."
             }
         }.start()
     }
