@@ -57,6 +57,12 @@ class MainActivity : Activity() {
     private lateinit var connectionStatsText: TextView
     private lateinit var selectedProfileText: TextView
     private lateinit var primaryActionButton: Button
+    private lateinit var navHomeButton: Button
+    private lateinit var navProfilesButton: Button
+    private lateinit var navToolsButton: Button
+    private lateinit var homeSection: LinearLayout
+    private lateinit var profilesSection: LinearLayout
+    private lateinit var toolsSection: LinearLayout
     private lateinit var advancedToggleButton: Button
     private lateinit var advancedPanel: LinearLayout
     private lateinit var advancedDiagnostics: TextView
@@ -99,12 +105,36 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "کانفیگ خودت را وارد کن؛ اپ موتور مناسب را انتخاب و وضعیت اتصال را ساده نشان می‌دهد."
+            text = "خانه ساده، پروفایل‌ها جدا، ابزارهای فنی جدا."
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(10), 0, dp(18))
+            setPadding(0, dp(10), 0, dp(14))
         })
+
+        val navRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(14))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        navHomeButton = createNavButton("خانه") { showSection(AppSection.HOME) }
+        navProfilesButton = createNavButton("پروفایل‌ها") { showSection(AppSection.PROFILES) }
+        navToolsButton = createNavButton("ابزار") { showSection(AppSection.TOOLS) }
+        navRow.addView(navHomeButton)
+        navRow.addView(navProfilesButton)
+        navRow.addView(navToolsButton)
+        root.addView(navRow)
+
+        homeSection = createSectionContainer()
+        profilesSection = createSectionContainer()
+        toolsSection = createSectionContainer()
+        root.addView(homeSection)
+        root.addView(profilesSection)
+        root.addView(toolsSection)
 
         val statusCard = createCard()
         statusCard.addView(sectionLabel("Connection"))
@@ -125,7 +155,7 @@ class MainActivity : Activity() {
         }
         statusCard.addView(hubStatusDetail)
         connectionStatsText = TextView(this).apply {
-            text = "Verified: no • Traffic: 0 / 0"
+            text = "Verified: no • Traffic: 0 B down / 0 B up"
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
@@ -136,14 +166,20 @@ class MainActivity : Activity() {
         statusCard.addView(primaryActionButton)
         statusCard.addView(createActionButton("Refresh status") { showEngineStatus() })
         status = TextView(this).apply {
-            text = "Ready. Import from clipboard/file or pick a saved profile."
+            text = "Ready. Paste/import a config, then tap Connect."
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
             setPadding(0, dp(10), 0, 0)
         }
         statusCard.addView(status)
-        root.addView(statusCard)
+        homeSection.addView(statusCard)
+
+        val quickCard = createCard()
+        quickCard.addView(sectionLabel("Quick actions"))
+        quickCard.addView(createActionButton("Paste / import config") { showSection(AppSection.PROFILES) })
+        quickCard.addView(createActionButton("Diagnostics & tools") { showSection(AppSection.TOOLS) })
+        homeSection.addView(quickCard)
 
         val profileCard = createCard()
         profileCard.addView(sectionLabel("Profiles"))
@@ -163,25 +199,28 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, 0)
         }
         profileCard.addView(profileListContainer)
-        root.addView(profileCard)
+        profilesSection.addView(profileCard)
 
         val advancedCard = createCard()
-        advancedToggleButton = createActionButton("Show advanced diagnostics & tools") { toggleAdvancedPanel() }
+        advancedCard.addView(sectionLabel("Diagnostics & tools"))
+        advancedToggleButton = createActionButton("Hide advanced diagnostics") { toggleAdvancedPanel() }
         advancedCard.addView(advancedToggleButton)
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            visibility = View.GONE
+            visibility = View.VISIBLE
             setPadding(0, dp(10), 0, 0)
         }
+        advancedVisible = true
         advancedDiagnostics = TextView(this).apply {
-            text = "Advanced diagnostics will appear here."
+            text = "Advanced diagnostics will appear here after refresh/probe."
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(0xFF334155.toInt())
             setPadding(0, 0, 0, dp(12))
         }
         advancedPanel.addView(advancedDiagnostics)
+        advancedPanel.addView(createActionButton("Refresh engine diagnostics") { showEngineStatus() })
         advancedPanel.addView(createActionButton("Prepare VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
         advancedPanel.addView(createActionButton("Show saved profiles") { showSavedProfiles() })
         advancedPanel.addView(createActionButton("Load latest profile") { loadLatestProfile() })
@@ -190,13 +229,14 @@ class MainActivity : Activity() {
         advancedPanel.addView(createActionButton("Start TUN bootstrap VPN") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
         advancedPanel.addView(createActionButton("Stop bootstrap VPN") { stopBootstrapVpn() })
         advancedCard.addView(advancedPanel)
-        root.addView(advancedCard)
+        toolsSection.addView(advancedCard)
 
         setContentView(ScrollView(this).apply { addView(root) })
 
         restoreLatestProfileMetadata()
         refreshProfileButtons()
         updateDashboardSummary()
+        showSection(AppSection.HOME)
     }
 
     private fun createCard(): LinearLayout = LinearLayout(this).apply {
@@ -210,6 +250,32 @@ class MainActivity : Activity() {
         ).apply {
             setMargins(0, 0, 0, dp(14))
         }
+    }
+
+    private fun createSectionContainer(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun createNavButton(textValue: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = textValue
+        textSize = 14f
+        setAllCaps(false)
+        setTextColor(0xFF0F172A.toInt())
+        background = roundedBackground(0xFFE2E8F0.toInt(), 0xFFCBD5E1.toInt(), radiusDp = 14)
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+        layoutParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+            setMargins(dp(3), 0, dp(3), 0)
+        }
+        setOnClickListener { onClick() }
     }
 
     private fun sectionLabel(textValue: String): TextView = TextView(this).apply {
@@ -256,6 +322,30 @@ class MainActivity : Activity() {
         setStroke(dp(1), strokeColor)
     }
 
+    private fun showSection(section: AppSection) {
+        if (!::homeSection.isInitialized) return
+        homeSection.visibility = if (section == AppSection.HOME) View.VISIBLE else View.GONE
+        profilesSection.visibility = if (section == AppSection.PROFILES) View.VISIBLE else View.GONE
+        toolsSection.visibility = if (section == AppSection.TOOLS) View.VISIBLE else View.GONE
+        styleNavButton(navHomeButton, section == AppSection.HOME)
+        styleNavButton(navProfilesButton, section == AppSection.PROFILES)
+        styleNavButton(navToolsButton, section == AppSection.TOOLS)
+        when (section) {
+            AppSection.HOME -> updateDashboardSummary()
+            AppSection.PROFILES -> refreshProfileButtons()
+            AppSection.TOOLS -> showEngineStatus()
+        }
+    }
+
+    private fun styleNavButton(button: Button, selected: Boolean) {
+        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        button.background = roundedBackground(
+            fillColor = if (selected) 0xFF0F172A.toInt() else 0xFFE2E8F0.toInt(),
+            strokeColor = if (selected) 0xFF0F172A.toInt() else 0xFFCBD5E1.toInt(),
+            radiusDp = 14
+        )
+    }
+
     private fun toggleAdvancedPanel() {
         setAdvancedVisible(!advancedVisible)
     }
@@ -283,7 +373,7 @@ class MainActivity : Activity() {
                 val hasProfile = importedConfig != null || selectedProfile != null || runCatching { profileStore.latestProfile() }.getOrNull() != null
                 if (!hasProfile) {
                     status.text = "No profile selected. Import a config from clipboard/file first."
-                    updateDashboardSummary()
+                    showSection(AppSection.PROFILES)
                 } else {
                     requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
                 }
@@ -356,7 +446,7 @@ class MainActivity : Activity() {
             "No profile selected yet. Import a config or pick a saved profile."
         } else {
             val engine = EngineRegistry.engineFor(profile.kind)
-            val endpointText = profile.endpoints.take(2).joinToString("\n") { "• ${it.summary()}" }
+            val endpointText = profile.endpoints.take(2).joinToString("\n") { "• ${it.summary().shortUi(82)}" }
             "${profile.displayName}\n${profile.kind.displayName} • ${engine.displayName}" +
                 if (endpointText.isBlank()) "" else "\n$endpointText"
         }
@@ -688,6 +778,7 @@ class MainActivity : Activity() {
                 "\n\nOpenVPN auth-user-pass line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
                 nextStep +
                 warnings
+            showSection(AppSection.HOME)
         } catch (e: Exception) {
             importedConfig = null
             status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
@@ -711,6 +802,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSavedProfiles() {
+        showSection(AppSection.PROFILES)
         refreshProfileButtons()
         val profiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
             status.text = "Could not load saved profiles: ${error.message ?: error.javaClass.simpleName}"
@@ -764,12 +856,8 @@ class MainActivity : Activity() {
         selectedProfileId = profile.id
         selectedProfile = profile
         refreshProfileButtons()
-        status.text = "Selected profile: ${profile.displayName}\n" +
-            "Kind: ${profile.kind.displayName}\n" +
-            "Engine: ${EngineRegistry.engineFor(profile.kind).displayName}\n" +
-            "Endpoints: ${config.endpoints.size}\n" +
-            profile.endpoints.joinToString("\n") { "• ${it.summary()}" } +
-            "\n\nNext: Resolve & probe, or Connect selected/imported profile."
+        status.text = "Selected profile: ${profile.displayName}. Tap Connect to start."
+        showSection(AppSection.HOME)
     }
 
     private fun loadSelectedOrLatestProfileConfigForAction(): ImportedConfig? {
@@ -806,6 +894,7 @@ class MainActivity : Activity() {
             return
         }
 
+        showSection(AppSection.TOOLS)
         setAdvancedVisible(true)
         status.text = "Running advanced endpoint diagnostics..."
         advancedDiagnostics.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
@@ -966,7 +1055,18 @@ class MainActivity : Activity() {
         return uri.lastPathSegment
     }
 
+    private fun String.shortUi(maxLength: Int): String {
+        val compact = replace(Regex("\\s+"), " ").trim()
+        return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private enum class AppSection {
+        HOME,
+        PROFILES,
+        TOOLS
+    }
 
     private enum class PendingVpnAction {
         NONE,

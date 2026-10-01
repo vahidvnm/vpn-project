@@ -330,7 +330,8 @@ explainFailure()
   - [x] import/probe report طولانی در Advanced diagnostics
   - [x] شروع صفحه status ساده با `Hub status` بالای diagnostics
   - [x] صفحه اصلی ساده با کارت اتصال، پروفایل، و action اصلی
-  - [ ] صفحه اصلی نهایی با navigation/settings کامل و polish گرافیکی
+  - [x] navigation اولیه سه‌بخشی: خانه، پروفایل‌ها، ابزار/diagnostics
+  - [ ] صفحه اصلی نهایی با drawer/settings کامل و polish گرافیکی
 - [x] storage امن اولیه برای raw configها:
   - [x] Android Keystore + AES-GCM روی SharedPreferences
   - [ ] عدم log کردن secretها در همه مسیرهای آینده
@@ -358,7 +359,9 @@ explainFailure()
   - [x] Profile list
   - [x] Connect / Disconnect با یک دکمه اصلی dynamic
   - [x] Status ساده: `Connected`, `Connecting`, `Failed` و summary مشترک Hub
+  - [x] نمایش traffic خلاصه Xray از stats واقعی core
   - [x] دکمه Diagnostics جدا از مسیر کاربر عادی
+  - [x] navigation اولیه بین Home / Profiles / Tools برای کمتر شدن شلوغی صفحه
   - [ ] polish نهایی UI، settings/drawer، empty states بهتر
 - [x] تفکیک اولیه UI عادی از UI debug:
   - [x] کاربر عادی اول نتیجه و علت ساده را ببیند.
@@ -382,7 +385,8 @@ Failed
   - [x] Xray HTTP delay check + core traffic stats.
   - [ ] public egress IP check بعد از Xray بدون leak.
   - [ ] DNS leak check از داخل تونل.
-  - [ ] نمایش RX/TX خلاصه برای Xray مثل WireGuard.
+  - [x] نمایش RX/TX خلاصه برای Xray از `queryAllOutboundTrafficStats`.
+  - [ ] پایدارسازی/تست طولانی traffic counter روی چند دستگاه.
 - [ ] پیام‌های خلاصه قابل فهم:
 
 ```text
@@ -518,6 +522,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [ ] تکمیل status/stats مشترک برای همه engineها و طراحی UI نهایی.
 - [x] تبدیل اولیه UI از صفحه debug به تجربه ساده Connect/Disconnect برای Xray-first MVP.
 - [x] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
+- [x] navigation اولیه Home / Profiles / Tools و fix نمایش traffic Xray در dashboard.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
