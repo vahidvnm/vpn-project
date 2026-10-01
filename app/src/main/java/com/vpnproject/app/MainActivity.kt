@@ -156,7 +156,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(12), dp(18), dp(12), dp(10))
+            setPadding(dp(12), statusBarTopPadding() + dp(12), dp(12), dp(10))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -422,7 +422,7 @@ class MainActivity : Activity() {
 
         hubStatusTitle = TextView(this@MainActivity).apply {
             text = "Disconnected"
-            textSize = 22f
+            textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
@@ -672,10 +672,10 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(dp(10), dp(10), dp(10), dp(10))
-        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 26)
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
         layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
+            compactSelectorWidth(),
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             setMargins(0, 0, 0, dp(10))
@@ -685,21 +685,21 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(10), dp(8), dp(8), dp(8))
-            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 22)
+            setPadding(dp(8), dp(6), dp(6), dp(6))
+            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
             isClickable = true
             isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58))
             setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
         }
         selectorRow.addView(TextView(this@MainActivity).apply {
             text = "🌐"
-            textSize = 22f
+            textSize = 18f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 18)
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                setMargins(0, 0, dp(10), 0)
+            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(0, 0, dp(8), 0)
             }
         })
         selectorRow.addView(LinearLayout(this@MainActivity).apply {
@@ -708,15 +708,15 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             homeProfileNameText = TextView(this@MainActivity).apply {
                 text = "Choose location"
-                textSize = 15f
+                textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setTextColor(0xFF0F172A.toInt())
             }
             homeProfileMetaText = TextView(this@MainActivity).apply {
-                text = "Tap arrow to pick saved configs"
-                textSize = 11f
+                text = "Tap to pick"
+                textSize = 10f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setTextColor(0xFF64748B.toInt())
@@ -727,13 +727,13 @@ class MainActivity : Activity() {
         })
         homeProfileArrowText = TextView(this@MainActivity).apply {
             text = "⌄"
-            textSize = 28f
+            textSize = 24f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
             setOnClickListener { setHomeProfileListExpanded(!homeProfileSelectorExpanded) }
         }
         selectorRow.addView(homeProfileArrowText)
@@ -743,7 +743,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             visibility = View.GONE
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(6), 0, 0)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1389,21 +1389,59 @@ class MainActivity : Activity() {
             }
         }
         if (::homeProfileNameText.isInitialized) {
-            homeProfileNameText.text = profile?.displayName?.shortUi(32) ?: "Choose location"
-            homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap arrow to pick saved configs"
+            homeProfileNameText.text = profile?.let { compactProfileTitle(it).shortUi(24) } ?: "Choose location"
+            homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap to pick"
         }
         if (homeProfileSelectorExpanded) refreshHomeProfileList()
     }
 
     private fun homeProfileMeta(profile: VpnProfile): String {
-        val engine = EngineRegistry.engineFor(profile.kind)
-        val endpoint = profile.endpoints.firstOrNull()?.cleanEndpointLabel()?.shortUi(42)
-        val verified = profile.lastVerifiedLabel()?.shortUi(42)
-        return listOfNotNull(
-            "${profile.kind.displayName} • ${engine.displayName}",
-            endpoint,
-            verified
-        ).joinToString(" • ")
+        val subtitle = compactProfileSubtitle(profile)
+        val verified = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
+        return listOfNotNull(subtitle, verified).joinToString(" • ").ifBlank { "Ready" }.shortUi(26)
+    }
+
+    private fun compactProfileTitle(profile: VpnProfile): String {
+        val base = primaryProfileNameSegment(profile.displayName)
+        val title = base.substringBefore("/")
+            .substringBefore("(")
+            .substringBefore("~")
+            .replace("✨", "")
+            .replace("✦", "")
+            .replace("✅", "")
+            .trim(' ', '•', '-', '·')
+            .trim()
+        return title.ifBlank { profile.endpoints.firstOrNull()?.host?.shortHost() ?: profile.kind.displayName }.shortUi(24)
+    }
+
+    private fun compactProfileSubtitle(profile: VpnProfile): String? {
+        val base = primaryProfileNameSegment(profile.displayName)
+        val afterSlash = base.substringAfter("/", "")
+            .substringBefore("(")
+            .substringBefore("~")
+            .replace("✨", "")
+            .replace("✦", "")
+            .replace("✅", "")
+            .trim(' ', '•', '-', '·')
+            .trim()
+            .takeIf { it.isNotBlank() }
+        return afterSlash?.shortUi(18)
+            ?: profile.endpoints.firstOrNull()?.let { "${it.host.shortHost().shortUi(16)}:${it.port}" }
+    }
+
+    private fun primaryProfileNameSegment(name: String): String {
+        val segments = name.replace(Regex("\s+"), " ")
+            .split("•")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        return segments.firstOrNull { segment ->
+            val lower = segment.lowercase(java.util.Locale.US)
+            segment.any { it.isLetterOrDigit() } &&
+                !lower.contains("v2ray") &&
+                !lower.contains("xray") &&
+                !lower.contains("embedded") &&
+                !lower.startsWith("v2ray_")
+        } ?: segments.firstOrNull().orEmpty().ifBlank { name }
     }
 
     private fun setHomeProfileListExpanded(expanded: Boolean) {
@@ -1421,8 +1459,8 @@ class MainActivity : Activity() {
         val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         if (profiles.isEmpty()) {
             homeProfileListContainer.addView(TextView(this).apply {
-                text = "No saved configs yet. Use + at the top."
-                textSize = 12f
+                text = "No configs yet. Use +"
+                textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
                 setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -1434,26 +1472,51 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun homeProfileChoice(profile: VpnProfile): TextView = TextView(this).apply {
-        val marker = if (profile.id == selectedProfileId) "✓ " else ""
-        text = marker + profileButtonLabel(profile).replace("\n", "  •  ").shortUi(96)
-        textSize = 12f
-        typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    private fun homeProfileChoice(profile: VpnProfile): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        maxLines = 2
-        ellipsize = TextUtils.TruncateAt.END
-        setTextColor(0xFF0F172A.toInt())
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
         background = roundedBackground(
             fillColor = if (profile.id == selectedProfileId) 0xFFEFF6FF.toInt() else 0xFFF8FAFC.toInt(),
             strokeColor = if (profile.id == selectedProfileId) 0xFF93C5FD.toInt() else 0xFFE2E8F0.toInt(),
             radiusDp = 16
         )
-        setPadding(dp(10), dp(8), dp(10), dp(8))
+        setPadding(dp(8), dp(6), dp(8), dp(6))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+            dp(52)
         ).apply {
             setMargins(0, dp(4), 0, 0)
+        }
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = compactProfileTitle(profile)
+                textSize = 12f
+                typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF0F172A.toInt())
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = compactProfileSubtitle(profile)?.shortUi(20) ?: "Saved config"
+                textSize = 9.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF64748B.toInt())
+            })
+        })
+        if (profile.id == selectedProfileId) {
+            addView(TextView(this@MainActivity).apply {
+                text = "✓"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(0xFF2563EB.toInt())
+                layoutParams = LinearLayout.LayoutParams(dp(20), ViewGroup.LayoutParams.MATCH_PARENT)
+            })
         }
         isClickable = true
         isFocusable = true
@@ -2450,6 +2513,16 @@ class MainActivity : Activity() {
     private fun String.shortUi(maxLength: Int): String {
         val compact = replace(Regex("\\s+"), " ").trim()
         return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
+    }
+
+    private fun compactSelectorWidth(): Int {
+        val screenWidth = resources.displayMetrics.widthPixels
+        return (screenWidth * 0.54f).toInt().coerceIn(dp(188), dp(260))
+    }
+
+    private fun statusBarTopPadding(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
