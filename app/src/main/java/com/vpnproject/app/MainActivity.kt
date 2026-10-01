@@ -14,7 +14,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.TextUtils
 import android.graphics.Canvas
 import android.graphics.Color
@@ -95,6 +97,8 @@ class MainActivity : Activity() {
     private var autoTestEnabled = true
     private var autoTestInFlight = false
     private lateinit var favoriteActionButton: Button
+    private lateinit var locationSearchInput: EditText
+    private var locationSearchQuery = ""
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
     private lateinit var navToolsButton: Button
@@ -189,14 +193,16 @@ class MainActivity : Activity() {
         profileCard.addView(sectionLabel("Locations"))
         selectedProfileText = TextView(this).apply {
             text = "No profile selected yet."
-            textSize = 16f
+            textSize = 14f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
             setTextColor(0xFF0F172A.toInt())
-            setPadding(dp(8), 0, dp(8), dp(12))
+            setPadding(dp(8), 0, dp(8), dp(10))
         }
         profileCard.addView(selectedProfileText)
-        profileCard.addView(createProfileManageRow())
+        profileCard.addView(createLocationSearchCard())
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -847,30 +853,57 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun createProfileManageRow(): LinearLayout = LinearLayout(this).apply {
+    private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
+        gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, dp(4), 0, 0)
-        addView(createMiniActionButton("Rename") { promptRenameSelectedProfile() })
-        favoriteActionButton = createMiniActionButton("Favorite") { toggleSelectedFavorite() }
-        addView(favoriteActionButton)
-        addView(createMiniActionButton("Delete") { confirmDeleteSelectedProfile() })
-    }
-
-    private fun createMiniActionButton(textValue: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = textValue
-        textSize = 12f
-        setAllCaps(false)
-        setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
-        minHeight = 0
-        minimumHeight = 0
-        setPadding(dp(6), dp(10), dp(6), dp(10))
-        layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            setMargins(dp(3), dp(4), dp(3), dp(4))
+        setPadding(dp(10), dp(8), dp(8), dp(8))
+        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 22)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(8))
         }
-        setOnClickListener { onClick() }
+        addView(TextView(this@MainActivity).apply {
+            text = "⌕"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFF2563EB.toInt())
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(40))
+        })
+        locationSearchInput = EditText(this@MainActivity).apply {
+            hint = "Search locations or configs"
+            setSingleLine(true)
+            textSize = 13f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setTextColor(0xFF0F172A.toInt())
+            setHintTextColor(0xFF94A3B8.toInt())
+            background = ColorDrawable(Color.TRANSPARENT)
+            setPadding(dp(4), 0, dp(4), 0)
+            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    locationSearchQuery = s?.toString().orEmpty()
+                    refreshProfileButtons(syncVerified = false)
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        addView(locationSearchInput)
+        addView(TextView(this@MainActivity).apply {
+            text = "×"
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(0xFF64748B.toInt())
+            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
+            setOnClickListener { if (::locationSearchInput.isInitialized) locationSearchInput.setText("") }
+        })
     }
 
     private fun createCard(): LinearLayout = LinearLayout(this).apply {
@@ -1576,6 +1609,19 @@ class MainActivity : Activity() {
                 })
             })
             addView(TextView(this@MainActivity).apply {
+                text = profileStatusLabel(profile)
+                textSize = 9.5f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(profileStatusTextColor(profile))
+                background = roundedBackground(profileStatusFillColor(profile), profileStatusStrokeColor(profile), radiusDp = 12)
+                setPadding(dp(7), dp(4), dp(7), dp(4))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+                    setMargins(dp(6), 0, dp(4), 0)
+                }
+            })
+            addView(TextView(this@MainActivity).apply {
                 text = if (profile.id == selectedProfileId) "✓" else "⋯"
                 textSize = if (profile.id == selectedProfileId) 15f else 20f
                 typeface = Typeface.DEFAULT_BOLD
@@ -1602,6 +1648,74 @@ class MainActivity : Activity() {
             profile.favorite -> "Unfavorite"
             else -> "Favorite"
         }
+    }
+
+    private fun profileStatusLabel(profile: VpnProfile): String = when {
+        profile.id == selectedProfileId -> "Selected"
+        profile.lastVerifiedEpochMs != null -> "Good"
+        profile.favorite -> "Fav"
+        else -> "New"
+    }
+
+    private fun profileStatusFillColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId -> 0xFFEFF6FF.toInt()
+        profile.lastVerifiedEpochMs != null -> 0xFFD1FAE5.toInt()
+        profile.favorite -> 0xFFFEF3C7.toInt()
+        else -> 0xFFF1F5F9.toInt()
+    }
+
+    private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId -> 0xFF93C5FD.toInt()
+        profile.lastVerifiedEpochMs != null -> 0xFF6EE7B7.toInt()
+        profile.favorite -> 0xFFFCD34D.toInt()
+        else -> 0xFFE2E8F0.toInt()
+    }
+
+    private fun profileStatusTextColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId -> 0xFF2563EB.toInt()
+        profile.lastVerifiedEpochMs != null -> 0xFF047857.toInt()
+        profile.favorite -> 0xFF92400E.toInt()
+        else -> 0xFF64748B.toInt()
+    }
+
+    private fun matchesLocationSearch(profile: VpnProfile, query: String): Boolean {
+        val terms = query.replace(Regex("\\s+"), " ").trim().lowercase(java.util.Locale.US)
+            .split(" ")
+            .filter { it.isNotBlank() }
+        if (terms.isEmpty()) return true
+        val haystack = listOfNotNull(
+            profile.displayName,
+            compactProfileTitle(profile),
+            compactProfileSubtitle(profile),
+            profile.kind.displayName,
+            profile.lastVerifiedNetwork,
+            profile.endpoints.joinToString(" ") { "${it.protocol} ${it.host}:${it.port}" }
+        ).joinToString(" ").lowercase(java.util.Locale.US)
+        return terms.all { haystack.contains(it) }
+    }
+
+    private fun createLocationSectionLabel(title: String, count: Int): TextView = TextView(this).apply {
+        text = "$title  $count"
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER_VERTICAL
+        setTextColor(0xFF64748B.toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(12), 0, dp(2))
+        }
+    }
+
+    private fun addLocationSection(container: LinearLayout, title: String, profiles: List<VpnProfile>, remaining: Int): Int {
+        if (profiles.isEmpty() || remaining <= 0) return 0
+        val shown = profiles.take(remaining)
+        container.addView(createLocationSectionLabel(title, shown.size))
+        shown.forEach { profile ->
+            container.addView(profileListRow(profile, compact = false, onSelect = { loadProfile(profile) }))
+        }
+        return shown.size
     }
 
     private fun selectedProfileSummary(profile: VpnProfile): String {
@@ -2284,16 +2398,49 @@ class MainActivity : Activity() {
         if (!::profileListContainer.isInitialized) return
         if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
         profileListContainer.removeAllViews()
-        val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val query = locationSearchQuery.trim()
+        val profiles = allProfiles.filter { matchesLocationSearch(it, query) }
         profileListContainer.addView(TextView(this).apply {
-            text = if (profiles.isEmpty()) "No saved configs yet." else "Saved configs (${profiles.size})"
+            text = when {
+                allProfiles.isEmpty() -> "No saved configs yet."
+                query.isNotBlank() -> "Search results (${profiles.size}/${allProfiles.size})"
+                else -> "Saved configs (${allProfiles.size})"
+            }
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
             setPadding(0, dp(4), 0, dp(4))
         })
-        profiles.take(MAX_PROFILE_BUTTONS).forEach { profile ->
-            profileListContainer.addView(profileListRow(profile, compact = false, onSelect = { loadProfile(profile) }))
+        if (allProfiles.isNotEmpty() && profiles.isEmpty()) {
+            profileListContainer.addView(TextView(this).apply {
+                text = "No matching configs. Try another country, operator, or host."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            })
+        }
+        val favorites = profiles.filter { it.favorite }
+            .sortedByDescending { it.lastVerifiedEpochMs ?: 0L }
+        val recent = profiles.filter { !it.favorite && it.lastVerifiedEpochMs != null }
+            .sortedByDescending { it.lastVerifiedEpochMs ?: 0L }
+        val favoriteIds = favorites.map { it.id }.toSet()
+        val recentIds = recent.map { it.id }.toSet()
+        val others = profiles.filter { it.id !in favoriteIds && it.id !in recentIds }
+            .sortedBy { compactProfileTitle(it).lowercase(java.util.Locale.US) }
+        var shown = 0
+        shown += addLocationSection(profileListContainer, "Favorites", favorites, MAX_PROFILE_BUTTONS - shown)
+        shown += addLocationSection(profileListContainer, "Recently good", recent, MAX_PROFILE_BUTTONS - shown)
+        shown += addLocationSection(profileListContainer, "All configs", others, MAX_PROFILE_BUTTONS - shown)
+        if (profiles.size > shown) {
+            profileListContainer.addView(TextView(this).apply {
+                text = "Showing $shown of ${profiles.size}. Use search to narrow the list."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(10), dp(10), dp(10), dp(4))
+            })
         }
         refreshSubscriptionGroupButtons()
         updateDashboardSummary()

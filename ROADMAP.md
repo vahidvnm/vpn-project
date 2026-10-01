@@ -545,6 +545,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] pass هفتم redesign: کوتاه‌کردن متن کانفیگ‌ها به label کشور/اپراتور/شهر، باریک‌کردن selector Home تا حدود نصف عرض صفحه، و افزودن فاصله امن بالای صفحه زیر status bar گوشی.
 - [x] cleanup مرحله ۱: حذف protocol grid و quick actions از Home، تبدیل bottom nav به Home/Locations/Tools، کوتاه‌کردن لیست Locations، و انتقال گزینه‌های فنی به Advanced tools.
 - [x] مرحله ۲ polish: تبدیل selector کانفیگ Home و منوی + به bottom sheet حرفه‌ای، افزودن handle/close/action rows، long-press actions برای کانفیگ‌ها، و نمایش compact row در Locations.
+- [x] مرحله ۳ Locations: اضافه‌کردن search، گروه‌بندی Favorites / Recently good / All configs، status pill برای Selected/Good/Fav/New، حذف دکمه‌های مدیریت بزرگ، و نگه‌داشتن actions در long-press/bottom sheet.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
