@@ -7,6 +7,8 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import com.vpnproject.app.core.ImportedConfig
 import java.security.KeyStore
+import java.security.MessageDigest
+import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -23,8 +25,27 @@ class SecureProfileStore(context: Context) {
     private val prefs: SharedPreferences = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val crypto = ProfileCrypto()
 
-    fun saveImportedConfig(config: ImportedConfig, displayName: String? = config.name): VpnProfile {
-        val profile = VpnProfileFactory.fromImportedConfig(config, displayName)
+    fun saveImportedConfig(
+        config: ImportedConfig,
+        displayName: String? = config.name,
+        stableProfileId: String? = null
+    ): VpnProfile {
+        val generated = VpnProfileFactory.fromImportedConfig(config, displayName)
+        val existing = stableProfileId?.let { loadProfileMetadata(it) }
+        val now = System.currentTimeMillis()
+        val profile = if (stableProfileId == null) {
+            generated
+        } else {
+            generated.copy(
+                id = stableProfileId,
+                createdAtEpochMs = existing?.createdAtEpochMs ?: now,
+                updatedAtEpochMs = now,
+                lastVerifiedEpochMs = existing?.lastVerifiedEpochMs,
+                lastVerifiedNetwork = existing?.lastVerifiedNetwork,
+                lastVerifiedLatencyMs = existing?.lastVerifiedLatencyMs,
+                favorite = existing?.favorite ?: generated.favorite
+            )
+        }
         prefs.edit().apply {
             putString(key(profile.id, FIELD_NAME), profile.name)
             putString(key(profile.id, FIELD_KIND), profile.kind.name)
@@ -33,8 +54,11 @@ class SecureProfileStore(context: Context) {
             putLong(key(profile.id, FIELD_UPDATED), profile.updatedAtEpochMs)
             putBoolean(key(profile.id, FIELD_FAVORITE), profile.favorite)
             profile.lastVerifiedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED), it) }
+                ?: remove(key(profile.id, FIELD_LAST_VERIFIED))
             profile.lastVerifiedNetwork?.let { putString(key(profile.id, FIELD_LAST_VERIFIED_NETWORK), it) }
+                ?: remove(key(profile.id, FIELD_LAST_VERIFIED_NETWORK))
             profile.lastVerifiedLatencyMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED_LATENCY), it) }
+                ?: remove(key(profile.id, FIELD_LAST_VERIFIED_LATENCY))
             putString(key(profile.id, FIELD_RAW_CONFIG), crypto.encrypt(config.originalText))
             putString(KEY_PROFILE_IDS, mergeProfileIds(profile.id))
             putString(KEY_LAST_PROFILE_ID, profile.id)
@@ -55,6 +79,53 @@ class SecureProfileStore(context: Context) {
     fun loadRawConfig(profileId: String): String? {
         val encrypted = prefs.getString(key(profileId, FIELD_RAW_CONFIG), null) ?: return null
         return crypto.decrypt(encrypted)
+    }
+
+    fun saveSubscriptionGroup(name: String, url: String): SubscriptionGroup {
+        val id = stableSubscriptionGroupId(url)
+        val existing = loadSubscriptionGroupMetadata(id)
+        val now = System.currentTimeMillis()
+        val sanitizedName = name.sanitizedProfileName().takeIf { it.isNotBlank() }
+            ?: existing?.name
+            ?: "Subscription"
+        prefs.edit().apply {
+            putString(subscriptionKey(id, FIELD_NAME), sanitizedName)
+            putString(subscriptionKey(id, FIELD_URL), crypto.encrypt(url.trim()))
+            putLong(subscriptionKey(id, FIELD_CREATED), existing?.createdAtEpochMs ?: now)
+            putLong(subscriptionKey(id, FIELD_UPDATED), now)
+            existing?.lastSyncEpochMs?.let { putLong(subscriptionKey(id, FIELD_LAST_SYNC), it) }
+            existing?.lastResult?.let { putString(subscriptionKey(id, FIELD_LAST_RESULT), it) }
+            putString(subscriptionKey(id, FIELD_SUB_PROFILE_IDS), existing?.profileIds?.joinToString(ID_SEPARATOR).orEmpty())
+            putString(KEY_SUBSCRIPTION_GROUP_IDS, mergeSubscriptionGroupIds(id))
+        }.apply()
+        return loadSubscriptionGroupMetadata(id) ?: SubscriptionGroup(id, sanitizedName, emptyList(), now, now)
+    }
+
+    fun listSubscriptionGroups(): List<SubscriptionGroup> = subscriptionGroupIds()
+        .mapNotNull { id -> loadSubscriptionGroupMetadata(id) }
+        .sortedByDescending { it.updatedAtEpochMs }
+
+    fun subscriptionGroup(groupId: String): SubscriptionGroup? = loadSubscriptionGroupMetadata(groupId)
+
+    fun loadSubscriptionUrl(groupId: String): String? {
+        val encrypted = prefs.getString(subscriptionKey(groupId, FIELD_URL), null) ?: return null
+        return crypto.decrypt(encrypted)
+    }
+
+    fun markSubscriptionSynced(
+        groupId: String,
+        profileIds: List<String>,
+        result: String,
+        syncedAtEpochMs: Long = System.currentTimeMillis()
+    ): SubscriptionGroup? {
+        prefs.edit().apply {
+            putString(subscriptionKey(groupId, FIELD_SUB_PROFILE_IDS), profileIds.joinToString(ID_SEPARATOR))
+            putLong(subscriptionKey(groupId, FIELD_LAST_SYNC), syncedAtEpochMs)
+            putString(subscriptionKey(groupId, FIELD_LAST_RESULT), result.take(160))
+            putLong(subscriptionKey(groupId, FIELD_UPDATED), syncedAtEpochMs)
+            putString(KEY_SUBSCRIPTION_GROUP_IDS, mergeSubscriptionGroupIds(groupId))
+        }.apply()
+        return loadSubscriptionGroupMetadata(groupId)
     }
 
     fun renameProfile(profileId: String, newName: String): VpnProfile? {
@@ -136,10 +207,40 @@ class SecureProfileStore(context: Context) {
         )
     }
 
+    private fun loadSubscriptionGroupMetadata(id: String): SubscriptionGroup? {
+        val name = prefs.getString(subscriptionKey(id, FIELD_NAME), null) ?: return null
+        val created = prefs.getLong(subscriptionKey(id, FIELD_CREATED), 0L).takeIf { it > 0L } ?: return null
+        val updated = prefs.getLong(subscriptionKey(id, FIELD_UPDATED), created)
+        val lastSync = prefs.getLong(subscriptionKey(id, FIELD_LAST_SYNC), 0L).takeIf { it > 0L }
+        val profileIds = prefs.getString(subscriptionKey(id, FIELD_SUB_PROFILE_IDS), null)
+            ?.split(ID_SEPARATOR)
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        return SubscriptionGroup(
+            id = id,
+            name = name,
+            profileIds = profileIds,
+            createdAtEpochMs = created,
+            updatedAtEpochMs = updated,
+            lastSyncEpochMs = lastSync,
+            lastResult = prefs.getString(subscriptionKey(id, FIELD_LAST_RESULT), null)
+        )
+    }
+
     private fun mergeProfileIds(newId: String): String = (listOf(newId) + profileIds().filterNot { it == newId })
         .joinToString(ID_SEPARATOR)
 
+    private fun mergeSubscriptionGroupIds(newId: String): String = (listOf(newId) + subscriptionGroupIds().filterNot { it == newId })
+        .joinToString(ID_SEPARATOR)
+
     private fun profileIds(): List<String> = prefs.getString(KEY_PROFILE_IDS, null)
+        ?.split(ID_SEPARATOR)
+        ?.map { it.trim() }
+        ?.filter { it.isNotBlank() }
+        .orEmpty()
+
+    private fun subscriptionGroupIds(): List<String> = prefs.getString(KEY_SUBSCRIPTION_GROUP_IDS, null)
         ?.split(ID_SEPARATOR)
         ?.map { it.trim() }
         ?.filter { it.isNotBlank() }
@@ -176,12 +277,25 @@ class SecureProfileStore(context: Context) {
 
     private fun String.decodeField(): String = String(Base64.decode(this, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
 
+    fun stableSubscriptionProfileId(groupId: String, link: String): String = "sub-profile-${sha256(groupId + "\\n" + link.trim()).take(16)}"
+
+    private fun stableSubscriptionGroupId(url: String): String = "sub-${sha256(url.trim()).take(16)}"
+
+    private fun sha256(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+    }
+
     private fun key(profileId: String, field: String): String = "profile.$profileId.$field"
+
+    private fun subscriptionKey(groupId: String, field: String): String = "subscription.$groupId.$field"
 
     private companion object {
         const val PREFS_NAME = "vpn_project_profiles"
         const val KEY_PROFILE_IDS = "profile_ids"
         const val KEY_LAST_PROFILE_ID = "last_profile_id"
+        const val KEY_SUBSCRIPTION_GROUP_IDS = "subscription_group_ids"
         const val FIELD_NAME = "name"
         const val FIELD_KIND = "kind"
         const val FIELD_ENDPOINTS = "endpoints"
@@ -192,6 +306,10 @@ class SecureProfileStore(context: Context) {
         const val FIELD_LAST_VERIFIED_NETWORK = "last_verified_network"
         const val FIELD_LAST_VERIFIED_LATENCY = "last_verified_latency_ms"
         const val FIELD_RAW_CONFIG = "raw_config"
+        const val FIELD_URL = "url"
+        const val FIELD_LAST_SYNC = "last_sync_at"
+        const val FIELD_LAST_RESULT = "last_result"
+        const val FIELD_SUB_PROFILE_IDS = "profile_ids"
         const val ID_SEPARATOR = ","
         const val ENDPOINT_SEPARATOR = ";"
         const val FIELD_SEPARATOR = ":"

@@ -39,6 +39,7 @@ import com.vpnproject.app.core.NetworkType
 import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
+import com.vpnproject.app.core.V2RaySubscriptionParser
 import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.engine.EngineRegistry
 import com.vpnproject.app.engine.EngineStatus
@@ -49,11 +50,15 @@ import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
+import com.vpnproject.app.profile.SubscriptionGroup
 import com.vpnproject.app.profile.VpnProfile
 import com.vpnproject.app.profile.VpnProfileEndpoint
 import com.vpnproject.app.vpn.AutoVpnService
 import com.vpnproject.app.vpn.WireGuardVpnService
 import com.vpnproject.app.vpn.XrayVpnService
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -101,6 +106,7 @@ class MainActivity : Activity() {
     private var activeConnectionProfileId: String? = null
     private var lastRecordedVerificationKey: String? = null
     private lateinit var profileListContainer: LinearLayout
+    private lateinit var subscriptionGroupContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
@@ -239,6 +245,12 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, 0)
         }
         profileCard.addView(profileListContainer)
+        subscriptionGroupContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
+        }
+        profileCard.addView(subscriptionGroupContainer)
         profilesSection.addView(profileCard)
 
         val toolsCard = createCard()
@@ -1341,15 +1353,167 @@ class MainActivity : Activity() {
     private fun showAddConfigMenu() {
         AlertDialog.Builder(this)
             .setTitle("Add config")
-            .setItems(arrayOf("Paste from clipboard", "Import from file", "Load latest saved profile")) { _, which ->
+            .setItems(arrayOf("Paste from clipboard", "Import from file", "Add subscription URL", "Load latest saved profile")) { _, which ->
                 when (which) {
                     0 -> importConfigFromClipboard()
                     1 -> openConfigPicker()
-                    2 -> loadLatestProfile()
+                    2 -> promptAddSubscriptionGroup()
+                    3 -> loadLatestProfile()
                 }
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun promptAddSubscriptionGroup() {
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+        }
+        val nameInput = EditText(this).apply {
+            hint = "Group name, e.g. Provider A"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setSingleLine(true)
+        }
+        val urlInput = EditText(this).apply {
+            hint = "https://provider.example/sub/..."
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+        }
+        form.addView(nameInput)
+        form.addView(urlInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("Add subscription group")
+            .setMessage("Paste only your own/provider subscription URL. The URL is stored encrypted and is never shown in diagnostics.")
+            .setView(form)
+            .setPositiveButton("Fetch") { _, _ ->
+                val url = urlInput.text?.toString().orEmpty().trim()
+                val name = nameInput.text?.toString().orEmpty().trim().ifBlank { "Subscription" }
+                addOrRefreshSubscriptionGroup(name, url, existingGroup = null)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun refreshSubscriptionGroup(group: SubscriptionGroup) {
+        val url = profileStore.loadSubscriptionUrl(group.id)
+        if (url.isNullOrBlank()) {
+            status.text = "Subscription group ${group.displayName} has no decryptable URL. Add it again."
+            return
+        }
+        addOrRefreshSubscriptionGroup(group.displayName, url, existingGroup = group)
+    }
+
+    private fun addOrRefreshSubscriptionGroup(
+        name: String,
+        url: String,
+        existingGroup: SubscriptionGroup?
+    ) {
+        if (url.isBlank()) {
+            status.text = "Subscription URL is empty."
+            return
+        }
+        status.text = "Fetching subscription group ${name.shortUi(28)}..."
+        Thread {
+            val result = runCatching { syncSubscriptionGroupBlocking(name, url, existingGroup) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { sync ->
+                        sync.profiles.firstOrNull()?.let { profile ->
+                            selectedProfile = profile
+                            selectedProfileId = profile.id
+                            importedConfig = loadProfileConfig(profile)
+                        }
+                        refreshProfileButtons()
+                        updateDashboardSummary()
+                        status.text = "Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
+                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
+                        showSection(AppSection.PROFILES)
+                    },
+                    onFailure = { error ->
+                        status.text = "Subscription sync failed: ${error.message ?: error.javaClass.simpleName}"
+                        refreshProfileButtons()
+                    }
+                )
+            }
+        }.start()
+    }
+
+    private fun syncSubscriptionGroupBlocking(
+        name: String,
+        url: String,
+        existingGroup: SubscriptionGroup?
+    ): SubscriptionSyncResult {
+        val subscriptionText = fetchSubscriptionText(url)
+        val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
+        if (links.isEmpty()) {
+            throw ConfigParseException("Downloaded subscription contains no supported vless/vmess/trojan/ss links.")
+        }
+
+        val storedGroup = profileStore.saveSubscriptionGroup(existingGroup?.displayName ?: name, url)
+        val savedProfiles = mutableListOf<VpnProfile>()
+        var skipped = 0
+        links.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, link ->
+            val saved = runCatching {
+                val config = ConfigImporter.parse(link)
+                val displayName = config.name?.takeIf { it.isNotBlank() } ?: "${storedGroup.displayName} #${index + 1}"
+                val profileId = profileStore.stableSubscriptionProfileId(storedGroup.id, link)
+                profileStore.saveImportedConfig(config, displayName, stableProfileId = profileId)
+            }.getOrNull()
+            if (saved == null) skipped++ else savedProfiles += saved
+        }
+        skipped += (links.size - links.take(MAX_SUBSCRIPTION_LINKS).size).coerceAtLeast(0)
+        if (savedProfiles.isEmpty()) {
+            throw ConfigParseException("Subscription downloaded, but none of its links could be imported.")
+        }
+
+        val resultText = "Synced ${savedProfiles.size}/${links.size} profiles"
+        val updatedGroup = profileStore.markSubscriptionSynced(
+            groupId = storedGroup.id,
+            profileIds = savedProfiles.map { it.id },
+            result = resultText
+        ) ?: storedGroup
+        return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped)
+    }
+
+    private fun fetchSubscriptionText(urlText: String): String {
+        val parsedUrl = URL(urlText.trim())
+        val protocol = parsedUrl.protocol.lowercase()
+        if (protocol != "https" && protocol != "http") {
+            throw ConfigParseException("Subscription URL must start with https:// or http://")
+        }
+        val connection = (parsedUrl.openConnection() as HttpURLConnection).apply {
+            connectTimeout = SUBSCRIPTION_TIMEOUT_MS
+            readTimeout = SUBSCRIPTION_TIMEOUT_MS
+            instanceFollowRedirects = true
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "VPN-Hub-Android/1.0")
+            setRequestProperty("Accept", "text/plain, application/octet-stream, */*")
+        }
+        return try {
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                throw ConfigParseException("Subscription server returned HTTP $code")
+            }
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8 * 1024)
+                var total = 0
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    total += read
+                    if (total > MAX_SUBSCRIPTION_BYTES) {
+                        throw ConfigParseException("Subscription is too large for this preview build.")
+                    }
+                    output.write(buffer, 0, read)
+                }
+                output.toString(Charsets.UTF_8.name())
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun openConfigPicker() {
@@ -1596,7 +1760,36 @@ class MainActivity : Activity() {
                 textValue = profileButtonLabel(profile)
             ) { loadProfile(profile) })
         }
+        refreshSubscriptionGroupButtons()
         updateDashboardSummary()
+    }
+
+    private fun refreshSubscriptionGroupButtons() {
+        if (!::subscriptionGroupContainer.isInitialized) return
+        subscriptionGroupContainer.removeAllViews()
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        subscriptionGroupContainer.addView(TextView(this).apply {
+            text = if (groups.isEmpty()) {
+                "No subscription groups yet. Use + to add one."
+            } else {
+                "Subscription groups (${groups.size}): tap to refresh"
+            }
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF475569.toInt())
+            setPadding(0, dp(8), 0, dp(4))
+        })
+        groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
+            subscriptionGroupContainer.addView(createActionButton(
+                textValue = subscriptionGroupButtonLabel(group)
+            ) { refreshSubscriptionGroup(group) })
+        }
+    }
+
+    private fun subscriptionGroupButtonLabel(group: SubscriptionGroup): String {
+        val syncText = group.lastSyncEpochMs?.let { "Last sync: ${group.profileIds.size} profiles" } ?: "Not synced yet"
+        val result = group.lastResult?.takeIf { it.isNotBlank() }?.shortUi(52)
+        return "${group.displayName.shortUi(30)}\n$syncText" + (result?.let { "\n$it" } ?: "")
     }
 
     private fun loadLatestProfile() {
@@ -1854,6 +2047,13 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private data class SubscriptionSyncResult(
+        val group: SubscriptionGroup,
+        val profiles: List<VpnProfile>,
+        val linkCount: Int,
+        val skippedCount: Int
+    )
+
     private enum class AppSection {
         HOME,
         PROFILES,
@@ -1873,6 +2073,10 @@ class MainActivity : Activity() {
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val MAX_PROFILE_BUTTONS = 5
+        const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
+        const val MAX_SUBSCRIPTION_LINKS = 80
+        const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
+        const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
     }

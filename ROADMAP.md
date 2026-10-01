@@ -429,6 +429,7 @@ This network likely blocks UDP/WireGuard
 - [ ] timeout هوشمند.
 - [ ] backoff برای IPهای خراب.
 - [ ] reconnect خودکار روی drop.
+- [x] MVP گروه subscribe: اضافه‌کردن subscription URL کاربر از دکمه +، ذخیره encrypted URL، fetch/update دستی، تبدیل هر node به profile جداگانه، و نمایش گروه‌ها بدون نشان‌دادن URL/secret.
 - [ ] انتخاب خودکار بین چند لینک subscription بدون ذخیره/نمایش secret اضافه.
 - [ ] ثبت last verified Xray transport per network/operator.
 
@@ -537,6 +538,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] شروع redesign ظاهری NexaVPN-style با hero card، power button، protocol grid و bottom navigation.
 - [x] pass دوم redesign: bottom nav ثابت، حذف ظاهر debug از Tools/Profiles، stats کارت‌بندی‌شده، LTR layout برای متن انگلیسی، و حذف glyphهای مشکل‌دار از power button.
 - [x] pass سوم redesign: حذف N/PRO/SET و subtitle غیرضروری، اضافه کردن دکمه + برای clipboard/file import، و جمع‌کردن protocol/quick options پشت فلش پایین تا تصمیم نهایی پروتکل‌ها.
+- [x] اضافه کردن Add subscription URL به دکمه + و لیست گروه‌های subscription در Profiles.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
