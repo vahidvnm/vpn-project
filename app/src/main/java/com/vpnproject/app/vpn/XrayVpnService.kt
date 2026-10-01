@@ -300,13 +300,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     private fun replaceStatsLine(current: String?, stats: String): String {
-        val existing = current
-            ?.lines()
-            ?.filterNot { it.trimStart().startsWith("Stats:") }
+        val withoutOldStats = current
+            ?.replace(Regex("(?s)\\s*Stats:.*$"), "")
+            ?.trim()
             .orEmpty()
-        return (existing + "Stats: $stats")
+        return listOf(withoutOldStats, "Stats: $stats")
+            .filter { it.isNotBlank() }
             .joinToString("\n")
-            .shortForStatus(900)
+            .shortForDetail()
     }
 
     private fun verificationDetail(
@@ -329,12 +330,20 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     private fun appendDetailLine(current: String?, next: String): String {
         val combined = listOfNotNull(current?.takeIf { it.isNotBlank() }, next.takeIf { it.isNotBlank() })
             .joinToString("\n")
-        return combined.shortForStatus(900)
+        return combined.shortForDetail()
     }
 
     private fun String.shortForStatus(maxLength: Int = 220): String {
         val singleLine = replace(Regex("\\s+"), " ").trim()
         return if (singleLine.length <= maxLength) singleLine else singleLine.take(maxLength - 1) + "…"
+    }
+
+    private fun String.shortForDetail(maxLength: Int = 900): String {
+        val compactLines = lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+        return if (compactLines.length <= maxLength) compactLines else compactLines.take(maxLength - 1) + "…"
     }
 
     private fun stopXray(message: String) {

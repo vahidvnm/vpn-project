@@ -388,6 +388,7 @@ Failed
   - [ ] DNS leak check از داخل تونل.
   - [x] نمایش RX/TX خلاصه برای Xray از `queryAllOutboundTrafficStats`.
   - [x] live polling اولیه traffic counter از Xray service به dashboard.
+  - [x] جلوگیری از تکرار چندباره lineهای `Stats:` در Advanced diagnostics.
   - [ ] پایدارسازی/تست طولانی traffic counter روی چند دستگاه.
 - [ ] پیام‌های خلاصه قابل فهم:
 
@@ -526,6 +527,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] ساخت profile list و ذخیره امن metadata/configها روی گوشی.
 - [x] navigation اولیه Home / Profiles / Tools و fix نمایش traffic Xray در dashboard.
 - [x] live dashboard refresh و delete selected profile اولیه.
+- [x] compact کردن Advanced diagnostics تا statsهای Xray هر ۲ ثانیه تکراری جمع نشوند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
