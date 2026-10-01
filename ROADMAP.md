@@ -543,6 +543,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] pass پنجم redesign: انتقال protocol grid پشت فلش شیک بدون متن، اضافه‌کردن ناحیه Selected configs، و افزودن Auto test با toggle روشن/خاموش و تست دستی.
 - [x] pass ششم redesign: کوچک‌کردن hero کانکت، حذف نام/لوگوی مرجع، تبدیل کارت کشور/کانفیگ به selector کشویی داخل همان صفحه Home، و حذف ورودی‌های add/clipboard تکراری از صفحات دیگر.
 - [x] pass هفتم redesign: کوتاه‌کردن متن کانفیگ‌ها به label کشور/اپراتور/شهر، باریک‌کردن selector Home تا حدود نصف عرض صفحه، و افزودن فاصله امن بالای صفحه زیر status bar گوشی.
+- [x] cleanup مرحله ۱: حذف protocol grid و quick actions از Home، تبدیل bottom nav به Home/Locations/Tools، کوتاه‌کردن لیست Locations، و انتقال گزینه‌های فنی به Advanced tools.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

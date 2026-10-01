@@ -87,9 +87,6 @@ class MainActivity : Activity() {
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
     private lateinit var statEngineText: TextView
-    private lateinit var homeOptionsToggle: TextView
-    private lateinit var homeOptionsPanel: LinearLayout
-    private var homeOptionsExpanded = false
     private lateinit var autoTestToggleButton: TextView
     private lateinit var autoTestStatusText: TextView
     private var autoTestEnabled = true
@@ -98,7 +95,6 @@ class MainActivity : Activity() {
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
     private lateinit var navToolsButton: Button
-    private lateinit var navAccountButton: Button
     private lateinit var homeSection: LinearLayout
     private lateinit var profilesSection: LinearLayout
     private lateinit var toolsSection: LinearLayout
@@ -185,17 +181,9 @@ class MainActivity : Activity() {
         homeSection.addView(createCompactHomeDashboard())
         homeSection.addView(createSelectedConfigsCard())
         homeSection.addView(createAutoTestCard())
-        homeOptionsToggle = createHomeOptionsToggle()
-        homeSection.addView(homeOptionsToggle)
-        homeOptionsPanel = createSectionContainer().apply {
-            visibility = View.GONE
-            addView(createProtocolCard())
-            addView(createQuickActionsCard())
-        }
-        homeSection.addView(homeOptionsPanel)
 
         val profileCard = createCard()
-        profileCard.addView(sectionLabel("My configs"))
+        profileCard.addView(sectionLabel("Locations"))
         selectedProfileText = TextView(this).apply {
             text = "No profile selected yet."
             textSize = 16f
@@ -221,19 +209,17 @@ class MainActivity : Activity() {
         profilesSection.addView(profileCard)
 
         val toolsCard = createCard()
-        toolsCard.addView(sectionLabel("Toolkit"))
+        toolsCard.addView(sectionLabel("Tools"))
         toolsCard.addView(TextView(this).apply {
-            text = "Helpful checks stay here. Technical output is hidden until you need it."
+            text = "Only working checks stay here. Technical details are hidden in Advanced."
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
             setPadding(dp(8), 0, dp(8), dp(10))
         })
         toolsCard.addView(createActionButton("Refresh connection status", primary = true) { showEngineStatus() })
-        toolsCard.addView(createActionButton("Prepare Android VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
-        toolsCard.addView(createActionButton("Load latest saved profile") { loadLatestProfile() })
-        toolsCard.addView(createActionButton("Probe selected endpoints") { resolveAndProbeImportedConfig() })
-        advancedToggleButton = createActionButton("Show technical diagnostics") { toggleAdvancedPanel() }
+        toolsCard.addView(createActionButton("Test selected config") { resolveAndProbeImportedConfig() })
+        advancedToggleButton = createActionButton("Advanced tools") { toggleAdvancedPanel() }
         toolsCard.addView(advancedToggleButton)
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -257,6 +243,8 @@ class MainActivity : Activity() {
             }
         }
         advancedPanel.addView(advancedDiagnostics)
+        advancedPanel.addView(createActionButton("Prepare Android VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
+        advancedPanel.addView(createActionButton("Load latest saved profile") { loadLatestProfile() })
         advancedPanel.addView(createActionButton("Show saved profiles") { showSavedProfiles() })
         advancedPanel.addView(createActionButton("Save pinned OpenVPN TCP config") { prepareAndSaveOpenVpnConfig() })
         advancedPanel.addView(createActionButton("Start TUN bootstrap VPN") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
@@ -287,17 +275,15 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(dp(18), dp(4), dp(18), dp(28))
+                setMargins(dp(18), dp(4), dp(18), navigationBarBottomPadding() + dp(12))
             }
         }
         navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
         navProfilesButton = createNavButton("◎\nLocations") { showSection(AppSection.PROFILES) }
-        navToolsButton = createNavButton("▥\nStats") { showSection(AppSection.TOOLS) }
-        navAccountButton = createNavButton("◔\nProfile") { showSection(AppSection.PROFILES) }
+        navToolsButton = createNavButton("▥\nTools") { showSection(AppSection.TOOLS) }
         navRow.addView(navHomeButton)
         navRow.addView(navProfilesButton)
         navRow.addView(navToolsButton)
-        navRow.addView(navAccountButton)
         appRoot.addView(navRow)
 
         setContentView(appRoot)
@@ -807,32 +793,6 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun createHomeOptionsToggle(): TextView = TextView(this).apply {
-        text = "⌄"
-        textSize = 30f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
-        isClickable = true
-        isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(dp(72), dp(42)).apply {
-            setMargins(0, 0, 0, dp(14))
-        }
-        setOnClickListener { setHomeOptionsExpanded(!homeOptionsExpanded) }
-    }
-
-    private fun setHomeOptionsExpanded(expanded: Boolean) {
-        homeOptionsExpanded = expanded
-        if (::homeOptionsPanel.isInitialized) {
-            homeOptionsPanel.visibility = if (expanded) View.VISIBLE else View.GONE
-        }
-        if (::homeOptionsToggle.isInitialized) {
-            homeOptionsToggle.text = if (expanded) "⌃" else "⌄"
-        }
-    }
-
     private fun toggleAutoTest() {
         autoTestEnabled = !autoTestEnabled
         updateAutoTestToggle()
@@ -884,7 +844,7 @@ class MainActivity : Activity() {
             val summary = when {
                 okCount > 0 -> "Auto test passed: $okCount reachable endpoint${if (okCount == 1) "" else "s"}"
                 failedCount > 0 -> "Auto test finished: $failedCount failed probe${if (failedCount == 1) "" else "s"}"
-                else -> "Auto test finished: see Stats/diagnostics"
+                else -> "Auto test finished: see Tools diagnostics"
             }
             runOnUiThread {
                 autoTestInFlight = false
@@ -892,116 +852,6 @@ class MainActivity : Activity() {
                 if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = text
             }
         }.start()
-    }
-
-    private fun createProtocolCard(): LinearLayout = createCard().apply {
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(TextView(this@MainActivity).apply {
-                text = "Protocol"
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(0xFF0F172A.toInt())
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "Auto Select  ◯"
-                textSize = 12f
-                setTextColor(0xFF64748B.toInt())
-            })
-        })
-        addView(protocolRow(
-            protocolTile("⚡", "Auto", "Best for you", selected = true),
-            protocolTile("WG", "WireGuard", "Fast", selected = false),
-            protocolTile("◉", "OpenVPN", "Secure", selected = false),
-            protocolTile("◆", "IKEv2", "Reliable", selected = false),
-            protocolTile("SS", "Shadowsocks", "Bypass", selected = false)
-        ))
-        addView(protocolRow(
-            protocolTile("V", "V2Ray", "Advanced", selected = false),
-            protocolTile("TR", "Trojan", "Stealth", selected = false),
-            protocolTile("ST", "SSTP", "For networks", selected = false),
-            protocolTile("L2", "L2TP/IPSec", "Compatible", selected = false),
-            protocolTile("PP", "PPTP", "Legacy", selected = false)
-        ))
-        addView(protocolRow(
-            protocolTile("H2", "Hysteria2", "High speed", selected = false),
-            protocolTile("TU", "TUIC", "Low latency", selected = false),
-            protocolTile("VM", "VMess", "Flexible", selected = false),
-            protocolTile("RL", "Reality", "Anti-block", selected = false),
-            protocolTile("HTTP", "HTTP/HTTPS", "Web friendly", selected = false)
-        ))
-    }
-
-    private fun protocolRow(vararg tiles: View): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
-        layoutDirection = View.LAYOUT_DIRECTION_LTR
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        tiles.forEach { addView(it) }
-    }
-
-    private fun protocolTile(label: String, title: String, subtitle: String, selected: Boolean): TextView = TextView(this).apply {
-        text = "$label\n$title\n$subtitle"
-        textSize = 9.5f
-        typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        setTextColor(if (selected) 0xFF0F172A.toInt() else 0xFF475569.toInt())
-        background = roundedBackground(
-            fillColor = if (selected) 0xFFEFF6FF.toInt() else 0xF7FFFFFF.toInt(),
-            strokeColor = if (selected) 0xFF2563EB.toInt() else 0xFFE2E8F0.toInt(),
-            radiusDp = 14
-        )
-        setPadding(dp(2), dp(6), dp(2), dp(6))
-        layoutParams = LinearLayout.LayoutParams(0, dp(74), 1f).apply {
-            setMargins(dp(3), dp(5), dp(3), dp(3))
-        }
-    }
-
-    private fun createQuickActionsCard(): LinearLayout = createCard().apply {
-        addView(sectionLabel("Quick actions"))
-        addView(createFeatureRow(
-            featureTile("AUTO", "Smart test", "Health checks") { autoTestSelectedConfig("quick") },
-            featureTile("CHECK", "Diagnostics", "Status tools") { showSection(AppSection.TOOLS) }
-        ))
-        addView(createFeatureRow(
-            featureTile("SAFE", "Kill switch", "Android setting") { status.text = "Use Android Always-on VPN / Block connections without VPN for kill-switch behavior." },
-            featureTile("IRAN", "Xray focus", "Best current path") { status.text = "Iran-first mode currently prioritizes embedded Xray/V2Ray configs. WireGuard remains secondary." }
-        ))
-    }
-
-    private fun createFeatureRow(left: View, right: View): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
-        layoutDirection = View.LAYOUT_DIRECTION_LTR
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        addView(left)
-        addView(right)
-    }
-
-    private fun featureTile(label: String, title: String, subtitle: String, onClick: () -> Unit): TextView = TextView(this).apply {
-        text = "$label\n$title\n$subtitle"
-        textSize = 13f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 24)
-        setPadding(dp(8), dp(14), dp(8), dp(14))
-        layoutParams = LinearLayout.LayoutParams(0, dp(112), 1f).apply {
-            setMargins(dp(5), dp(5), dp(5), dp(5))
-        }
-        setOnClickListener { onClick() }
     }
 
     private fun createProfileManageRow(): LinearLayout = LinearLayout(this).apply {
@@ -1154,7 +1004,6 @@ class MainActivity : Activity() {
         styleNavButton(navHomeButton, section == AppSection.HOME)
         styleNavButton(navProfilesButton, section == AppSection.PROFILES)
         styleNavButton(navToolsButton, section == AppSection.TOOLS)
-        if (::navAccountButton.isInitialized) styleNavButton(navAccountButton, false)
         when (section) {
             AppSection.HOME -> updateDashboardSummary()
             AppSection.PROFILES -> refreshProfileButtons()
@@ -1537,22 +1386,24 @@ class MainActivity : Activity() {
     }
 
     private fun selectedProfileSummary(profile: VpnProfile): String {
-        val engine = EngineRegistry.engineFor(profile.kind)
-        val endpointText = profile.endpoints.firstOrNull()?.let { "\n${it.cleanEndpointLabel()}" }.orEmpty()
-        val favoriteText = if (profile.favorite) "Favorite\n" else ""
-        val verifiedText = profile.lastVerifiedLabel()?.let { "\n$it" }.orEmpty()
-        return "$favoriteText${profile.displayName.shortUi(34)}\n${profile.kind.displayName} • ${engine.displayName}$endpointText$verifiedText"
+        val favorite = if (profile.favorite) "★ " else ""
+        val subtitle = compactProfileSubtitle(profile)?.shortUi(28) ?: "Saved config"
+        val verified = profile.lastVerifiedLabel()?.shortUi(32)
+        return listOfNotNull(
+            "$favorite${compactProfileTitle(profile).shortUi(30)}",
+            subtitle,
+            verified
+        ).joinToString("\n")
     }
 
     private fun profileButtonLabel(profile: VpnProfile): String {
-        val engine = EngineRegistry.engineFor(profile.kind)
-        val marker = if (profile.id == selectedProfileId) "SELECTED • " else ""
-        val favorite = if (profile.favorite) "FAV • " else ""
-        val endpoint = profile.endpoints.firstOrNull()?.cleanEndpointLabel()?.shortUi(48)
-        val verified = profile.lastVerifiedLabel()?.shortUi(56)
-        return "$marker$favorite${profile.displayName.shortUi(28)}\n${profile.kind.displayName} • ${engine.displayName}" +
-            (endpoint?.let { "\n$it" } ?: "") +
-            (verified?.let { "\n$it" } ?: "")
+        val marker = if (profile.id == selectedProfileId) "✓ " else ""
+        val favorite = if (profile.favorite) "★ " else ""
+        val subtitle = compactProfileSubtitle(profile)?.shortUi(22) ?: "Saved config"
+        val verified = profile.lastVerifiedLatencyMs?.let { "${it}ms" }
+            ?: profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.shortUi(12)
+        val secondLine = listOfNotNull(subtitle, verified).joinToString(" • ").shortUi(34)
+        return "$marker$favorite${compactProfileTitle(profile).shortUi(28)}\n$secondLine"
     }
 
     private fun restoreLatestProfileMetadata() {
@@ -2217,7 +2068,7 @@ class MainActivity : Activity() {
         profileListContainer.removeAllViews()
         val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         profileListContainer.addView(TextView(this).apply {
-            text = if (profiles.isEmpty()) "No saved profiles yet." else "Saved profiles (${profiles.size}): tap to select"
+            text = if (profiles.isEmpty()) "No saved configs yet." else "Saved configs (${profiles.size})"
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
@@ -2523,6 +2374,11 @@ class MainActivity : Activity() {
     private fun statusBarTopPadding(): Int {
         val id = resources.getIdentifier("status_bar_height", "dimen", "android")
         return if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
+    }
+
+    private fun navigationBarBottomPadding(): Int {
+        val id = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else dp(16)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
