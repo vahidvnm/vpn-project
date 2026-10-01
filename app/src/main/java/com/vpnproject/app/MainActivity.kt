@@ -153,6 +153,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(0, statusBarTopPadding(), 0, 0)
             background = verticalGradient(0xFFEAF6FF.toInt(), 0xFFF8FBFF.toInt(), 0xFFFFFFFF.toInt())
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -164,7 +165,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(12), statusBarTopPadding() + dp(12), dp(12), dp(10))
+            setPadding(dp(12), dp(12), dp(12), dp(10))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -267,10 +268,15 @@ class MainActivity : Activity() {
         advancedPanel.addView(sectionLabel("Advanced"))
         advancedDiagnostics = TextView(this).apply {
             text = "Advanced diagnostics will appear here after refresh/probe."
-            textSize = 13f
+            textSize = 12.5f
             gravity = Gravity.START
+            maxLines = 10
+            ellipsize = TextUtils.TruncateAt.END
             setTextColor(0xFF334155.toInt())
             setPadding(dp(12), dp(12), dp(12), dp(12))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showDiagnosticsLogSheet() }
             background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -280,12 +286,13 @@ class MainActivity : Activity() {
             }
         }
         advancedPanel.addView(advancedDiagnostics)
-        advancedPanel.addView(createActionButton("Prepare Android VPN permission") { requestVpnPermission(PendingVpnAction.NONE) })
-        advancedPanel.addView(createActionButton("Load latest saved profile") { loadLatestProfile() })
-        advancedPanel.addView(createActionButton("Show saved profiles text report") { showSavedProfiles() })
-        advancedPanel.addView(createActionButton("Save pinned OpenVPN TCP config") { prepareAndSaveOpenVpnConfig() })
-        advancedPanel.addView(createActionButton("Start TUN bootstrap VPN") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
-        advancedPanel.addView(createActionButton("Stop bootstrap VPN") { stopBootstrapVpn() })
+        advancedPanel.addView(settingsRow("▤", "Open diagnostics log", "Full technical output in a scrollable sheet") { showDiagnosticsLogSheet() })
+        advancedPanel.addView(settingsRow("▣", "VPN permission", "Prepare Android system VPN approval") { requestVpnPermission(PendingVpnAction.NONE) })
+        advancedPanel.addView(settingsRow("◷", "Load latest profile", "Select the newest encrypted local config") { loadLatestProfile() })
+        advancedPanel.addView(settingsRow("☰", "Saved profiles report", "Text report for troubleshooting only") { showSavedProfiles() })
+        advancedPanel.addView(settingsRow("◉", "OpenVPN TCP handoff", "Save a pinned .ovpn for external clients") { prepareAndSaveOpenVpnConfig() })
+        advancedPanel.addView(settingsRow("▶", "Start bootstrap VPN", "Technical TUN bootstrap check") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
+        advancedPanel.addView(settingsRow("■", "Stop bootstrap VPN", "Stop only the technical bootstrap tunnel") { stopBootstrapVpn() })
         settingsCard.addView(advancedPanel)
         toolsSection.addView(settingsCard)
 
@@ -1183,17 +1190,19 @@ class MainActivity : Activity() {
 
     private fun createNavButton(textValue: String, onClick: () -> Unit): Button = Button(this).apply {
         text = textValue
-        textSize = 13f
+        textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
         setAllCaps(false)
+        setLineSpacing(0f, 0.95f)
         setTextColor(0xFF0F172A.toInt())
         background = roundedBackground(0xFFE2E8F0.toInt(), 0xFFCBD5E1.toInt(), radiusDp = 22)
         minHeight = 0
         minimumHeight = 0
-        setPadding(dp(8), dp(12), dp(8), dp(12))
+        setPadding(dp(6), dp(6), dp(6), dp(6))
         layoutParams = LinearLayout.LayoutParams(
             0,
-            dp(56),
+            dp(64),
             1f
         ).apply {
             setMargins(dp(4), 0, dp(4), 0)
@@ -2342,6 +2351,37 @@ class MainActivity : Activity() {
         }
         if (::advancedDiagnostics.isInitialized) {
             advancedDiagnostics.text = engineDiagnosticsText(wg, xray)
+        }
+    }
+
+    private fun showDiagnosticsLogSheet() {
+        val log = if (::advancedDiagnostics.isInitialized) {
+            advancedDiagnostics.text?.toString().orEmpty().ifBlank { "No diagnostics yet." }
+        } else {
+            "No diagnostics yet."
+        }
+        showBottomSheet(
+            title = "Diagnostics log",
+            subtitle = "Technical details for troubleshooting."
+        ) { dialog ->
+            addView(ScrollView(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(420)
+                ).apply {
+                    setMargins(0, dp(10), 0, dp(8))
+                }
+                addView(TextView(this@MainActivity).apply {
+                    text = log
+                    textSize = 12f
+                    setTextColor(0xFF334155.toInt())
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                })
+            })
+            addView(bottomSheetActionRow("✓", "Close", "Return to Settings") {
+                dialog.dismiss()
+            })
         }
     }
 

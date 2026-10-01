@@ -548,6 +548,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله ۳ Locations: اضافه‌کردن search، گروه‌بندی Favorites / Recently good / All configs، status pill برای Selected/Good/Fav/New، حذف دکمه‌های مدیریت بزرگ، و نگه‌داشتن actions در long-press/bottom sheet.
 - [x] مرحله ۴ Settings/Tools: تبدیل تب Tools به Settings ساده، اضافه‌کردن ردیف‌های تنظیمات واقعی، نمایش خلاصه connection status، نگه‌داشتن diagnostics و bootstrap/OpenVPN handoff داخل Advanced tools.
 - [x] مرحله ۵ Smart auto test: ذخیره‌شدن وضعیت ON/OFF، تست و رتبه‌بندی saved configs، نمایش last-test در Home/Locations، گروه Recommended، و auto-select بهترین کانفیگ reachable بدون علامت‌زدن آن به‌عنوان verified کامل VPN.
+- [x] polish بعد از اسکرین‌شات: safe top viewport برای صفحه‌های scroll شده، اصلاح clipping متن bottom nav، کوتاه‌کردن diagnostics داخل Advanced و انتقال full log به bottom sheet، و تبدیل ابزارهای Advanced به ردیف‌های compact.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
