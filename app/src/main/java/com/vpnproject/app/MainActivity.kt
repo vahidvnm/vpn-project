@@ -193,7 +193,6 @@ class MainActivity : Activity() {
 
         homeSection.addView(createCompactHomeDashboard())
         homeSection.addView(createSelectedConfigsCard())
-        homeSection.addView(createAutoTestCard())
 
         val profileCard = createCard()
         profileCard.addView(sectionLabel("Locations"))
@@ -251,9 +250,15 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsConnectionSummaryText)
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
-        settingsCard.addView(settingsRow("✓", "Test selected config", "Run endpoint health check for the active config") { resolveAndProbeImportedConfig() })
-        settingsCard.addView(settingsRow("A", "Auto test", "Automatically rank and test configs", settingsAutoTestValueText) { toggleAutoTest() })
-        settingsCard.addView(settingsRow("★", "Rank configs", "Test saved configs and select the fastest reachable one") { rankSavedProfilesAndSelectBest("settings") })
+        settingsCard.addView(settingsRow("◷", "Test latency", "Choose quick ping or real VPN latency for selected config") {
+            showLatencyTestSheet(
+                anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
+                candidates = currentVisibleProfilesForTesting(),
+                title = "Test latency"
+            )
+        })
+        settingsCard.addView(settingsRow("A", "Auto ping", "Optional background ping-ranking after imports", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("★", "Ping-rank configs", "Quick-test saved configs and select the fastest reachable one") { rankSavedProfilesAndSelectBest("settings") })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -762,6 +767,17 @@ class MainActivity : Activity() {
                 addView(homeProfileNameText)
                 addView(homeProfileMetaText)
             })
+            addView(floatingTestButton(compact = true) {
+                showLatencyTestSheet(
+                    anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
+                    candidates = currentVisibleProfilesForTesting(),
+                    title = "Test selected config"
+                )
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(40)).apply {
+                    setMargins(dp(4), 0, dp(4), 0)
+                }
+            })
             addView(TextView(this@MainActivity).apply {
                 text = "⌄"
                 textSize = 24f
@@ -844,14 +860,15 @@ class MainActivity : Activity() {
     }
 
     private fun updateAutoTestToggle() {
-        if (!::autoTestToggleButton.isInitialized) return
-        autoTestToggleButton.text = if (autoTestEnabled) "ON" else "OFF"
-        autoTestToggleButton.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
-        autoTestToggleButton.background = roundedBackground(
-            fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
-            strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
-            radiusDp = 18
-        )
+        if (::autoTestToggleButton.isInitialized) {
+            autoTestToggleButton.text = if (autoTestEnabled) "ON" else "OFF"
+            autoTestToggleButton.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            autoTestToggleButton.background = roundedBackground(
+                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
+                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                radiusDp = 18
+            )
+        }
         if (::settingsAutoTestValueText.isInitialized) {
             settingsAutoTestValueText.text = if (autoTestEnabled) "ON" else "OFF"
             settingsAutoTestValueText.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
@@ -896,22 +913,23 @@ class MainActivity : Activity() {
     }
 
     private fun autoTestSelectedConfig(reason: String) {
+        val testLabel = if (reason.contains("ping", ignoreCase = true) || reason == "actions") "Ping test" else "Auto ping"
         if (autoTestsShouldPauseForLiveVpn()) {
-            setAutoTestStatus("Auto test paused while VPN is running")
+            setAutoTestStatus("$testLabel paused while VPN is running")
             return
         }
         if (autoTestInFlight) {
-            setAutoTestStatus("Auto test is already running")
+            setAutoTestStatus("A latency test is already running")
             return
         }
         val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
         val config = importedConfig ?: profile?.let { loadProfileConfig(it) }
         if (config == null) {
-            setAutoTestStatus("Auto test: add or select a config first")
+            setAutoTestStatus("$testLabel: add or select a config first")
             return
         }
         autoTestInFlight = true
-        setAutoTestStatus("Auto test running for ${compactProfileTitle(profile, fallback = config.kind.name)}...")
+        setAutoTestStatus("$testLabel running for ${compactProfileTitle(profile, fallback = config.kind.name)}...")
         val network = currentNetworkLabel()
         Thread {
             val summary = try {
@@ -938,7 +956,7 @@ class MainActivity : Activity() {
                     )
                 }.getOrNull()
             }
-            val message = autoTestSummaryText(summary, prefix = "Auto test")
+            val message = autoTestSummaryText(summary, prefix = testLabel)
             runOnUiThread {
                 autoTestInFlight = false
                 if (updatedProfile != null && (selectedProfileId == null || selectedProfileId == updatedProfile.id)) {
@@ -954,25 +972,40 @@ class MainActivity : Activity() {
     }
 
     private fun rankSavedProfilesAndSelectBest(reason: String, autoSelect: Boolean = true) {
+        val savedProfiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
+            setAutoTestStatus("Could not load profiles for ping ranking: ${error.message ?: error.javaClass.simpleName}")
+            return
+        }
+        rankProfilesAndSelectBest(
+            inputProfiles = savedProfiles,
+            reason = reason,
+            autoSelect = autoSelect,
+            scopeLabel = "saved configs"
+        )
+    }
+
+    private fun rankProfilesAndSelectBest(
+        inputProfiles: List<VpnProfile>,
+        reason: String,
+        autoSelect: Boolean = true,
+        scopeLabel: String = "configs"
+    ) {
         if (autoTestsShouldPauseForLiveVpn()) {
-            setAutoTestStatus("Auto ranking paused while VPN is running")
+            setAutoTestStatus("Ping ranking paused while VPN is running")
             return
         }
         if (autoTestInFlight) {
-            setAutoTestStatus("Auto ranking is already running")
+            setAutoTestStatus("A latency test is already running")
             return
         }
-        val savedProfiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
-            setAutoTestStatus("Could not load profiles for ranking: ${error.message ?: error.javaClass.simpleName}")
+        val uniqueProfiles = inputProfiles.distinctBy { it.id }
+        if (uniqueProfiles.isEmpty()) {
+            setAutoTestStatus("Ping ranking: add configs first")
             return
         }
-        if (savedProfiles.isEmpty()) {
-            setAutoTestStatus("Auto ranking: add configs first")
-            return
-        }
-        val rankedInput = savedProfiles.sortedWith(profileRankingComparator()).take(MAX_AUTO_RANK_PROFILES)
+        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator()).take(MAX_AUTO_RANK_PROFILES)
         autoTestInFlight = true
-        setAutoTestStatus("Ranking ${rankedInput.size} config${if (rankedInput.size == 1) "" else "s"}...")
+        setAutoTestStatus("Ping testing ${rankedInput.size} ${scopeLabel.shortUi(32)}...")
         val network = currentNetworkLabel()
         Thread {
             val results = mutableListOf<ProfileProbeResult>()
@@ -980,14 +1013,14 @@ class MainActivity : Activity() {
                 if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) {
                     mainHandler.post {
                         autoTestInFlight = false
-                        setAutoTestStatus("Auto ranking paused while VPN is running")
+                        setAutoTestStatus("Ping ranking paused while VPN is running")
                         refreshAutoTestSummary()
                     }
                     return@Thread
                 }
                 mainHandler.post {
                     if (autoTestInFlight) {
-                        setAutoTestStatus("Ranking ${index + 1}/${rankedInput.size}: ${compactProfileTitle(profile)}")
+                        setAutoTestStatus("Ping ${index + 1}/${rankedInput.size}: ${compactProfileTitle(profile)}")
                     }
                 }
                 val config = loadProfileConfigQuiet(profile)
@@ -1030,9 +1063,9 @@ class MainActivity : Activity() {
                     .thenByDescending { it.profile.favorite })
             val report = buildAutoRankingReport(results, best, reason)
             val message = when {
-                best != null && autoSelect -> "Best config selected: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                best != null -> "Best config: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                else -> "Auto ranking found no reachable endpoints"
+                best != null && autoSelect -> "Best ping selected: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                best != null -> "Best ping: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                else -> "Ping ranking found no reachable endpoints"
             }
             runOnUiThread {
                 autoTestInFlight = false
@@ -1099,6 +1132,112 @@ class MainActivity : Activity() {
         return runCatching { ConfigImporter.parse(raw, profile.name) }.getOrNull()
     }
 
+    private fun currentVisibleProfilesForTesting(limit: Int = MAX_AUTO_RANK_PROFILES): List<VpnProfile> {
+        val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val query = locationSearchQuery.trim()
+        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
+        val anchor = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
+        return (listOfNotNull(anchor) + filtered)
+            .distinctBy { it.id }
+            .sortedWith(profileRankingComparator())
+            .take(limit)
+    }
+
+    private fun showLatencyTestSheet(
+        anchorProfile: VpnProfile?,
+        candidates: List<VpnProfile>,
+        title: String
+    ) {
+        val uniqueCandidates = (listOfNotNull(anchorProfile) + candidates)
+            .distinctBy { it.id }
+            .sortedWith(profileRankingComparator())
+        val target = anchorProfile ?: uniqueCandidates.firstOrNull()
+        showBottomSheet(
+            title = title,
+            subtitle = "Ping is quick. Real latency connects VPN and verifies outbound delay."
+        ) { dialog ->
+            addView(TextView(this@MainActivity).apply {
+                text = "Ping test = fast TCP/TLS endpoint check before connecting. Real latency = start the VPN tunnel and measure the verified route."
+                textSize = 12f
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(4), dp(8), dp(4), dp(4))
+            })
+            if (target != null) {
+                addView(bottomSheetActionRow("◷", "Ping test", "Quick ping for ${compactProfileTitle(target).shortUi(24)}") {
+                    dialog.dismiss()
+                    runPingTestForProfile(target)
+                })
+                addView(bottomSheetActionRow("✓", "Real latency test", "Connect this profile and verify true VPN delay") {
+                    dialog.dismiss()
+                    runRealLatencyTestForProfile(target)
+                })
+            } else {
+                addView(TextView(this@MainActivity).apply {
+                    text = "No saved config is available to test yet. Use + to add a config or subscription."
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(dp(10), dp(14), dp(10), dp(14))
+                })
+            }
+            if (uniqueCandidates.size > 1) {
+                val count = uniqueCandidates.take(MAX_AUTO_RANK_PROFILES).size
+                addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-test $count configs and select the fastest reachable one") {
+                    dialog.dismiss()
+                    rankProfilesAndSelectBest(
+                        inputProfiles = uniqueCandidates,
+                        reason = "test sheet",
+                        autoSelect = true,
+                        scopeLabel = "visible configs"
+                    )
+                })
+            }
+        }
+    }
+
+    private fun selectProfileForTest(profile: VpnProfile): Boolean {
+        val config = loadProfileConfig(profile) ?: return false
+        importedConfig = config
+        selectedProfileId = profile.id
+        selectedProfile = profile
+        refreshProfileButtons(syncVerified = false)
+        updateDashboardSummary()
+        return true
+    }
+
+    private fun runPingTestForProfile(profile: VpnProfile) {
+        if (!selectProfileForTest(profile)) return
+        autoTestSelectedConfig("manual-ping")
+    }
+
+    private fun runRealLatencyTestForProfile(profile: VpnProfile) {
+        val hubBeforeSelection = currentHubStatus()
+        val selectedBefore = selectedProfileId
+        val activeBefore = activeConnectionProfileId
+        val sameActiveProfile = activeBefore == profile.id || (activeBefore == null && selectedBefore == profile.id)
+        if (isLiveState(hubBeforeSelection.state) && !sameActiveProfile) {
+            status.text = "Stop the current VPN first, then run real latency for ${compactProfileTitle(profile)}."
+            return
+        }
+        if (!selectProfileForTest(profile)) return
+        val hub = currentHubStatus()
+        if (sameActiveProfile && hub.state == VpnHubConnectionState.CONNECTED && hub.verified) {
+            recordVerifiedProfileIfNeeded(hub)
+            status.text = "Real latency verified: ${hub.latencyMs?.let { "${it}ms" } ?: "connected"}${hub.activeEngine?.let { " • ${engineLabel(it)}" }.orEmpty()}"
+            refreshProfileButtons(syncVerified = false)
+            updateDashboardSummary()
+            return
+        }
+        if (sameActiveProfile && isLiveState(hub.state)) {
+            status.text = "Real latency test is already running for ${compactProfileTitle(profile)}. Wait for verification to finish."
+            showSection(AppSection.HOME)
+            return
+        }
+        if (autoTestInFlight) autoTestInFlight = false
+        status.text = "Starting real latency test for ${compactProfileTitle(profile)}. Android will verify after the tunnel connects."
+        requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
+    }
+
     private fun buildAutoRankingReport(
         results: List<ProfileProbeResult>,
         best: ProfileProbeResult?,
@@ -1106,9 +1245,9 @@ class MainActivity : Activity() {
     ): String {
         val sorted = results.sortedWith(profileProbeResultComparator())
         val lines = mutableListOf<String>()
-        lines += "Auto test ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
+        lines += "Ping ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
         lines += currentNetworkDiagnosticNote()
-        lines += "Note: this ranks endpoint reachability only. Full VPN login is still verified after Connect."
+        lines += "Note: ping test ranks endpoint reachability only. Real latency is measured after the VPN tunnel connects."
         if (best != null) {
             lines += "Best now: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
         }
@@ -1180,6 +1319,17 @@ class MainActivity : Activity() {
             })
         }
         addView(locationSearchInput)
+        addView(floatingTestButton(compact = true) {
+            showLatencyTestSheet(
+                anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
+                candidates = currentVisibleProfilesForTesting(),
+                title = "Test visible configs"
+            )
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
+                setMargins(dp(4), 0, dp(4), 0)
+            }
+        })
         addView(TextView(this@MainActivity).apply {
             text = "×"
             textSize = 20f
@@ -1273,6 +1423,21 @@ class MainActivity : Activity() {
             setMargins(dp(3), dp(5), dp(3), dp(5))
         }
         setOnClickListener { onClick() }
+    }
+
+    private fun floatingTestButton(compact: Boolean = false, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = "◷"
+        textSize = if (compact) 17f else 19f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTextColor(0xFFFFFFFF.toInt())
+        background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = if (compact) 17 else 20)
+        elevation = dp(2).toFloat()
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
+        contentDescription = "Test latency"
     }
 
     private fun settingsRow(
@@ -1783,18 +1948,22 @@ class MainActivity : Activity() {
             }
         }
 
-        val profileById = profiles.associateBy { it.id }
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         addSheetSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
-        groups.forEach { group ->
-            val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
-            addSheetSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
+        if (groups.isNotEmpty()) {
+            container.addView(createLocationSectionLabel("Subscription profiles", groups.size))
+            groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
+                val groupCount = subscriptionProfiles(group).size
+                container.addView(bottomSheetActionRow("▦", group.displayName.cleanProfileLabel().shortUi(26), "$groupCount configs • open grouped list") {
+                    dialog.dismiss()
+                    showSubscriptionGroupProfilesSheet(group)
+                })
+            }
         }
         addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
-        addSheetSection("Other configs", profiles.sortedWith(profileRankingComparator()))
         if (profiles.size > shown) {
             container.addView(TextView(this@MainActivity).apply {
-                text = "Showing $shown of ${profiles.size}. Open Locations search for more."
+                text = "Subscription configs are inside their group cards. Use Locations search for a specific config."
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
@@ -1815,10 +1984,13 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 loadProfile(profile)
             })
-            addView(bottomSheetActionRow("⟳", "Test", "Run endpoint health check") {
+            addView(bottomSheetActionRow("◷", "Test latency", "Choose ping or real VPN latency") {
                 dialog.dismiss()
-                loadProfile(profile)
-                autoTestSelectedConfig("actions")
+                showLatencyTestSheet(
+                    anchorProfile = profile,
+                    candidates = listOf(profile),
+                    title = "Test ${compactProfileTitle(profile).shortUi(18)}"
+                )
             })
             addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
                 dialog.dismiss()
@@ -2035,6 +2207,17 @@ class MainActivity : Activity() {
                 setPadding(dp(7), dp(4), dp(7), dp(4))
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                     setMargins(dp(6), 0, dp(4), 0)
+                }
+            })
+            addView(floatingTestButton(compact = true) {
+                showLatencyTestSheet(
+                    anchorProfile = profile,
+                    candidates = listOf(profile),
+                    title = "Test ${compactProfileTitle(profile).shortUi(18)}"
+                )
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                    setMargins(dp(2), 0, dp(2), 0)
                 }
             })
             addView(TextView(this@MainActivity).apply {
@@ -3011,7 +3194,6 @@ class MainActivity : Activity() {
             })
         }
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-        val profileById = profiles.associateBy { it.id }
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         val shownIds = mutableSetOf<String>()
         var shown = 0
@@ -3024,14 +3206,22 @@ class MainActivity : Activity() {
             shown += addLocationSection(profileListContainer, title, limited, MAX_PROFILE_BUTTONS - shown)
         }
 
-        addUniqueSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
-        groups.forEach { group ->
-            val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
-            addUniqueSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
+        if (query.isNotBlank()) {
+            addUniqueSection("Search results", profiles.sortedWith(profileRankingComparator()))
+        } else {
+            addUniqueSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
+            addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+            if (subscriptionProfileIds.any { id -> allProfiles.any { it.id == id } }) {
+                profileListContainer.addView(TextView(this).apply {
+                    text = "Subscription configs are grouped in cards above, so large subscriptions do not flood this list."
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(dp(10), dp(10), dp(10), dp(4))
+                })
+            }
         }
-        addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
-        addUniqueSection("Other configs", profiles.sortedWith(profileRankingComparator()))
-        if (profiles.size > shown) {
+        if (profiles.size > shown && query.isNotBlank()) {
             profileListContainer.addView(TextView(this).apply {
                 text = "Showing $shown of ${profiles.size}. Use search to narrow the list."
                 textSize = 12f
@@ -3050,9 +3240,9 @@ class MainActivity : Activity() {
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         subscriptionGroupContainer.addView(TextView(this).apply {
             text = if (groups.isEmpty()) {
-                "Subscription groups: use + to add one."
+                "Subscription profiles: use + to add one."
             } else {
-                "Subscription groups  ${groups.size}"
+                "Subscription profiles  ${groups.size}"
             }
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
@@ -3064,12 +3254,170 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         })
-        groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
-            subscriptionGroupContainer.addView(settingsRow(
-                icon = "↻",
-                title = group.displayName.shortUi(30),
-                subtitle = subscriptionGroupSubtitle(group)
-            ) { refreshSubscriptionGroup(group) })
+        if (groups.isEmpty()) return
+        groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).chunked(2).forEach { rowGroups ->
+            subscriptionGroupContainer.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                rowGroups.forEach { group ->
+                    addView(subscriptionGroupCard(group).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, dp(106), 1f).apply {
+                            setMargins(dp(3), dp(5), dp(3), dp(3))
+                        }
+                    })
+                }
+                if (rowGroups.size == 1) {
+                    addView(View(this@MainActivity).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, dp(1), 1f).apply {
+                            setMargins(dp(3), 0, dp(3), 0)
+                        }
+                    })
+                }
+            })
+        }
+        if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
+            subscriptionGroupContainer.addView(TextView(this).apply {
+                text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} groups. Use search to find more configs."
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(8), dp(6), dp(8), dp(2))
+            })
+        }
+    }
+
+    private fun subscriptionGroupCard(group: SubscriptionGroup): LinearLayout = LinearLayout(this).apply {
+        val profiles = subscriptionProfiles(group)
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        setPadding(dp(9), dp(8), dp(9), dp(8))
+        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { showSubscriptionGroupProfilesSheet(group) }
+        setOnLongClickListener {
+            refreshSubscriptionGroup(group)
+            true
+        }
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "▦"
+                textSize = 16f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(0, 0, dp(6), 0) }
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = group.displayName.cleanProfileLabel().shortUi(18)
+                textSize = 12.5f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF0F172A.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(floatingTestButton(compact = true) {
+                showLatencyTestSheet(
+                    anchorProfile = profiles.sortedWith(profileRankingComparator()).firstOrNull(),
+                    candidates = profiles,
+                    title = "Test ${group.displayName.shortUi(18)}"
+                )
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { setMargins(dp(4), 0, 0, 0) }
+            })
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "${profiles.size} configs"
+            textSize = 11f
+            setTextColor(0xFF475569.toInt())
+            setPadding(0, dp(6), 0, 0)
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = group.lastResult?.cleanProfileLabel()?.shortUi(32) ?: "Tap to open • hold to refresh"
+            textSize = 10.5f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(0xFF64748B.toInt())
+        })
+    }
+
+    private fun subscriptionProfiles(group: SubscriptionGroup): List<VpnProfile> =
+        group.profileIds.mapNotNull { id -> profileStore.profile(id) }
+
+    private fun showSubscriptionGroupProfilesSheet(group: SubscriptionGroup) {
+        val profiles = subscriptionProfiles(group).sortedWith(profileRankingComparator())
+        showBottomSheet(
+            title = group.displayName.cleanProfileLabel().shortUi(32),
+            subtitle = "${profiles.size} configs in this subscription profile"
+        ) { dialog ->
+            addView(bottomSheetActionRow("◷", "Test this subscription", "Ping-rank the best ${profiles.take(MAX_AUTO_RANK_PROFILES).size} configs") {
+                dialog.dismiss()
+                showLatencyTestSheet(
+                    anchorProfile = profiles.firstOrNull(),
+                    candidates = profiles,
+                    title = "Test ${group.displayName.shortUi(18)}"
+                )
+            })
+            addView(bottomSheetActionRow("↻", "Refresh subscription", subscriptionGroupSubtitle(group)) {
+                dialog.dismiss()
+                refreshSubscriptionGroup(group)
+            })
+            if (profiles.isEmpty()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "No configs are saved in this group yet. Refresh it or paste the subscription again."
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(dp(10), dp(14), dp(10), dp(14))
+                })
+                return@showBottomSheet
+            }
+            val listContainer = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(0, dp(4), 0, 0)
+            }
+            profiles.take(MAX_GROUP_PROFILE_PREVIEW).forEach { profile ->
+                listContainer.addView(profileListRow(
+                    profile = profile,
+                    compact = true,
+                    onSelect = {
+                        dialog.dismiss()
+                        loadProfile(profile)
+                    },
+                    onActions = {
+                        dialog.dismiss()
+                        showProfileActionsSheet(profile)
+                    }
+                ))
+            }
+            if (profiles.size > MAX_GROUP_PROFILE_PREVIEW) {
+                listContainer.addView(TextView(this@MainActivity).apply {
+                    text = "Showing ${MAX_GROUP_PROFILE_PREVIEW} best of ${profiles.size}. Use Locations search for a specific country/operator."
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF64748B.toInt())
+                    setPadding(dp(8), dp(10), dp(8), dp(4))
+                })
+            }
+            addView(ScrollView(this@MainActivity).apply {
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    if (profiles.size > 4) dp(360) else ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                addView(listContainer)
+            })
         }
     }
 
@@ -3458,7 +3806,8 @@ class MainActivity : Activity() {
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val MAX_PROFILE_BUTTONS = 40
         const val MAX_PROFILE_SHEET_CHOICES = 40
-        const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
+        const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 8
+        const val MAX_GROUP_PROFILE_PREVIEW = 16
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 12
         const val MAX_SUBSCRIPTION_LINKS = 80
