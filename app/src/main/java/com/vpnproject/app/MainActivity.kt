@@ -1714,9 +1714,10 @@ class MainActivity : Activity() {
 
     private fun showConfigSelectorSheet() {
         val profiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         showBottomSheet(
             title = "Choose location",
-            subtitle = "Tap to select. Long press a config for actions."
+            subtitle = "Tap to select. Subscription groups stay separated."
         ) { dialog ->
             addView(bottomSheetActionRow("+", "Add config", "Clipboard, file, or subscription") {
                 dialog.dismiss()
@@ -1737,8 +1738,36 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(0, dp(6), 0, 0)
             }
-            profiles.take(MAX_PROFILE_SHEET_CHOICES).forEach { profile ->
-                listContainer.addView(profileListRow(
+            addGroupedProfileRowsToSheet(listContainer, profiles, groups, dialog)
+            addView(ScrollView(this@MainActivity).apply {
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    if (profiles.size > 5) dp(380) else ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                addView(listContainer)
+            })
+        }
+    }
+
+    private fun addGroupedProfileRowsToSheet(
+        container: LinearLayout,
+        profiles: List<VpnProfile>,
+        groups: List<SubscriptionGroup>,
+        dialog: Dialog
+    ) {
+        val shownIds = mutableSetOf<String>()
+        var shown = 0
+        fun addSheetSection(title: String, sectionProfiles: List<VpnProfile>) {
+            if (shown >= MAX_PROFILE_SHEET_CHOICES) return
+            val unique = sectionProfiles.filter { it.id !in shownIds }
+            if (unique.isEmpty()) return
+            val limited = unique.take(MAX_PROFILE_SHEET_CHOICES - shown)
+            container.addView(createLocationSectionLabel(title, limited.size))
+            limited.forEach { profile ->
+                shownIds += profile.id
+                shown++
+                container.addView(profileListRow(
                     profile = profile,
                     compact = true,
                     onSelect = {
@@ -1751,13 +1780,24 @@ class MainActivity : Activity() {
                     }
                 ))
             }
-            addView(ScrollView(this@MainActivity).apply {
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    if (profiles.size > 5) dp(360) else ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                addView(listContainer)
+        }
+
+        val profileById = profiles.associateBy { it.id }
+        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+        addSheetSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
+        addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+        groups.forEach { group ->
+            val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
+            addSheetSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
+        }
+        addSheetSection("Other configs", profiles.sortedWith(profileRankingComparator()))
+        if (profiles.size > shown) {
+            container.addView(TextView(this@MainActivity).apply {
+                text = "Showing $shown of ${profiles.size}. Open Locations search for more."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(10), dp(10), dp(10), dp(4))
             })
         }
     }
@@ -2437,7 +2477,7 @@ class MainActivity : Activity() {
             title = "Add config",
             subtitle = "Only use your own or provider-approved configs."
         ) { dialog ->
-            addView(bottomSheetActionRow("⌘", "Paste from clipboard", "vless, vmess, trojan, ss, WireGuard, OpenVPN") {
+            addView(bottomSheetActionRow("⌘", "Paste from clipboard", "Config link, subscription URL, or subscription text") {
                 dialog.dismiss()
                 importConfigFromClipboard()
             })
@@ -2516,7 +2556,7 @@ class MainActivity : Activity() {
     private fun refreshSubscriptionGroup(group: SubscriptionGroup) {
         val url = profileStore.loadSubscriptionUrl(group.id)
         if (url.isNullOrBlank()) {
-            status.text = "Subscription group ${group.displayName} has no decryptable URL. Add it again."
+            status.text = "${group.displayName} was imported from clipboard and has no refresh URL. Copy the subscription again and use Paste from clipboard to refresh it."
             return
         }
         addOrRefreshSubscriptionGroup(group.displayName, url, existingGroup = group)
@@ -2558,18 +2598,62 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun addClipboardSubscriptionGroup(name: String, subscriptionText: String) {
+        status.text = "Importing subscription from clipboard..."
+        Thread {
+            val result = runCatching { syncClipboardSubscriptionGroupBlocking(name, subscriptionText) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { sync ->
+                        sync.profiles.firstOrNull()?.let { profile ->
+                            selectedProfile = profile
+                            selectedProfileId = profile.id
+                            importedConfig = loadProfileConfig(profile)
+                        }
+                        refreshProfileButtons()
+                        updateDashboardSummary()
+                        status.text = "Clipboard subscription ${sync.group.displayName.shortUi(28)} imported: ${sync.profiles.size} profiles saved" +
+                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
+                        showSection(AppSection.PROFILES)
+                        maybeAutoRankBestProfile("clipboard subscription")
+                    },
+                    onFailure = { error ->
+                        status.text = "Clipboard subscription import failed: ${error.message ?: error.javaClass.simpleName}"
+                        refreshProfileButtons()
+                    }
+                )
+            }
+        }.start()
+    }
+
     private fun syncSubscriptionGroupBlocking(
         name: String,
         url: String,
         existingGroup: SubscriptionGroup?
     ): SubscriptionSyncResult {
         val subscriptionText = fetchSubscriptionText(url)
+        val storedGroup = profileStore.saveSubscriptionGroup(existingGroup?.displayName ?: name, url)
+        return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Synced")
+    }
+
+    private fun syncClipboardSubscriptionGroupBlocking(
+        name: String,
+        subscriptionText: String
+    ): SubscriptionSyncResult {
+        val storedGroup = profileStore.saveClipboardSubscriptionGroup(name, subscriptionText)
+        return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Imported from clipboard")
+    }
+
+    private fun syncSubscriptionTextIntoGroup(
+        storedGroup: SubscriptionGroup,
+        subscriptionText: String,
+        resultVerb: String
+    ): SubscriptionSyncResult {
         val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
         if (links.isEmpty()) {
-            throw ConfigParseException("Downloaded subscription contains no supported vless/vmess/trojan/ss links.")
+            throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links.")
         }
 
-        val storedGroup = profileStore.saveSubscriptionGroup(existingGroup?.displayName ?: name, url)
         val savedProfiles = mutableListOf<VpnProfile>()
         var skipped = 0
         links.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, link ->
@@ -2583,10 +2667,10 @@ class MainActivity : Activity() {
         }
         skipped += (links.size - links.take(MAX_SUBSCRIPTION_LINKS).size).coerceAtLeast(0)
         if (savedProfiles.isEmpty()) {
-            throw ConfigParseException("Subscription downloaded, but none of its links could be imported.")
+            throw ConfigParseException("Subscription was read, but none of its links could be imported.")
         }
 
-        val resultText = "Synced ${savedProfiles.size}/${links.size} profiles"
+        val resultText = "$resultVerb ${savedProfiles.size}/${links.size} profiles"
         val updatedGroup = profileStore.markSubscriptionSynced(
             groupId = storedGroup.id,
             profileIds = savedProfiles.map { it.id },
@@ -2670,11 +2754,47 @@ class MainActivity : Activity() {
             .orEmpty()
 
         if (clipText.isBlank()) {
-            status.text = "Clipboard is empty. Copy a vless://, vmess://, trojan://, ss://, OpenVPN, or WireGuard config first."
+            status.text = "Clipboard is empty. Copy a config link, subscription URL, OpenVPN, or WireGuard config first."
+            return
+        }
+
+        if (looksLikeSubscriptionUrl(clipText)) {
+            addOrRefreshSubscriptionGroup(subscriptionNameFromUrl(clipText), clipText, existingGroup = null)
+            return
+        }
+
+        val subscriptionLinks = V2RaySubscriptionParser.extractLinks(clipText)
+        val directSingleLink = subscriptionLinks.size == 1 && startsWithSingleV2RayLink(clipText)
+        if (subscriptionLinks.isNotEmpty() && !directSingleLink) {
+            addClipboardSubscriptionGroup("Clipboard subscription", clipText)
             return
         }
 
         importConfigText(clipText, "clipboard")
+    }
+
+    private fun looksLikeSubscriptionUrl(text: String): Boolean {
+        val candidate = text.trim()
+        if (candidate.contains(Regex("\s"))) return false
+        return runCatching {
+            val parsed = URL(candidate)
+            parsed.protocol.equals("https", ignoreCase = true) || parsed.protocol.equals("http", ignoreCase = true)
+        }.getOrDefault(false)
+    }
+
+    private fun subscriptionNameFromUrl(text: String): String = runCatching {
+        val host = URL(text.trim()).host
+            ?.removePrefix("www.")
+            ?.takeIf { it.isNotBlank() }
+        host?.substringBefore('.')?.replaceFirstChar { if (it.isLowerCase()) it.uppercaseChar() else it }
+            ?: "Clipboard subscription"
+    }.getOrDefault("Clipboard subscription")
+
+    private fun startsWithSingleV2RayLink(text: String): Boolean {
+        val normalized = text.trim()
+        return listOf("vless://", "vmess://", "trojan://", "ss://").any { prefix ->
+            normalized.startsWith(prefix, ignoreCase = true)
+        } && !normalized.contains(Regex("\s"))
     }
 
     private fun importConfigText(text: String, name: String?) {
@@ -2889,22 +3009,27 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             })
         }
-        val recommended = profiles.filter { it.lastTestSuccess == true }
-            .sortedWith(profileRankingComparator())
-        val recommendedIds = recommended.map { it.id }.toSet()
-        val favorites = profiles.filter { it.favorite && it.id !in recommendedIds }
-            .sortedWith(profileRankingComparator())
-        val recent = profiles.filter { it.id !in recommendedIds && !it.favorite && it.lastVerifiedEpochMs != null }
-            .sortedByDescending { it.lastVerifiedEpochMs ?: 0L }
-        val favoriteIds = favorites.map { it.id }.toSet()
-        val recentIds = recent.map { it.id }.toSet()
-        val others = profiles.filter { it.id !in recommendedIds && it.id !in favoriteIds && it.id !in recentIds }
-            .sortedWith(profileRankingComparator())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val profileById = profiles.associateBy { it.id }
+        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+        val shownIds = mutableSetOf<String>()
         var shown = 0
-        shown += addLocationSection(profileListContainer, "Recommended", recommended, MAX_PROFILE_BUTTONS - shown)
-        shown += addLocationSection(profileListContainer, "Favorites", favorites, MAX_PROFILE_BUTTONS - shown)
-        shown += addLocationSection(profileListContainer, "Recently good", recent, MAX_PROFILE_BUTTONS - shown)
-        shown += addLocationSection(profileListContainer, "All configs", others, MAX_PROFILE_BUTTONS - shown)
+        fun addUniqueSection(title: String, sectionProfiles: List<VpnProfile>) {
+            if (shown >= MAX_PROFILE_BUTTONS) return
+            val unique = sectionProfiles.filter { it.id !in shownIds }
+            val limited = unique.take(MAX_PROFILE_BUTTONS - shown)
+            if (limited.isEmpty()) return
+            shownIds.addAll(limited.map { it.id })
+            shown += addLocationSection(profileListContainer, title, limited, MAX_PROFILE_BUTTONS - shown)
+        }
+
+        addUniqueSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
+        addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+        groups.forEach { group ->
+            val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
+            addUniqueSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
+        }
+        addUniqueSection("Other configs", profiles.sortedWith(profileRankingComparator()))
         if (profiles.size > shown) {
             profileListContainer.addView(TextView(this).apply {
                 text = "Showing $shown of ${profiles.size}. Use search to narrow the list."
@@ -3312,6 +3437,7 @@ class MainActivity : Activity() {
         const val MAX_PROFILE_BUTTONS = 40
         const val MAX_PROFILE_SHEET_CHOICES = 40
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 4
+        const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 12
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024

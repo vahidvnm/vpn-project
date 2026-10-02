@@ -116,6 +116,26 @@ class SecureProfileStore(context: Context) {
         return loadSubscriptionGroupMetadata(id) ?: SubscriptionGroup(id, sanitizedName, emptyList(), now, now)
     }
 
+    fun saveClipboardSubscriptionGroup(name: String, subscriptionText: String): SubscriptionGroup {
+        val id = stableClipboardSubscriptionGroupId(name, subscriptionText)
+        val existing = loadSubscriptionGroupMetadata(id)
+        val now = System.currentTimeMillis()
+        val sanitizedName = name.sanitizedProfileName().takeIf { it.isNotBlank() }
+            ?: existing?.name
+            ?: "Clipboard subscription"
+        prefs.edit().apply {
+            putString(subscriptionKey(id, FIELD_NAME), sanitizedName)
+            remove(subscriptionKey(id, FIELD_URL))
+            putLong(subscriptionKey(id, FIELD_CREATED), existing?.createdAtEpochMs ?: now)
+            putLong(subscriptionKey(id, FIELD_UPDATED), now)
+            existing?.lastSyncEpochMs?.let { putLong(subscriptionKey(id, FIELD_LAST_SYNC), it) }
+            existing?.lastResult?.let { putString(subscriptionKey(id, FIELD_LAST_RESULT), it) }
+            putString(subscriptionKey(id, FIELD_SUB_PROFILE_IDS), existing?.profileIds?.joinToString(ID_SEPARATOR).orEmpty())
+            putString(KEY_SUBSCRIPTION_GROUP_IDS, mergeSubscriptionGroupIds(id))
+        }.apply()
+        return loadSubscriptionGroupMetadata(id) ?: SubscriptionGroup(id, sanitizedName, emptyList(), now, now)
+    }
+
     fun listSubscriptionGroups(): List<SubscriptionGroup> = subscriptionGroupIds()
         .mapNotNull { id -> loadSubscriptionGroupMetadata(id) }
         .sortedByDescending { it.updatedAtEpochMs }
@@ -332,6 +352,9 @@ class SecureProfileStore(context: Context) {
     fun stableSubscriptionProfileId(groupId: String, link: String): String = "sub-profile-${sha256(groupId + "\\n" + link.trim()).take(16)}"
 
     private fun stableSubscriptionGroupId(url: String): String = "sub-${sha256(url.trim()).take(16)}"
+
+    private fun stableClipboardSubscriptionGroupId(name: String, subscriptionText: String): String =
+        "clip-sub-${sha256(name.sanitizedProfileName() + "\n" + subscriptionText.trim()).take(16)}"
 
     private fun sha256(value: String): String {
         val digest = MessageDigest.getInstance("SHA-256")

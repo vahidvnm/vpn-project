@@ -1,9 +1,9 @@
 package com.vpnproject.app.profile
 
 /**
- * Metadata for a user-provided subscription URL. The URL itself can contain an
- * account token and is therefore stored encrypted in SecureProfileStore; this
- * model only exposes safe metadata for the UI.
+ * Metadata for a user-provided subscription group. A refreshable group stores
+ * the URL encrypted in SecureProfileStore; clipboard-only groups store only
+ * safe metadata and encrypted profile configs, not the raw subscription text.
  */
 data class SubscriptionGroup(
     val id: String,

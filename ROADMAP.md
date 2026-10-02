@@ -550,6 +550,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله ۵ Smart auto test: ذخیره‌شدن وضعیت ON/OFF، تست و رتبه‌بندی saved configs، نمایش last-test در Home/Locations، گروه Recommended، و auto-select بهترین کانفیگ reachable بدون علامت‌زدن آن به‌عنوان verified کامل VPN.
 - [x] polish بعد از اسکرین‌شات: safe top viewport برای صفحه‌های scroll شده، اصلاح clipping متن bottom nav، کوتاه‌کردن diagnostics داخل Advanced و انتقال full log به bottom sheet، و تبدیل ابزارهای Advanced به ردیف‌های compact.
 - [x] polish اسکرین‌شات دوم: تبدیل Add subscription به bottom sheet هماهنگ با UI، اضافه‌کردن فضای انتهایی برای scroll زیر bottom nav، و pause شدن auto-test/ranking وقتی VPN در حال connect/run است تا تست‌ها از مسیر تونل active گمراه نشوند.
+- [x] اصلاح بازخورد بعدی: پشتیبانی subscription از Paste from clipboard، جداکردن صف profileهای هر subscription group در selector/Locations، و hardening سرویس Xray با START_REDELIVER_INTENT و foreground heartbeat و stopWithTask=false برای کاهش احتمال رفتن آیکن VPN در background.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

@@ -40,21 +40,38 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     @Volatile
     private var statsThread: Thread? = null
 
+    @Volatile
+    private var heartbeatThread: Thread? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return when (intent?.action ?: ACTION_START) {
+        if (intent == null) {
+            return if (running.get()) {
+                startForegroundNotification("Xray VPN is still running in the background…")
+                Service.START_REDELIVER_INTENT
+            } else {
+                updateStatus(
+                    EngineState.STOPPED,
+                    "Xray service was restarted without its encrypted runtime config. Tap Connect again."
+                )
+                stopSelf()
+                Service.START_NOT_STICKY
+            }
+        }
+
+        return when (intent.action ?: ACTION_START) {
             ACTION_STOP -> {
                 stopXray("Stop requested for Xray engine.")
                 stopSelf()
                 Service.START_NOT_STICKY
             }
             ACTION_START -> {
-                val configJson = intent?.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
-                val profileName = intent?.getStringExtra(EXTRA_PROFILE_NAME).orEmpty().ifBlank { "v2ray-import" }
-                val note = intent?.getStringExtra(EXTRA_NOTE).orEmpty()
+                val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
+                val profileName = intent.getStringExtra(EXTRA_PROFILE_NAME).orEmpty().ifBlank { "v2ray-import" }
+                val note = intent.getStringExtra(EXTRA_NOTE).orEmpty()
                 startForegroundNotification("Starting embedded Xray engine…")
                 updateStatus(EngineState.CONNECTING, "Starting embedded Xray engine for $profileName.", note)
                 Thread({ startXray(configJson, profileName, note) }, "xray-start").start()
-                Service.START_STICKY
+                Service.START_REDELIVER_INTENT
             }
             else -> Service.START_NOT_STICKY
         }
@@ -75,6 +92,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     override fun onRevoke() {
         stopXray("Xray VPN permission was revoked.")
         super.onRevoke()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (running.get()) {
+            startForegroundNotification("Xray VPN continues in the background…")
+        } else {
+            super.onTaskRemoved(rootIntent)
+        }
     }
 
     override fun startup(): Long = 0L
@@ -126,6 +151,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             coreController = controller
             controller.startLoop(configJson, tun.fd)
             running.set(true)
+            startForegroundHeartbeat()
             startStatsPolling(controller)
             updateStatus(
                 EngineState.VERIFYING,
@@ -269,6 +295,33 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             ?: DelayProbeResult(error = "timed out after ${timeoutMs / 1000}s")
     }
 
+    private fun startForegroundHeartbeat() {
+        heartbeatThread?.interrupt()
+        heartbeatThread = Thread({
+            while (running.get() && !Thread.currentThread().isInterrupted) {
+                try {
+                    Thread.sleep(FOREGROUND_HEARTBEAT_MS)
+                    if (!running.get() || Thread.currentThread().isInterrupted) break
+                    val current = lastStatus
+                    val message = when (current.state) {
+                        EngineState.VERIFIED -> "Xray VPN protected${current.latencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                        EngineState.VERIFYING,
+                        EngineState.CONNECTING -> "Xray VPN is running; verifying route…"
+                        EngineState.RUNNING -> "Xray VPN is running; egress is not verified yet."
+                        else -> "Xray VPN service is active."
+                    }
+                    startForegroundNotification(message)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                } catch (_: Exception) {
+                    runCatching { Thread.sleep(FOREGROUND_HEARTBEAT_MS) }
+                }
+            }
+        }, "xray-foreground-heartbeat")
+        heartbeatThread?.isDaemon = true
+        heartbeatThread?.start()
+    }
+
     private fun startStatsPolling(controller: CoreController) {
         statsThread?.interrupt()
         statsThread = Thread({
@@ -370,6 +423,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         verifierThread = null
         statsThread?.interrupt()
         statsThread = null
+        heartbeatThread?.interrupt()
+        heartbeatThread = null
         runCatching { coreController?.stopLoop() }
         coreController = null
         runCatching { vpnInterface?.close() }
@@ -486,6 +541,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val VERIFY_START_DELAY_MS = 3_000L
         private const val VERIFY_URL_TIMEOUT_MS = 15_000L
         private const val STATS_REFRESH_MS = 2_000L
+        private const val FOREGROUND_HEARTBEAT_MS = 60_000L
         private val VERIFY_URLS = listOf(
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",
