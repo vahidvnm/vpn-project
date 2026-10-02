@@ -209,18 +209,18 @@ class MainActivity : Activity() {
         }
         profileCard.addView(selectedProfileText)
         profileCard.addView(createLocationSearchCard())
-        profileListContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(12), 0, 0)
-        }
-        profileCard.addView(profileListContainer)
         subscriptionGroupContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(10), 0, dp(6))
         }
         profileCard.addView(subscriptionGroupContainer)
+        profileListContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        profileCard.addView(profileListContainer)
         profilesSection.addView(profileCard)
 
         val settingsCard = createCard()
@@ -1650,7 +1650,7 @@ class MainActivity : Activity() {
         profile?.let { compactProfileTitle(it) } ?: fallback.shortUi(24)
 
     private fun compactProfileTitle(profile: VpnProfile): String {
-        val base = primaryProfileNameSegment(profile.displayName)
+        val base = primaryProfileNameSegment(profile.displayName.cleanProfileLabel())
         val title = base.substringBefore("/")
             .substringBefore("(")
             .substringBefore("~")
@@ -1663,7 +1663,7 @@ class MainActivity : Activity() {
     }
 
     private fun compactProfileSubtitle(profile: VpnProfile): String? {
-        val base = primaryProfileNameSegment(profile.displayName)
+        val base = primaryProfileNameSegment(profile.displayName.cleanProfileLabel())
         val afterSlash = base.substringAfter("/", "")
             .substringBefore("(")
             .substringBefore("~")
@@ -1678,8 +1678,9 @@ class MainActivity : Activity() {
     }
 
     private fun profileFlagOrIcon(profile: VpnProfile): String {
+        val label = profile.displayName.cleanProfileLabel()
         return listOf("🇮🇷", "🇳🇱", "🇺🇸", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺", "🇸🇬")
-            .firstOrNull { profile.displayName.contains(it) }
+            .firstOrNull { label.contains(it) }
             ?: when (profile.kind) {
                 VpnProfileKind.XRAY -> "✦"
                 VpnProfileKind.WIREGUARD -> "◎"
@@ -1698,7 +1699,7 @@ class MainActivity : Activity() {
     }
 
     private fun primaryProfileNameSegment(name: String): String {
-        val segments = name.replace(Regex("\\s+"), " ")
+        val segments = name.cleanProfileLabel().replace(Regex("\\s+"), " ")
             .split("•")
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -1785,11 +1786,11 @@ class MainActivity : Activity() {
         val profileById = profiles.associateBy { it.id }
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         addSheetSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
-        addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
         groups.forEach { group ->
             val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
             addSheetSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
         }
+        addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
         addSheetSection("Other configs", profiles.sortedWith(profileRankingComparator()))
         if (profiles.size > shown) {
             container.addView(TextView(this@MainActivity).apply {
@@ -2107,7 +2108,7 @@ class MainActivity : Activity() {
             .filter { it.isNotBlank() }
         if (terms.isEmpty()) return true
         val haystack = listOfNotNull(
-            profile.displayName,
+            profile.displayName.cleanProfileLabel(),
             compactProfileTitle(profile),
             compactProfileSubtitle(profile),
             profile.kind.displayName,
@@ -3024,11 +3025,11 @@ class MainActivity : Activity() {
         }
 
         addUniqueSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
-        addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
         groups.forEach { group ->
             val groupProfiles = group.profileIds.mapNotNull { profileById[it] }
             addUniqueSection("Subscription • ${group.displayName.shortUi(24)}", groupProfiles)
         }
+        addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
         addUniqueSection("Other configs", profiles.sortedWith(profileRankingComparator()))
         if (profiles.size > shown) {
             profileListContainer.addView(TextView(this).apply {
@@ -3049,26 +3050,33 @@ class MainActivity : Activity() {
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         subscriptionGroupContainer.addView(TextView(this).apply {
             text = if (groups.isEmpty()) {
-                "No subscription groups yet. Use + to add one."
+                "Subscription groups: use + to add one."
             } else {
-                "Subscription groups (${groups.size}): tap to refresh"
+                "Subscription groups  ${groups.size}"
             }
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(8), 0, dp(4))
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
+            setTextColor(0xFF64748B.toInt())
+            setPadding(0, dp(6), 0, dp(2))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         })
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
-            subscriptionGroupContainer.addView(createActionButton(
-                textValue = subscriptionGroupButtonLabel(group)
+            subscriptionGroupContainer.addView(settingsRow(
+                icon = "↻",
+                title = group.displayName.shortUi(30),
+                subtitle = subscriptionGroupSubtitle(group)
             ) { refreshSubscriptionGroup(group) })
         }
     }
 
-    private fun subscriptionGroupButtonLabel(group: SubscriptionGroup): String {
-        val syncText = group.lastSyncEpochMs?.let { "Last sync: ${group.profileIds.size} profiles" } ?: "Not synced yet"
-        val result = group.lastResult?.takeIf { it.isNotBlank() }?.shortUi(52)
-        return "${group.displayName.shortUi(30)}\n$syncText" + (result?.let { "\n$it" } ?: "")
+    private fun subscriptionGroupSubtitle(group: SubscriptionGroup): String {
+        val syncText = group.lastSyncEpochMs?.let { "${group.profileIds.size} profiles" } ?: "Not synced yet"
+        val result = group.lastResult?.takeIf { it.isNotBlank() }?.shortUi(36)
+        return listOfNotNull(syncText, result).joinToString(" • ")
     }
 
     private fun loadLatestProfile() {
@@ -3358,6 +3366,20 @@ class MainActivity : Activity() {
         val score = lastTestScore?.let { " • score $it" }.orEmpty()
         val network = lastTestNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
         return "Last test: $result$score$network"
+    }
+
+    private fun String.cleanProfileLabel(): String {
+        val unicodeDecoded = Regex("\\u([0-9a-fA-F]{4})").replace(this) { match ->
+            match.groupValues[1].toInt(16).toChar().toString()
+        }
+        return unicodeDecoded
+            .replace("\\n", " ")
+            .replace("\\t", " ")
+            .replace(Regex("\\u[0-9a-fA-F]{0,3}"), "")
+            .replace(Regex("[\u0000-\u001F]"), " ")
+            .replace(Regex("\\+"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun VpnProfileEndpoint.cleanEndpointLabel(): String {
