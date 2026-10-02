@@ -1864,7 +1864,7 @@ class MainActivity : Activity() {
     }
 
     private fun primaryProfileNameSegment(name: String): String {
-        val segments = name.cleanProfileLabel().replace(Regex("\\s+"), " ")
+        val segments = name.cleanProfileLabel().collapseLabelWhitespace()
             .split("•")
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -3757,9 +3757,23 @@ class MainActivity : Activity() {
             decoded.append(if (current.isISOControl()) ' ' else current)
             index++
         }
-        return decoded.toString()
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        return decoded.toString().collapseLabelWhitespace()
+    }
+
+    private fun String.collapseLabelWhitespace(): String {
+        val compact = StringBuilder(length)
+        var previousWasSpace = false
+        for (char in this) {
+            val normalized = if (char.isWhitespace() || char.isISOControl()) ' ' else char
+            if (normalized == ' ') {
+                if (!previousWasSpace) compact.append(' ')
+                previousWasSpace = true
+            } else {
+                compact.append(normalized)
+                previousWasSpace = false
+            }
+        }
+        return compact.toString().trim()
     }
 
     private fun VpnProfileEndpoint.cleanEndpointLabel(): String {
