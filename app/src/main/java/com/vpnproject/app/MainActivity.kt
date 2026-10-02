@@ -37,6 +37,7 @@ import android.view.Window
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -99,6 +100,7 @@ class MainActivity : Activity() {
     private lateinit var favoriteActionButton: Button
     private lateinit var locationSearchInput: EditText
     private var locationSearchQuery = ""
+    private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
     private lateinit var navHomeButton: Button
     private lateinit var navProfilesButton: Button
     private lateinit var navToolsButton: Button
@@ -1134,10 +1136,13 @@ class MainActivity : Activity() {
 
     private fun currentVisibleProfilesForTesting(limit: Int = MAX_AUTO_RANK_PROFILES): List<VpnProfile> {
         val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
+        val scoped = profilesForLocationFilter(filtered, groups)
         val anchor = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
-        return (listOfNotNull(anchor) + filtered)
+        return (listOfNotNull(anchor) + scoped)
             .distinctBy { it.id }
             .sortedWith(profileRankingComparator())
             .take(limit)
@@ -1963,7 +1968,7 @@ class MainActivity : Activity() {
         addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
         if (profiles.size > shown) {
             container.addView(TextView(this@MainActivity).apply {
-                text = "Subscription configs are inside their group cards. Use Locations search for a specific config."
+                text = "Subscription configs are separated into tabs. Use Locations search for a specific config."
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
@@ -2761,6 +2766,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 result.fold(
                     onSuccess = { sync ->
+                        selectedLocationGroupFilter = sync.group.id
                         sync.profiles.firstOrNull()?.let { profile ->
                             selectedProfile = profile
                             selectedProfileId = profile.id
@@ -2789,6 +2795,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 result.fold(
                     onSuccess = { sync ->
+                        selectedLocationGroupFilter = sync.group.id
                         sync.profiles.firstOrNull()?.let { profile ->
                             selectedProfile = profile
                             selectedProfileId = profile.id
@@ -3171,30 +3178,40 @@ class MainActivity : Activity() {
         if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
         profileListContainer.removeAllViews()
         val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val profiles = allProfiles.filter { matchesLocationSearch(it, query) }
+        val scopedProfiles = profilesForLocationFilter(profiles, groups)
+        refreshSubscriptionGroupButtons(groups, allProfiles, profiles)
+
         profileListContainer.addView(TextView(this).apply {
+            val scope = locationFilterLabel(groups)
             text = when {
                 allProfiles.isEmpty() -> "No saved configs yet."
-                query.isNotBlank() -> "Search results (${profiles.size}/${allProfiles.size})"
-                else -> "Saved configs (${allProfiles.size})"
+                query.isNotBlank() -> "$scope search (${scopedProfiles.size}/${allProfiles.size})"
+                else -> "$scope configs (${scopedProfiles.size})"
             }
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(0xFF475569.toInt())
             setPadding(0, dp(4), 0, dp(4))
         })
-        if (allProfiles.isNotEmpty() && profiles.isEmpty()) {
+        if (allProfiles.isNotEmpty() && scopedProfiles.isEmpty()) {
             profileListContainer.addView(TextView(this).apply {
-                text = "No matching configs. Try another country, operator, or host."
+                text = when {
+                    query.isNotBlank() -> "No matching configs in ${locationFilterLabel(groups)}. Try another tab, country, operator, or host."
+                    selectedLocationGroupFilter == LOCATION_FILTER_MANUAL -> "No manual configs. Subscription configs are in their own tabs above."
+                    selectedLocationGroupFilter != LOCATION_FILTER_ALL -> "This subscription profile has no saved configs yet. Refresh it or paste the subscription again."
+                    else -> "No configs in this tab yet."
+                }
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             })
         }
-        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+
         val shownIds = mutableSetOf<String>()
         var shown = 0
         fun addUniqueSection(title: String, sectionProfiles: List<VpnProfile>) {
@@ -3206,43 +3223,88 @@ class MainActivity : Activity() {
             shown += addLocationSection(profileListContainer, title, limited, MAX_PROFILE_BUTTONS - shown)
         }
 
-        if (query.isNotBlank()) {
-            addUniqueSection("Search results", profiles.sortedWith(profileRankingComparator()))
-        } else {
-            addUniqueSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
-            addUniqueSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
-            if (subscriptionProfileIds.any { id -> allProfiles.any { it.id == id } }) {
-                profileListContainer.addView(TextView(this).apply {
-                    text = "Subscription configs are grouped in cards above, so large subscriptions do not flood this list."
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setTextColor(0xFF64748B.toInt())
-                    setPadding(dp(10), dp(10), dp(10), dp(4))
-                })
+        val rankedScoped = scopedProfiles.sortedWith(profileRankingComparator())
+        when (selectedLocationGroupFilter) {
+            LOCATION_FILTER_ALL -> {
+                if (query.isBlank()) {
+                    addUniqueSection("Recommended", rankedScoped.filter { it.lastTestSuccess == true }.take(MAX_RECOMMENDED_PROFILES))
+                    addUniqueSection("All configs", rankedScoped)
+                } else {
+                    addUniqueSection("Search results", rankedScoped)
+                }
             }
+            LOCATION_FILTER_MANUAL -> addUniqueSection(
+                if (query.isBlank()) "Manual configs" else "Manual results",
+                rankedScoped
+            )
+            else -> addUniqueSection(
+                "Subscription • ${locationFilterLabel(groups).shortUi(24)}",
+                rankedScoped
+            )
         }
-        if (profiles.size > shown && query.isNotBlank()) {
+
+        if (scopedProfiles.size > shown) {
             profileListContainer.addView(TextView(this).apply {
-                text = "Showing $shown of ${profiles.size}. Use search to narrow the list."
+                text = "Showing $shown of ${scopedProfiles.size} in ${locationFilterLabel(groups)}. Use search or another tab to narrow the list."
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
                 setPadding(dp(10), dp(10), dp(10), dp(4))
             })
         }
-        refreshSubscriptionGroupButtons()
         updateDashboardSummary()
     }
 
-    private fun refreshSubscriptionGroupButtons() {
+    private fun normalizeLocationGroupFilter(groups: List<SubscriptionGroup>) {
+        if (selectedLocationGroupFilter == LOCATION_FILTER_ALL || selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) return
+        if (groups.none { it.id == selectedLocationGroupFilter }) {
+            selectedLocationGroupFilter = LOCATION_FILTER_ALL
+        }
+    }
+
+    private fun profilesForLocationFilter(
+        profiles: List<VpnProfile>,
+        groups: List<SubscriptionGroup>
+    ): List<VpnProfile> {
+        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+        val profileById = profiles.associateBy { it.id }
+        return when (selectedLocationGroupFilter) {
+            LOCATION_FILTER_ALL -> profiles
+            LOCATION_FILTER_MANUAL -> profiles.filter { it.id !in subscriptionProfileIds }
+            else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
+                ?.profileIds
+                ?.mapNotNull { profileById[it] }
+                .orEmpty()
+        }
+    }
+
+    private fun locationFilterLabel(groups: List<SubscriptionGroup>): String = when (selectedLocationGroupFilter) {
+        LOCATION_FILTER_ALL -> "All"
+        LOCATION_FILTER_MANUAL -> "Manual"
+        else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
+            ?.displayName
+            ?.cleanProfileLabel()
+            ?.ifBlank { "Subscription" }
+            ?: "Subscription"
+    }
+
+    private fun refreshSubscriptionGroupButtons(
+        groups: List<SubscriptionGroup>,
+        allProfiles: List<VpnProfile>,
+        filteredProfiles: List<VpnProfile>
+    ) {
         if (!::subscriptionGroupContainer.isInitialized) return
         subscriptionGroupContainer.removeAllViews()
-        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        normalizeLocationGroupFilter(groups)
+        val allProfileIds = allProfiles.map { it.id }.toSet()
+        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+        val manualCount = allProfiles.count { it.id !in subscriptionProfileIds }
+        val filteredCount = profilesForLocationFilter(filteredProfiles, groups).size
         subscriptionGroupContainer.addView(TextView(this).apply {
             text = if (groups.isEmpty()) {
-                "Subscription profiles: use + to add one."
+                "Profile tabs: add subscriptions with +"
             } else {
-                "Subscription profiles  ${groups.size}"
+                "Profile tabs  ${groups.size} subscription${if (groups.size == 1) "" else "s"}"
             }
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
@@ -3254,102 +3316,160 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         })
-        if (groups.isEmpty()) return
-        groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).chunked(2).forEach { rowGroups ->
-            subscriptionGroupContainer.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
+        val tabRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(2), dp(4), dp(2), dp(4))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        tabRow.addView(locationFilterTab("All", allProfiles.size, selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
+            selectedLocationGroupFilter = LOCATION_FILTER_ALL
+            refreshProfileButtons(syncVerified = false)
+        })
+        if (manualCount > 0 || groups.isEmpty()) {
+            tabRow.addView(locationFilterTab("Manual", manualCount, selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
+                selectedLocationGroupFilter = LOCATION_FILTER_MANUAL
+                refreshProfileButtons(syncVerified = false)
+            })
+        }
+        groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
+            val groupCount = group.profileIds.count { it in allProfileIds }
+            tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
+                selectedLocationGroupFilter = group.id
+                refreshProfileButtons(syncVerified = false)
+            })
+        }
+        subscriptionGroupContainer.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(tabRow)
+        })
+        groups.firstOrNull { it.id == selectedLocationGroupFilter }?.let { group ->
+            subscriptionGroupContainer.addView(selectedSubscriptionGroupRow(group, filteredCount))
+        } ?: if (groups.isNotEmpty()) {
+            subscriptionGroupContainer.addView(TextView(this).apply {
+                text = "All shows a capped list. Tap a subscription tab to view only that profile queue."
+                textSize = 11.5f
                 gravity = Gravity.CENTER
-                layoutDirection = View.LAYOUT_DIRECTION_LTR
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                rowGroups.forEach { group ->
-                    addView(subscriptionGroupCard(group).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, dp(106), 1f).apply {
-                            setMargins(dp(3), dp(5), dp(3), dp(3))
-                        }
-                    })
-                }
-                if (rowGroups.size == 1) {
-                    addView(View(this@MainActivity).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, dp(1), 1f).apply {
-                            setMargins(dp(3), 0, dp(3), 0)
-                        }
-                    })
-                }
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(8), dp(4), dp(8), dp(2))
             })
         }
         if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
             subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} groups. Use search to find more configs."
+                text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
-                setPadding(dp(8), dp(6), dp(8), dp(2))
+                setPadding(dp(8), dp(4), dp(8), dp(2))
             })
         }
     }
 
-    private fun subscriptionGroupCard(group: SubscriptionGroup): LinearLayout = LinearLayout(this).apply {
-        val profiles = subscriptionProfiles(group)
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_VERTICAL
-        layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(dp(9), dp(8), dp(9), dp(8))
-        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
+    private fun locationFilterTab(
+        label: String,
+        count: Int,
+        selected: Boolean,
+        onClick: () -> Unit
+    ): TextView = TextView(this).apply {
+        text = "${label.shortUi(18)} ($count)"
+        textSize = 12.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        background = roundedBackground(
+            fillColor = if (selected) 0xFF2563EB.toInt() else 0xFFF8FAFC.toInt(),
+            strokeColor = if (selected) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
+            radiusDp = 18
+        )
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply {
+            setMargins(dp(3), 0, dp(3), 0)
+        }
         isClickable = true
         isFocusable = true
-        setOnClickListener { showSubscriptionGroupProfilesSheet(group) }
-        setOnLongClickListener {
-            refreshSubscriptionGroup(group)
-            true
-        }
-        addView(LinearLayout(this@MainActivity).apply {
+        setOnClickListener { onClick() }
+    }
+
+    private fun selectedSubscriptionGroupRow(group: SubscriptionGroup, visibleCount: Int): LinearLayout =
+        LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, dp(5), 0, dp(2))
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showSubscriptionGroupProfilesSheet(group) }
             addView(TextView(this@MainActivity).apply {
                 text = "▦"
-                textSize = 16f
+                textSize = 17f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
                 setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(0, 0, dp(6), 0) }
+                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { setMargins(0, 0, dp(8), 0) }
             })
-            addView(TextView(this@MainActivity).apply {
-                text = group.displayName.cleanProfileLabel().shortUi(18)
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF0F172A.toInt())
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = group.displayName.cleanProfileLabel().shortUi(28)
+                    textSize = 13.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF0F172A.toInt())
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = "$visibleCount visible • ${subscriptionGroupSubtitle(group).shortUi(44)}"
+                    textSize = 10.5f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(0xFF64748B.toInt())
+                })
             })
             addView(floatingTestButton(compact = true) {
+                val profiles = subscriptionProfiles(group)
                 showLatencyTestSheet(
                     anchorProfile = profiles.sortedWith(profileRankingComparator()).firstOrNull(),
                     candidates = profiles,
                     title = "Test ${group.displayName.shortUi(18)}"
                 )
             }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { setMargins(dp(4), 0, 0, 0) }
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(5), 0, dp(5), 0) }
             })
-        })
-        addView(TextView(this@MainActivity).apply {
-            text = "${profiles.size} configs"
-            textSize = 11f
-            setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(6), 0, 0)
-        })
-        addView(TextView(this@MainActivity).apply {
-            text = group.lastResult?.cleanProfileLabel()?.shortUi(32) ?: "Tap to open • hold to refresh"
-            textSize = 10.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF64748B.toInt())
-        })
-    }
+            addView(TextView(this@MainActivity).apply {
+                text = "↻"
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { refreshSubscriptionGroup(group) }
+            })
+        }
 
     private fun subscriptionProfiles(group: SubscriptionGroup): List<VpnProfile> =
         group.profileIds.mapNotNull { id -> profileStore.profile(id) }
@@ -3852,7 +3972,7 @@ class MainActivity : Activity() {
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val MAX_PROFILE_BUTTONS = 40
         const val MAX_PROFILE_SHEET_CHOICES = 40
-        const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 8
+        const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 20
         const val MAX_GROUP_PROFILE_PREVIEW = 16
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 12
@@ -3863,6 +3983,8 @@ class MainActivity : Activity() {
         const val LIVE_REFRESH_IDLE_MS = 6_000L
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
+        const val LOCATION_FILTER_ALL = "all"
+        const val LOCATION_FILTER_MANUAL = "manual"
     }
 }
 

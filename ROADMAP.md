@@ -554,6 +554,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish اسکرین‌شات بعدی: نمایش subscription groupها بالای Locations با rowهای compact، اولویت دادن sectionهای subscription قبل از manual configs در selector، و پاکسازی نام‌های provider که به‌صورت `\u....` یا escape خراب نمایش داده می‌شدند.
 - [x] بازخورد UI بعدی: حذف کارت Auto test از Home، اضافه‌کردن دکمه شناور تست کنار configها و در search/selector، جداکردن دو مسیر Ping test و Real latency test، و تبدیل subscriptionها به کارت‌های profile/group کنار هم با sheet محدود تا subscriptionهای بزرگ لیست اصلی را پر نکنند.
 - [x] hotfix کرش بعد از اضافه‌کردن subscription: حذف Regex مشکل‌دار `\u...` و سپس حذف کامل regex از مسیر cleanProfileLabel تا روی Android PatternSyntaxException ندهد.
+- [x] polish تفکیک subscription بعد از بازخورد: تبدیل کارت‌های subscription به tab bar شبیه کلاینت‌های V2Ray با All / Manual / هر subscription profile و نمایش لیست هر گروه به‌صورت جداگانه با شمارنده.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
