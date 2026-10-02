@@ -555,6 +555,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] بازخورد UI بعدی: حذف کارت Auto test از Home، اضافه‌کردن دکمه شناور تست کنار configها و در search/selector، جداکردن دو مسیر Ping test و Real latency test، و تبدیل subscriptionها به کارت‌های profile/group کنار هم با sheet محدود تا subscriptionهای بزرگ لیست اصلی را پر نکنند.
 - [x] hotfix کرش بعد از اضافه‌کردن subscription: حذف Regex مشکل‌دار `\u...` و سپس حذف کامل regex از مسیر cleanProfileLabel تا روی Android PatternSyntaxException ندهد.
 - [x] polish تفکیک subscription بعد از بازخورد: تبدیل کارت‌های subscription به tab bar شبیه کلاینت‌های V2Ray با All / Manual / هر subscription profile و نمایش لیست هر گروه به‌صورت جداگانه با شمارنده.
+- [x] polish subscription/test بعدی: افزودن refresh all برای همه subscription URLها در Locations، نگه‌داشتن refresh تکی برای گروه انتخاب‌شده، و تغییر semantics تست سریع از سبز/موفق کامل به Ping تا با verified connection اشتباه نشود؛ failure اتصال هم روی profile ذخیره می‌شود.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

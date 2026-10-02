@@ -129,6 +129,7 @@ class MainActivity : Activity() {
     private var selectedProfile: VpnProfile? = null
     private var activeConnectionProfileId: String? = null
     private var lastRecordedVerificationKey: String? = null
+    private var lastRecordedFailureKey: String? = null
     private lateinit var profileListContainer: LinearLayout
     private lateinit var subscriptionGroupContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
@@ -1616,6 +1617,7 @@ class MainActivity : Activity() {
         if (!::hubStatusTitle.isInitialized) return
         val hub = currentHubStatus()
         recordVerifiedProfileIfNeeded(hub)
+        recordConnectionFailureIfNeeded(hub)
         updateDashboardSummary()
         if (::advancedDiagnostics.isInitialized && advancedVisible && ::toolsSection.isInitialized && toolsSection.visibility == View.VISIBLE) {
             advancedDiagnostics.text = engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus)
@@ -1649,6 +1651,34 @@ class MainActivity : Activity() {
         }.getOrNull()
         if (updated != null) {
             lastRecordedVerificationKey = key
+            lastRecordedFailureKey = null
+            if (selectedProfileId == updated.id) selectedProfile = updated
+            activeConnectionProfileId = updated.id
+            if (refreshProfiles) refreshProfileButtons(syncVerified = false)
+        }
+    }
+
+    private fun recordConnectionFailureIfNeeded(
+        hub: com.vpnproject.app.engine.VpnHubStatus,
+        refreshProfiles: Boolean = true
+    ) {
+        if (hub.state != VpnHubConnectionState.FAILED) return
+        val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
+        val network = currentNetworkLabel()
+        val key = "$profileId:${hub.activeEngine}:${hub.title}:${hub.detail.shortUi(72)}:${network.orEmpty()}"
+        if (lastRecordedFailureKey == key) return
+        val updated = runCatching {
+            profileStore.markTested(
+                profileId = profileId,
+                testedAtEpochMs = System.currentTimeMillis(),
+                success = false,
+                network = network,
+                latencyMs = null,
+                score = null
+            )
+        }.getOrNull()
+        if (updated != null) {
+            lastRecordedFailureKey = key
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
@@ -2255,36 +2285,40 @@ class MainActivity : Activity() {
     }
 
     private fun profileStatusLabel(profile: VpnProfile): String = when {
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> "Fail"
         profile.id == selectedProfileId -> "Selected"
         profile.lastVerifiedEpochMs != null -> "Good"
-        profile.lastTestSuccess == true -> "Fast"
+        profile.lastTestSuccess == true -> "Ping"
         profile.favorite -> "Fav"
         profile.lastTestSuccess == false -> "Fail"
         else -> "New"
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
         profile.id == selectedProfileId -> 0xFFEFF6FF.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFFD1FAE5.toInt()
-        profile.lastTestSuccess == true -> 0xFFDCFCE7.toInt()
+        profile.lastTestSuccess == true -> 0xFFEFF6FF.toInt()
         profile.favorite -> 0xFFFEF3C7.toInt()
         profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
         else -> 0xFFF1F5F9.toInt()
     }
 
     private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
         profile.id == selectedProfileId -> 0xFF93C5FD.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF6EE7B7.toInt()
-        profile.lastTestSuccess == true -> 0xFF86EFAC.toInt()
+        profile.lastTestSuccess == true -> 0xFFBFDBFE.toInt()
         profile.favorite -> 0xFFFCD34D.toInt()
         profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
         else -> 0xFFE2E8F0.toInt()
     }
 
     private fun profileStatusTextColor(profile: VpnProfile): Int = when {
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
         profile.id == selectedProfileId -> 0xFF2563EB.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF047857.toInt()
-        profile.lastTestSuccess == true -> 0xFF15803D.toInt()
+        profile.lastTestSuccess == true -> 0xFF1D4ED8.toInt()
         profile.favorite -> 0xFF92400E.toInt()
         profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
         else -> 0xFF64748B.toInt()
@@ -2580,6 +2614,7 @@ class MainActivity : Activity() {
         status.text = "Disconnect requested for active engines."
         activeConnectionProfileId = null
         lastRecordedVerificationKey = null
+        lastRecordedFailureKey = null
         hubStatusTitle.text = "Disconnecting"
         hubStatusDetail.text = "Stopping WireGuard and Xray engines."
         primaryActionButton.setActive(false)
@@ -2597,6 +2632,7 @@ class MainActivity : Activity() {
         val xray = XrayVpnService.lastStatus
         val hub = currentHubStatus()
         recordVerifiedProfileIfNeeded(hub)
+        recordConnectionFailureIfNeeded(hub)
         updateDashboardSummary()
         status.text = "Latest status: ${hub.title}. Verified: ${if (hub.verified) "yes" else "no"}."
         if (::settingsConnectionSummaryText.isInitialized) {
@@ -2749,6 +2785,54 @@ class MainActivity : Activity() {
             return
         }
         addOrRefreshSubscriptionGroup(group.displayName, url, existingGroup = group)
+    }
+
+    private fun refreshAllSubscriptionGroups() {
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        if (groups.isEmpty()) {
+            status.text = "No subscription links to refresh. Use + to add one."
+            return
+        }
+        val refreshable = groups.mapNotNull { group ->
+            profileStore.loadSubscriptionUrl(group.id)?.takeIf { it.isNotBlank() }?.let { url -> group to url }
+        }
+        if (refreshable.isEmpty()) {
+            status.text = "These subscription profiles came from clipboard text and have no saved refresh URL. Copy the subscription again and use Paste from clipboard."
+            return
+        }
+        status.text = "Refreshing ${refreshable.size} subscription link${if (refreshable.size == 1) "" else "s"}..."
+        Thread {
+            val synced = mutableListOf<SubscriptionSyncResult>()
+            val failures = mutableListOf<String>()
+            refreshable.forEach { (group, url) ->
+                runCatching { syncSubscriptionGroupBlocking(group.displayName, url, existingGroup = group) }
+                    .onSuccess { synced += it }
+                    .onFailure { error -> failures += "${group.displayName.shortUi(18)}: ${error.message ?: error.javaClass.simpleName}" }
+            }
+            runOnUiThread {
+                synced.lastOrNull()?.group?.let { group ->
+                    if (selectedLocationGroupFilter != LOCATION_FILTER_ALL && selectedLocationGroupFilter != LOCATION_FILTER_MANUAL) {
+                        selectedLocationGroupFilter = group.id
+                    }
+                }
+                refreshProfileButtons()
+                updateDashboardSummary()
+                val saved = synced.sumOf { it.profiles.size }
+                val skippedClipboard = groups.size - refreshable.size
+                status.text = buildString {
+                    append("Refreshed ${synced.size}/${refreshable.size} subscription link")
+                    append(if (refreshable.size == 1) "" else "s")
+                    append(" • $saved profiles saved")
+                    if (skippedClipboard > 0) append(" • $skippedClipboard clipboard-only skipped")
+                    if (failures.isNotEmpty()) append(" • ${failures.size} failed")
+                }
+                if (failures.isNotEmpty() && ::advancedDiagnostics.isInitialized) {
+                    advancedDiagnostics.text = "Subscription refresh failures:
+" + failures.joinToString("
+")
+                }
+            }
+        }.start()
     }
 
     private fun addOrRefreshSubscriptionGroup(
@@ -3300,21 +3384,42 @@ class MainActivity : Activity() {
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         val manualCount = allProfiles.count { it.id !in subscriptionProfileIds }
         val filteredCount = profilesForLocationFilter(filteredProfiles, groups).size
-        subscriptionGroupContainer.addView(TextView(this).apply {
-            text = if (groups.isEmpty()) {
-                "Profile tabs: add subscriptions with +"
-            } else {
-                "Profile tabs  ${groups.size} subscription${if (groups.size == 1) "" else "s"}"
-            }
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
+        subscriptionGroupContainer.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setTextColor(0xFF64748B.toInt())
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(0, dp(6), 0, dp(2))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
+            addView(TextView(this@MainActivity).apply {
+                text = if (groups.isEmpty()) {
+                    "Profile tabs: add subscriptions with +"
+                } else {
+                    "Profile tabs  ${groups.size} subscription${if (groups.size == 1) "" else "s"}"
+                }
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER_VERTICAL
+                setTextColor(0xFF64748B.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            if (groups.isNotEmpty()) {
+                addView(TextView(this@MainActivity).apply {
+                    text = "↻ All"
+                    textSize = 11.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF2563EB.toInt())
+                    background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30))
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { refreshAllSubscriptionGroups() }
+                })
+            }
         })
         val tabRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
