@@ -3717,15 +3717,47 @@ class MainActivity : Activity() {
     }
 
     private fun String.cleanProfileLabel(): String {
-        val unicodeDecoded = Regex("\\u([0-9a-fA-F]{4})").replace(this) { match ->
-            match.groupValues[1].toInt(16).toChar().toString()
+        val decoded = StringBuilder(length)
+        var index = 0
+        while (index < length) {
+            val current = this[index]
+            if (current == '\\' && index + 1 < length) {
+                when (this[index + 1]) {
+                    'u' -> {
+                        val hexStart = index + 2
+                        val hexEnd = hexStart + 4
+                        if (hexEnd <= length) {
+                            val hex = substring(hexStart, hexEnd)
+                            if (hex.all { Character.digit(it, 16) >= 0 }) {
+                                decoded.append(hex.toInt(16).toChar())
+                                index = hexEnd
+                                continue
+                            }
+                        }
+                        var skip = hexStart
+                        while (skip < length && skip < hexStart + 4 && Character.digit(this[skip], 16) >= 0) skip++
+                        index = skip
+                        continue
+                    }
+                    'n', 'r', 't' -> {
+                        decoded.append(' ')
+                        index += 2
+                        continue
+                    }
+                    '\\' -> {
+                        index++
+                        continue
+                    }
+                    else -> {
+                        index++
+                        continue
+                    }
+                }
+            }
+            decoded.append(if (current.isISOControl()) ' ' else current)
+            index++
         }
-        return unicodeDecoded
-            .replace("\\n", " ")
-            .replace("\\t", " ")
-            .replace(Regex("\\u[0-9a-fA-F]{0,3}"), "")
-            .replace(Regex("[\u0000-\u001F]"), " ")
-            .replace(Regex("\\+"), "")
+        return decoded.toString()
             .replace(Regex("\\s+"), " ")
             .trim()
     }
