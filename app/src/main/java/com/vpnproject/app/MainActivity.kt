@@ -3352,9 +3352,10 @@ class MainActivity : Activity() {
             )
             addView(tabRow)
         })
-        groups.firstOrNull { it.id == selectedLocationGroupFilter }?.let { group ->
-            subscriptionGroupContainer.addView(selectedSubscriptionGroupRow(group, filteredCount))
-        } ?: if (groups.isNotEmpty()) {
+        val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
+        if (activeGroup != null) {
+            subscriptionGroupContainer.addView(selectedSubscriptionGroupRow(activeGroup, filteredCount))
+        } else if (groups.isNotEmpty()) {
             subscriptionGroupContainer.addView(TextView(this).apply {
                 text = "All shows a capped list. Tap a subscription tab to view only that profile queue."
                 textSize = 11.5f
