@@ -2827,9 +2827,7 @@ class MainActivity : Activity() {
                     if (failures.isNotEmpty()) append(" • ${failures.size} failed")
                 }
                 if (failures.isNotEmpty() && ::advancedDiagnostics.isInitialized) {
-                    advancedDiagnostics.text = "Subscription refresh failures:
-" + failures.joinToString("
-")
+                    advancedDiagnostics.text = "Subscription refresh failures:\n" + failures.joinToString("\n")
                 }
             }
         }.start()
