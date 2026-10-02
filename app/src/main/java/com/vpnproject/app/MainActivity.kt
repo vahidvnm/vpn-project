@@ -2775,7 +2775,7 @@ class MainActivity : Activity() {
 
     private fun looksLikeSubscriptionUrl(text: String): Boolean {
         val candidate = text.trim()
-        if (candidate.contains(Regex("\s"))) return false
+        if (candidate.contains(Regex("\\s"))) return false
         return runCatching {
             val parsed = URL(candidate)
             parsed.protocol.equals("https", ignoreCase = true) || parsed.protocol.equals("http", ignoreCase = true)
@@ -2794,7 +2794,7 @@ class MainActivity : Activity() {
         val normalized = text.trim()
         return listOf("vless://", "vmess://", "trojan://", "ss://").any { prefix ->
             normalized.startsWith(prefix, ignoreCase = true)
-        } && !normalized.contains(Regex("\s"))
+        } && !normalized.contains(Regex("\\s"))
     }
 
     private fun importConfigText(text: String, name: String?) {
