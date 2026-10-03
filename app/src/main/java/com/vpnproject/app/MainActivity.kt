@@ -76,6 +76,10 @@ import com.vpnproject.app.vpn.XrayVpnService
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -99,6 +103,7 @@ class MainActivity : Activity() {
     private var autoTestInFlight = false
     private lateinit var favoriteActionButton: Button
     private lateinit var locationSearchInput: EditText
+    private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
     private lateinit var navHomeButton: Button
@@ -211,6 +216,24 @@ class MainActivity : Activity() {
         }
         profileCard.addView(selectedProfileText)
         profileCard.addView(createLocationSearchCard())
+        locationTestStatusText = TextView(this).apply {
+            text = ""
+            textSize = 11.5f
+            gravity = Gravity.CENTER
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 0, 0, dp(4))
+            }
+        }
+        profileCard.addView(locationTestStatusText)
         subscriptionGroupContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -883,9 +906,18 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun setActionStatus(message: String) {
+        if (::locationTestStatusText.isInitialized) {
+            locationTestStatusText.text = message.shortUi(110)
+            locationTestStatusText.visibility = View.VISIBLE
+        }
+        status.text = message
+        status.visibility = View.VISIBLE
+    }
+
     private fun setAutoTestStatus(message: String) {
         if (::autoTestStatusText.isInitialized) autoTestStatusText.text = message.shortUi(88)
-        status.text = message
+        setActionStatus(message)
     }
 
     private fun refreshAutoTestSummary() {
@@ -1011,60 +1043,62 @@ class MainActivity : Activity() {
         setAutoTestStatus("Ping testing ${rankedInput.size} ${scopeLabel.shortUi(32)}...")
         val network = currentNetworkLabel()
         Thread {
-            val results = mutableListOf<ProfileProbeResult>()
-            rankedInput.forEachIndexed { index, profile ->
-                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) {
-                    mainHandler.post {
-                        autoTestInFlight = false
-                        setAutoTestStatus("Ping ranking paused while VPN is running")
-                        refreshAutoTestSummary()
-                    }
-                    return@Thread
-                }
-                mainHandler.post {
-                    if (autoTestInFlight) {
-                        setAutoTestStatus("Ping ${index + 1}/${rankedInput.size}: ${compactProfileTitle(profile)}")
-                    }
-                }
-                val config = loadProfileConfigQuiet(profile)
-                val summary = if (config == null) {
-                    ConfigProbeSummary(
-                        report = "Could not decrypt or parse ${profile.displayName}.",
-                        okCount = 0,
-                        failedCount = 1,
-                        bestLatencyMs = null,
-                        bestScore = null,
-                        checkedAtEpochMs = System.currentTimeMillis()
-                    )
-                } else {
-                    runCatching { probeConfigSummary(config) }.getOrElse { error ->
-                        ConfigProbeSummary(
-                            report = "Resolve/probe failed for ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}",
-                            okCount = 0,
-                            failedCount = 1,
-                            bestLatencyMs = null,
-                            bestScore = null,
-                            checkedAtEpochMs = System.currentTimeMillis()
-                        )
+            val total = rankedInput.size
+            val results = Collections.synchronizedList(mutableListOf<ProfileProbeResult>())
+            val started = AtomicInteger(0)
+            val finished = AtomicInteger(0)
+            val workerCount = minOf(MAX_PARALLEL_PING_TESTS, total).coerceAtLeast(1)
+            val executor = Executors.newFixedThreadPool(workerCount)
+            val latch = CountDownLatch(total)
+
+            rankedInput.forEach { profile ->
+                executor.execute {
+                    try {
+                        if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) return@execute
+                        val startedIndex = started.incrementAndGet()
+                        mainHandler.post {
+                            if (autoTestInFlight) {
+                                setAutoTestStatus("Ping ${finished.get()}/$total • testing $startedIndex/$total: ${compactProfileTitle(profile)}")
+                            }
+                        }
+                        val result = probeProfileForRanking(profile, network)
+                        results.add(result)
+                        val done = finished.incrementAndGet()
+                        val state = if (result.summary.reachable) {
+                            result.summary.bestLatencyMs?.let { "OK ${it}ms" } ?: "OK"
+                        } else {
+                            "failed"
+                        }
+                        mainHandler.post {
+                            if (autoTestInFlight) {
+                                setAutoTestStatus("Ping $done/$total: ${compactProfileTitle(profile)} • $state")
+                            }
+                        }
+                    } finally {
+                        latch.countDown()
                     }
                 }
-                val updatedProfile = runCatching {
-                    profileStore.markTested(
-                        profileId = profile.id,
-                        testedAtEpochMs = summary.checkedAtEpochMs,
-                        success = summary.reachable,
-                        network = network,
-                        latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore
-                    )
-                }.getOrNull() ?: profile
-                results += ProfileProbeResult(updatedProfile, config, summary)
             }
-            val best = results.filter { it.summary.reachable }
+
+            latch.await()
+            executor.shutdownNow()
+
+            if (!autoTestInFlight) return@Thread
+            if (autoTestsShouldPauseForLiveVpn()) {
+                mainHandler.post {
+                    autoTestInFlight = false
+                    setAutoTestStatus("Ping ranking paused while VPN is running")
+                    refreshAutoTestSummary()
+                }
+                return@Thread
+            }
+
+            val resultSnapshot = synchronized(results) { results.toList() }
+            val best = resultSnapshot.filter { it.summary.reachable }
                 .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
                     .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE }
                     .thenByDescending { it.profile.favorite })
-            val report = buildAutoRankingReport(results, best, reason)
+            val report = buildAutoRankingReport(resultSnapshot, best, reason)
             val message = when {
                 best != null && autoSelect -> "Best ping selected: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
                 best != null -> "Best ping: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
@@ -1080,6 +1114,42 @@ class MainActivity : Activity() {
                 if (best != null && autoSelect) showSection(AppSection.HOME)
             }
         }.start()
+    }
+
+    private fun probeProfileForRanking(profile: VpnProfile, network: String?): ProfileProbeResult {
+        val config = loadProfileConfigQuiet(profile)
+        val summary = if (config == null) {
+            ConfigProbeSummary(
+                report = "Could not decrypt or parse ${profile.displayName}.",
+                okCount = 0,
+                failedCount = 1,
+                bestLatencyMs = null,
+                bestScore = null,
+                checkedAtEpochMs = System.currentTimeMillis()
+            )
+        } else {
+            runCatching { probeConfigSummary(config) }.getOrElse { error ->
+                ConfigProbeSummary(
+                    report = "Resolve/probe failed for ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}",
+                    okCount = 0,
+                    failedCount = 1,
+                    bestLatencyMs = null,
+                    bestScore = null,
+                    checkedAtEpochMs = System.currentTimeMillis()
+                )
+            }
+        }
+        val updatedProfile = runCatching {
+            profileStore.markTested(
+                profileId = profile.id,
+                testedAtEpochMs = summary.checkedAtEpochMs,
+                success = summary.reachable,
+                network = network,
+                latencyMs = summary.bestLatencyMs,
+                score = summary.bestScore
+            )
+        }.getOrNull() ?: profile
+        return ProfileProbeResult(updatedProfile, config, summary)
     }
 
     private fun probeConfigSummary(config: ImportedConfig): ConfigProbeSummary {
@@ -1326,10 +1396,12 @@ class MainActivity : Activity() {
         }
         addView(locationSearchInput)
         addView(floatingTestButton(compact = true) {
-            showLatencyTestSheet(
-                anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
-                candidates = currentVisibleProfilesForTesting(),
-                title = "Test visible configs"
+            val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+            rankProfilesAndSelectBest(
+                inputProfiles = currentVisibleProfilesForTesting(),
+                reason = "locations floating test",
+                autoSelect = true,
+                scopeLabel = "${locationFilterLabel(groups)} configs"
             )
         }.apply {
             layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
@@ -2019,13 +2091,13 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 loadProfile(profile)
             })
-            addView(bottomSheetActionRow("◷", "Test latency", "Choose ping or real VPN latency") {
+            addView(bottomSheetActionRow("◷", "Ping test", "Quick endpoint test without connecting VPN") {
                 dialog.dismiss()
-                showLatencyTestSheet(
-                    anchorProfile = profile,
-                    candidates = listOf(profile),
-                    title = "Test ${compactProfileTitle(profile).shortUi(18)}"
-                )
+                runPingTestForProfile(profile)
+            })
+            addView(bottomSheetActionRow("✓", "Real latency", "Connect VPN and verify the true tunnel") {
+                dialog.dismiss()
+                runRealLatencyTestForProfile(profile)
             })
             addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
                 dialog.dismiss()
@@ -2245,11 +2317,7 @@ class MainActivity : Activity() {
                 }
             })
             addView(floatingTestButton(compact = true) {
-                showLatencyTestSheet(
-                    anchorProfile = profile,
-                    candidates = listOf(profile),
-                    title = "Test ${compactProfileTitle(profile).shortUi(18)}"
-                )
+                runPingTestForProfile(profile)
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply {
                     setMargins(dp(2), 0, dp(2), 0)
@@ -2766,7 +2834,7 @@ class MainActivity : Activity() {
                 val url = urlInput.text?.toString().orEmpty().trim()
                 val name = nameInput.text?.toString().orEmpty().trim().ifBlank { "Subscription" }
                 if (url.isBlank()) {
-                    status.text = "Subscription URL is empty."
+                    setActionStatus("Subscription URL is empty.")
                     return@bottomSheetActionRow
                 }
                 dialog.dismiss()
@@ -2781,7 +2849,7 @@ class MainActivity : Activity() {
     private fun refreshSubscriptionGroup(group: SubscriptionGroup) {
         val url = profileStore.loadSubscriptionUrl(group.id)
         if (url.isNullOrBlank()) {
-            status.text = "${group.displayName} was imported from clipboard and has no refresh URL. Copy the subscription again and use Paste from clipboard to refresh it."
+            setActionStatus("${group.displayName} was imported from clipboard and has no refresh URL. Copy the subscription again and use Paste from clipboard to refresh it.")
             return
         }
         addOrRefreshSubscriptionGroup(group.displayName, url, existingGroup = group)
@@ -2790,17 +2858,17 @@ class MainActivity : Activity() {
     private fun refreshAllSubscriptionGroups() {
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         if (groups.isEmpty()) {
-            status.text = "No subscription links to refresh. Use + to add one."
+            setActionStatus("No subscription links to refresh. Use + to add one.")
             return
         }
         val refreshable = groups.mapNotNull { group ->
             profileStore.loadSubscriptionUrl(group.id)?.takeIf { it.isNotBlank() }?.let { url -> group to url }
         }
         if (refreshable.isEmpty()) {
-            status.text = "These subscription profiles came from clipboard text and have no saved refresh URL. Copy the subscription again and use Paste from clipboard."
+            setActionStatus("These subscription profiles came from clipboard text and have no saved refresh URL. Copy the subscription again and use Paste from clipboard.")
             return
         }
-        status.text = "Refreshing ${refreshable.size} subscription link${if (refreshable.size == 1) "" else "s"}..."
+        setActionStatus("Refreshing ${refreshable.size} subscription link${if (refreshable.size == 1) "" else "s"}...")
         Thread {
             val synced = mutableListOf<SubscriptionSyncResult>()
             val failures = mutableListOf<String>()
@@ -2819,13 +2887,13 @@ class MainActivity : Activity() {
                 updateDashboardSummary()
                 val saved = synced.sumOf { it.profiles.size }
                 val skippedClipboard = groups.size - refreshable.size
-                status.text = buildString {
+                setActionStatus(buildString {
                     append("Refreshed ${synced.size}/${refreshable.size} subscription link")
                     append(if (refreshable.size == 1) "" else "s")
                     append(" • $saved profiles saved")
                     if (skippedClipboard > 0) append(" • $skippedClipboard clipboard-only skipped")
                     if (failures.isNotEmpty()) append(" • ${failures.size} failed")
-                }
+                })
                 if (failures.isNotEmpty() && ::advancedDiagnostics.isInitialized) {
                     advancedDiagnostics.text = "Subscription refresh failures:\n" + failures.joinToString("\n")
                 }
@@ -2839,10 +2907,10 @@ class MainActivity : Activity() {
         existingGroup: SubscriptionGroup?
     ) {
         if (url.isBlank()) {
-            status.text = "Subscription URL is empty."
+            setActionStatus("Subscription URL is empty.")
             return
         }
-        status.text = "Fetching subscription group ${name.shortUi(28)}..."
+        setActionStatus("Fetching subscription group ${name.shortUi(28)}...")
         Thread {
             val result = runCatching { syncSubscriptionGroupBlocking(name, url, existingGroup) }
             runOnUiThread {
@@ -2856,13 +2924,13 @@ class MainActivity : Activity() {
                         }
                         refreshProfileButtons()
                         updateDashboardSummary()
-                        status.text = "Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
-                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
+                        setActionStatus("Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
+                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
                         showSection(AppSection.PROFILES)
                         maybeAutoRankBestProfile("subscription")
                     },
                     onFailure = { error ->
-                        status.text = "Subscription sync failed: ${error.message ?: error.javaClass.simpleName}"
+                        setActionStatus("Subscription sync failed: ${error.message ?: error.javaClass.simpleName}")
                         refreshProfileButtons()
                     }
                 )
@@ -2871,7 +2939,7 @@ class MainActivity : Activity() {
     }
 
     private fun addClipboardSubscriptionGroup(name: String, subscriptionText: String) {
-        status.text = "Importing subscription from clipboard..."
+        setActionStatus("Importing subscription from clipboard...")
         Thread {
             val result = runCatching { syncClipboardSubscriptionGroupBlocking(name, subscriptionText) }
             runOnUiThread {
@@ -2885,13 +2953,13 @@ class MainActivity : Activity() {
                         }
                         refreshProfileButtons()
                         updateDashboardSummary()
-                        status.text = "Clipboard subscription ${sync.group.displayName.shortUi(28)} imported: ${sync.profiles.size} profiles saved" +
-                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else "."
+                        setActionStatus("Clipboard subscription ${sync.group.displayName.shortUi(28)} imported: ${sync.profiles.size} profiles saved" +
+                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
                         showSection(AppSection.PROFILES)
                         maybeAutoRankBestProfile("clipboard subscription")
                     },
                     onFailure = { error ->
-                        status.text = "Clipboard subscription import failed: ${error.message ?: error.javaClass.simpleName}"
+                        setActionStatus("Clipboard subscription import failed: ${error.message ?: error.javaClass.simpleName}")
                         refreshProfileButtons()
                     }
                 )
@@ -3403,21 +3471,6 @@ class MainActivity : Activity() {
                 setTextColor(0xFF64748B.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            if (groups.isNotEmpty()) {
-                addView(TextView(this@MainActivity).apply {
-                    text = "↻ All"
-                    textSize = 11.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setTextColor(0xFF2563EB.toInt())
-                    background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
-                    setPadding(dp(10), dp(5), dp(10), dp(5))
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30))
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener { refreshAllSubscriptionGroups() }
-                })
-            }
         })
         val tabRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -3433,6 +3486,9 @@ class MainActivity : Activity() {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
             refreshProfileButtons(syncVerified = false)
         })
+        if (groups.isNotEmpty()) {
+            tabRow.addView(locationRefreshTab("↻", "Refresh all subscriptions") { refreshAllSubscriptionGroups() })
+        }
         if (manualCount > 0 || groups.isEmpty()) {
             tabRow.addView(locationFilterTab("Manual", manualCount, selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
                 selectedLocationGroupFilter = LOCATION_FILTER_MANUAL
@@ -3444,6 +3500,9 @@ class MainActivity : Activity() {
             tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
                 selectedLocationGroupFilter = group.id
                 refreshProfileButtons(syncVerified = false)
+            })
+            tabRow.addView(locationRefreshTab("↻", "Refresh ${group.displayName.cleanProfileLabel().shortUi(24)}") {
+                refreshSubscriptionGroup(group)
             })
         }
         subscriptionGroupContainer.addView(HorizontalScrollView(this).apply {
@@ -3460,7 +3519,7 @@ class MainActivity : Activity() {
             subscriptionGroupContainer.addView(selectedSubscriptionGroupRow(activeGroup, filteredCount))
         } else if (groups.isNotEmpty()) {
             subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "All shows a capped list. Tap a subscription tab to view only that profile queue."
+                text = "↻ beside All refreshes all subscriptions. ↻ beside each tab refreshes that subscription."
                 textSize = 11.5f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
@@ -3502,6 +3561,28 @@ class MainActivity : Activity() {
         }
         isClickable = true
         isFocusable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun locationRefreshTab(
+        label: String,
+        description: String,
+        onClick: () -> Unit
+    ): TextView = TextView(this).apply {
+        text = label
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 1
+        includeFontPadding = false
+        setTextColor(0xFF2563EB.toInt())
+        background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+        layoutParams = LinearLayout.LayoutParams(dp(32), dp(38)).apply {
+            setMargins(0, 0, dp(6), 0)
+        }
+        isClickable = true
+        isFocusable = true
+        contentDescription = description
         setOnClickListener { onClick() }
     }
 
@@ -3552,10 +3633,11 @@ class MainActivity : Activity() {
             })
             addView(floatingTestButton(compact = true) {
                 val profiles = subscriptionProfiles(group)
-                showLatencyTestSheet(
-                    anchorProfile = profiles.sortedWith(profileRankingComparator()).firstOrNull(),
-                    candidates = profiles,
-                    title = "Test ${group.displayName.shortUi(18)}"
+                rankProfilesAndSelectBest(
+                    inputProfiles = profiles,
+                    reason = "subscription ${group.displayName}",
+                    autoSelect = true,
+                    scopeLabel = group.displayName.cleanProfileLabel().shortUi(24)
                 )
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(5), 0, dp(5), 0) }
@@ -3584,12 +3666,13 @@ class MainActivity : Activity() {
             title = group.displayName.cleanProfileLabel().shortUi(32),
             subtitle = "${profiles.size} configs in this subscription profile"
         ) { dialog ->
-            addView(bottomSheetActionRow("◷", "Test this subscription", "Ping-rank the best ${profiles.take(MAX_AUTO_RANK_PROFILES).size} configs") {
+            addView(bottomSheetActionRow("◷", "Test this subscription", "Ping-rank up to ${profiles.take(MAX_AUTO_RANK_PROFILES).size} configs now") {
                 dialog.dismiss()
-                showLatencyTestSheet(
-                    anchorProfile = profiles.firstOrNull(),
-                    candidates = profiles,
-                    title = "Test ${group.displayName.shortUi(18)}"
+                rankProfilesAndSelectBest(
+                    inputProfiles = profiles,
+                    reason = "subscription sheet ${group.displayName}",
+                    autoSelect = true,
+                    scopeLabel = group.displayName.cleanProfileLabel().shortUi(24)
                 )
             })
             addView(bottomSheetActionRow("↻", "Refresh subscription", subscriptionGroupSubtitle(group)) {
@@ -4079,7 +4162,8 @@ class MainActivity : Activity() {
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 20
         const val MAX_GROUP_PROFILE_PREVIEW = 16
         const val MAX_RECOMMENDED_PROFILES = 5
-        const val MAX_AUTO_RANK_PROFILES = 12
+        const val MAX_AUTO_RANK_PROFILES = 36
+        const val MAX_PARALLEL_PING_TESTS = 6
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000

@@ -556,6 +556,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] hotfix کرش بعد از اضافه‌کردن subscription: حذف Regex مشکل‌دار `\u...` و سپس حذف کامل regex از مسیر cleanProfileLabel تا روی Android PatternSyntaxException ندهد.
 - [x] polish تفکیک subscription بعد از بازخورد: تبدیل کارت‌های subscription به tab bar شبیه کلاینت‌های V2Ray با All / Manual / هر subscription profile و نمایش لیست هر گروه به‌صورت جداگانه با شمارنده.
 - [x] polish subscription/test بعدی: افزودن refresh all برای همه subscription URLها در Locations، نگه‌داشتن refresh تکی برای گروه انتخاب‌شده، و تغییر semantics تست سریع از سبز/موفق کامل به Ping تا با verified connection اشتباه نشود؛ failure اتصال هم روی profile ذخیره می‌شود.
+- [x] polish بازخورد بعدی تست/refresh: انتقال refresh به chip کنار All و کنار هر subscription tab، مستقیم‌کردن دکمه‌های تست لیست/سابسکریپشن به ping-rank، نمایش status تست داخل Locations، و موازی‌کردن ping-rank با سقف ۳۶ config و ۶ worker تا صف‌های بزرگ فقط یکی‌دو مورد را کند و مبهم تست نکنند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
