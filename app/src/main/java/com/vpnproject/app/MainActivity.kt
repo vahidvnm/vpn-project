@@ -793,17 +793,6 @@ class MainActivity : Activity() {
                 addView(homeProfileNameText)
                 addView(homeProfileMetaText)
             })
-            addView(floatingTestButton(compact = true) {
-                showLatencyTestSheet(
-                    anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
-                    candidates = currentVisibleProfilesForTesting(),
-                    title = "Test selected config"
-                )
-            }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(36), dp(40)).apply {
-                    setMargins(dp(4), 0, dp(4), 0)
-                }
-            })
             addView(TextView(this@MainActivity).apply {
                 text = "⌄"
                 textSize = 24f
@@ -1205,14 +1194,30 @@ class MainActivity : Activity() {
         return runCatching { ConfigImporter.parse(raw, profile.name) }.getOrNull()
     }
 
+    private fun activeLocationProfiles(
+        storedProfiles: List<VpnProfile>,
+        groups: List<SubscriptionGroup>
+    ): List<VpnProfile> {
+        if (groups.isEmpty()) {
+            return storedProfiles.filterNot { it.id.startsWith(SUBSCRIPTION_PROFILE_PREFIX) }
+        }
+        val byId = storedProfiles.associateBy { it.id }
+        return groups
+            .flatMap { group -> group.profileIds.mapNotNull { id -> byId[id] } }
+            .distinctBy { it.id }
+    }
+
     private fun currentVisibleProfilesForTesting(limit: Int = MAX_AUTO_RANK_PROFILES): List<VpnProfile> {
-        val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val allProfiles = activeLocationProfiles(storedProfiles, groups)
         normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
         val scoped = profilesForLocationFilter(filtered, groups)
-        val anchor = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
+        val activeIds = allProfiles.map { it.id }.toSet()
+        val anchor = selectedProfile?.takeIf { it.id in activeIds }
+            ?: runCatching { profileStore.latestProfile() }.getOrNull()?.takeIf { it.id in activeIds }
         return (listOfNotNull(anchor) + scoped)
             .distinctBy { it.id }
             .sortedWith(profileRankingComparator())
@@ -1395,19 +1400,6 @@ class MainActivity : Activity() {
             })
         }
         addView(locationSearchInput)
-        addView(floatingTestButton(compact = true) {
-            val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-            rankProfilesAndSelectBest(
-                inputProfiles = currentVisibleProfilesForTesting(),
-                reason = "locations floating test",
-                autoSelect = true,
-                scopeLabel = "${locationFilterLabel(groups)} configs"
-            )
-        }.apply {
-            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
-                setMargins(dp(4), 0, dp(4), 0)
-            }
-        })
         addView(TextView(this@MainActivity).apply {
             text = "×"
             textSize = 20f
@@ -2091,14 +2083,6 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 loadProfile(profile)
             })
-            addView(bottomSheetActionRow("◷", "Ping test", "Quick endpoint test without connecting VPN") {
-                dialog.dismiss()
-                runPingTestForProfile(profile)
-            })
-            addView(bottomSheetActionRow("✓", "Real latency", "Connect VPN and verify the true tunnel") {
-                dialog.dismiss()
-                runRealLatencyTestForProfile(profile)
-            })
             addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
                 dialog.dismiss()
                 promptRenameSelectedProfile()
@@ -2314,13 +2298,6 @@ class MainActivity : Activity() {
                 setPadding(dp(7), dp(4), dp(7), dp(4))
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                     setMargins(dp(6), 0, dp(4), 0)
-                }
-            })
-            addView(floatingTestButton(compact = true) {
-                runPingTestForProfile(profile)
-            }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply {
-                    setMargins(dp(2), 0, dp(2), 0)
                 }
             })
             addView(TextView(this@MainActivity).apply {
@@ -3011,10 +2988,14 @@ class MainActivity : Activity() {
             throw ConfigParseException("Subscription was read, but none of its links could be imported.")
         }
 
+        val savedProfileIds = savedProfiles.map { it.id }
+        val savedProfileIdSet = savedProfileIds.toSet()
+        val staleProfileIds = storedGroup.profileIds.filterNot { it in savedProfileIdSet }
+        staleProfileIds.forEach { staleId -> runCatching { profileStore.deleteProfile(staleId) } }
         val resultText = "$resultVerb ${savedProfiles.size}/${links.size} profiles"
         val updatedGroup = profileStore.markSubscriptionSynced(
             groupId = storedGroup.id,
-            profileIds = savedProfiles.map { it.id },
+            profileIds = savedProfileIds,
             result = resultText
         ) ?: storedGroup
         return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped)
@@ -3327,8 +3308,9 @@ class MainActivity : Activity() {
         if (!::profileListContainer.isInitialized) return
         if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
         profileListContainer.removeAllViews()
-        val allProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val allProfiles = activeLocationProfiles(storedProfiles, groups)
         normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val profiles = allProfiles.filter { matchesLocationSearch(it, query) }
@@ -3406,7 +3388,11 @@ class MainActivity : Activity() {
     }
 
     private fun normalizeLocationGroupFilter(groups: List<SubscriptionGroup>) {
-        if (selectedLocationGroupFilter == LOCATION_FILTER_ALL || selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) return
+        if (selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
+            selectedLocationGroupFilter = LOCATION_FILTER_ALL
+            return
+        }
+        if (selectedLocationGroupFilter == LOCATION_FILTER_ALL) return
         if (groups.none { it.id == selectedLocationGroupFilter }) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
         }
@@ -3419,8 +3405,8 @@ class MainActivity : Activity() {
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         val profileById = profiles.associateBy { it.id }
         return when (selectedLocationGroupFilter) {
-            LOCATION_FILTER_ALL -> profiles
-            LOCATION_FILTER_MANUAL -> profiles.filter { it.id !in subscriptionProfileIds }
+            LOCATION_FILTER_ALL -> if (groups.isEmpty()) profiles else subscriptionProfileIds.mapNotNull { profileById[it] }
+            LOCATION_FILTER_MANUAL -> profiles
             else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
                 ?.profileIds
                 ?.mapNotNull { profileById[it] }
@@ -3430,12 +3416,31 @@ class MainActivity : Activity() {
 
     private fun locationFilterLabel(groups: List<SubscriptionGroup>): String = when (selectedLocationGroupFilter) {
         LOCATION_FILTER_ALL -> "All"
-        LOCATION_FILTER_MANUAL -> "Manual"
+        LOCATION_FILTER_MANUAL -> "Manual imports"
         else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
             ?.displayName
             ?.cleanProfileLabel()
             ?.ifBlank { "Subscription" }
             ?: "Subscription"
+    }
+
+    private fun testLocationFilter(filter: String) {
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val allProfiles = activeLocationProfiles(storedProfiles, groups)
+        selectedLocationGroupFilter = filter
+        normalizeLocationGroupFilter(groups)
+        val query = locationSearchQuery.trim()
+        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
+        val scoped = profilesForLocationFilter(filtered, groups)
+        val scope = locationFilterLabel(groups)
+        refreshProfileButtons(syncVerified = false)
+        rankProfilesAndSelectBest(
+            inputProfiles = scoped,
+            reason = "locations $scope tab",
+            autoSelect = true,
+            scopeLabel = scope.shortUi(28)
+        )
     }
 
     private fun refreshSubscriptionGroupButtons(
@@ -3447,9 +3452,6 @@ class MainActivity : Activity() {
         subscriptionGroupContainer.removeAllViews()
         normalizeLocationGroupFilter(groups)
         val allProfileIds = allProfiles.map { it.id }.toSet()
-        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
-        val manualCount = allProfiles.count { it.id !in subscriptionProfileIds }
-        val filteredCount = profilesForLocationFilter(filteredProfiles, groups).size
         subscriptionGroupContainer.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -3482,6 +3484,9 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
+        tabRow.addView(locationRefreshTab("◷", "Test all shown subscription configs") {
+            testLocationFilter(LOCATION_FILTER_ALL)
+        })
         tabRow.addView(locationFilterTab("All", allProfiles.size, selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
             refreshProfileButtons(syncVerified = false)
@@ -3489,14 +3494,11 @@ class MainActivity : Activity() {
         if (groups.isNotEmpty()) {
             tabRow.addView(locationRefreshTab("↻", "Refresh all subscriptions") { refreshAllSubscriptionGroups() })
         }
-        if (manualCount > 0 || groups.isEmpty()) {
-            tabRow.addView(locationFilterTab("Manual", manualCount, selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
-                selectedLocationGroupFilter = LOCATION_FILTER_MANUAL
-                refreshProfileButtons(syncVerified = false)
-            })
-        }
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
+            tabRow.addView(locationRefreshTab("◷", "Test ${group.displayName.cleanProfileLabel().shortUi(24)}") {
+                testLocationFilter(group.id)
+            })
             tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
                 selectedLocationGroupFilter = group.id
                 refreshProfileButtons(syncVerified = false)
@@ -3514,12 +3516,9 @@ class MainActivity : Activity() {
             )
             addView(tabRow)
         })
-        val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
-        if (activeGroup != null) {
-            subscriptionGroupContainer.addView(selectedSubscriptionGroupRow(activeGroup, filteredCount))
-        } else if (groups.isNotEmpty()) {
+        if (groups.isNotEmpty()) {
             subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "↻ beside All refreshes all subscriptions. ↻ beside each tab refreshes that subscription."
+                text = "◷ beside a tab tests that queue. ↻ beside a tab refreshes subscription data."
                 textSize = 11.5f
                 gravity = Gravity.CENTER
                 setTextColor(0xFF64748B.toInt())
@@ -3631,30 +3630,6 @@ class MainActivity : Activity() {
                     setTextColor(0xFF64748B.toInt())
                 })
             })
-            addView(floatingTestButton(compact = true) {
-                val profiles = subscriptionProfiles(group)
-                rankProfilesAndSelectBest(
-                    inputProfiles = profiles,
-                    reason = "subscription ${group.displayName}",
-                    autoSelect = true,
-                    scopeLabel = group.displayName.cleanProfileLabel().shortUi(24)
-                )
-            }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(5), 0, dp(5), 0) }
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "↻"
-                textSize = 17f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { refreshSubscriptionGroup(group) }
-            })
         }
 
     private fun subscriptionProfiles(group: SubscriptionGroup): List<VpnProfile> =
@@ -3666,19 +3641,6 @@ class MainActivity : Activity() {
             title = group.displayName.cleanProfileLabel().shortUi(32),
             subtitle = "${profiles.size} configs in this subscription profile"
         ) { dialog ->
-            addView(bottomSheetActionRow("◷", "Test this subscription", "Ping-rank up to ${profiles.take(MAX_AUTO_RANK_PROFILES).size} configs now") {
-                dialog.dismiss()
-                rankProfilesAndSelectBest(
-                    inputProfiles = profiles,
-                    reason = "subscription sheet ${group.displayName}",
-                    autoSelect = true,
-                    scopeLabel = group.displayName.cleanProfileLabel().shortUi(24)
-                )
-            })
-            addView(bottomSheetActionRow("↻", "Refresh subscription", subscriptionGroupSubtitle(group)) {
-                dialog.dismiss()
-                refreshSubscriptionGroup(group)
-            })
             if (profiles.isEmpty()) {
                 addView(TextView(this@MainActivity).apply {
                     text = "No configs are saved in this group yet. Refresh it or paste the subscription again."
@@ -4164,6 +4126,7 @@ class MainActivity : Activity() {
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 36
         const val MAX_PARALLEL_PING_TESTS = 6
+        const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
