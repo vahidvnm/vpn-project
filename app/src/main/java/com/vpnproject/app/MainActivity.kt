@@ -87,6 +87,7 @@ class MainActivity : Activity() {
     private lateinit var hubStatusDetail: TextView
     private lateinit var connectionStatsText: TextView
     private lateinit var selectedProfileText: TextView
+    private lateinit var topProfileSummaryText: TextView
     private lateinit var primaryActionButton: PowerRingButton
     private lateinit var protectionBadge: TextView
     private lateinit var liveStatsBadge: TextView
@@ -172,7 +173,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(12), dp(12), dp(12), dp(10))
+            setPadding(dp(12), dp(6), dp(12), dp(10))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -201,46 +202,13 @@ class MainActivity : Activity() {
         homeSection.addView(createCompactHomeDashboard())
         homeSection.addView(createSelectedConfigsCard())
 
-        val profileCard = createCard()
-        profileCard.addView(sectionLabel("Locations"))
-        selectedProfileText = TextView(this).apply {
-            text = "No profile selected yet."
-            textSize = 11.5f
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, dp(2)) }
+        val profileCard = createCard().apply {
+            setPadding(dp(10), dp(4), dp(10), dp(10))
         }
-        profileCard.addView(createLocationSearchCard())
-        locationTestStatusText = TextView(this).apply {
-            text = ""
-            textSize = 11.5f
-            gravity = Gravity.CENTER
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 0, 0, dp(2))
-            }
-        }
-        profileCard.addView(locationTestStatusText)
         subscriptionGroupContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(10), 0, dp(6))
+            setPadding(0, 0, 0, dp(4))
         }
         profileCard.addView(subscriptionGroupContainer)
         profileListContainer = LinearLayout(this).apply {
@@ -387,41 +355,30 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, dp(10))
+        setPadding(0, 0, 0, dp(4))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        addView(TextView(this@MainActivity).apply {
-            text = "VPN"
-            textSize = 13f
+        topProfileSummaryText = TextView(this@MainActivity).apply {
+            text = "🌐  No config • tap +"
+            textSize = 12.5f
             typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(0xFFFFFFFF.toInt())
-            background = verticalGradient(0xFF2563EB.toInt(), 0xFF06B6D4.toInt(), 0xFF22C55E.toInt(), radiusDp = 18)
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply {
-                setMargins(0, 0, dp(10), 0)
-            }
-        })
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            addView(TextView(this@MainActivity).apply {
-                text = "MultiVPN"
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(0xFF0F172A.toInt())
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "Your configs • Smart connect"
-                textSize = 12f
-                includeFontPadding = false
-                setTextColor(0xFF64748B.toInt())
-            })
-        })
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+            setTextColor(0xFF0F172A.toInt())
+            background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
+            setPadding(dp(12), 0, dp(12), 0)
+            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                setMargins(0, 0, dp(8), 0)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showSection(AppSection.PROFILES) }
+        }
+        addView(topProfileSummaryText)
         addView(headerIconButton("+") { showAddConfigMenu() })
     }
 
@@ -435,8 +392,8 @@ class MainActivity : Activity() {
         background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
         isClickable = true
         isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-            setMargins(dp(6), 0, 0, 0)
+        layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+            setMargins(0, 0, 0, 0)
         }
         setOnClickListener { onClick() }
     }
@@ -893,12 +850,15 @@ class MainActivity : Activity() {
     }
 
     private fun setActionStatus(message: String) {
+        if (::topProfileSummaryText.isInitialized) {
+            topProfileSummaryText.text = message.shortUi(72)
+        }
         if (::locationTestStatusText.isInitialized) {
             locationTestStatusText.text = message.shortUi(110)
-            locationTestStatusText.visibility = View.VISIBLE
+            locationTestStatusText.visibility = View.GONE
         }
         status.text = message
-        status.visibility = View.VISIBLE
+        status.visibility = View.GONE
     }
 
     private fun setAutoTestStatus(message: String) {
@@ -1936,6 +1896,14 @@ class MainActivity : Activity() {
 
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
+        val topSummary = if (profile == null) {
+            "🌐  No config • tap +"
+        } else {
+            topProfileSummary(profile)
+        }
+        if (::topProfileSummaryText.isInitialized) {
+            topProfileSummaryText.text = topSummary
+        }
         if (::selectedProfileText.isInitialized) {
             selectedProfileText.text = if (profile == null) {
                 "No profile selected • use + or pick a location"
@@ -1948,6 +1916,24 @@ class MainActivity : Activity() {
             homeProfileNameText.text = profile?.let { compactProfileTitle(it).shortUi(24) } ?: "Choose location"
             homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap to pick"
         }
+    }
+
+    private fun topProfileSummary(profile: VpnProfile): String {
+        val hub = currentHubStatus()
+        val liveForProfile = activeConnectionProfileId == profile.id && isLiveState(hub.state)
+        val health = when {
+            liveForProfile && hub.latencyMs != null -> "Good ${hub.latencyMs}ms"
+            profile.lastVerifiedLatencyMs != null -> "Good ${profile.lastVerifiedLatencyMs}ms"
+            profile.lastTestLatencyMs != null -> "Ping ${profile.lastTestLatencyMs}ms"
+            profile.lastTestSuccess == true -> "Ping OK"
+            profile.lastTestSuccess == false -> "Fail"
+            else -> "Ready"
+        }
+        return listOf(
+            profileFlagOrIcon(profile),
+            compactProfileTitle(profile).shortUi(24),
+            health
+        ).joinToString(" • ")
     }
 
     private fun homeProfileMeta(profile: VpnProfile): String {
@@ -3518,28 +3504,6 @@ class MainActivity : Activity() {
         subscriptionGroupContainer.removeAllViews()
         normalizeLocationGroupFilter(groups)
         val allProfileIds = allProfiles.map { it.id }.toSet()
-        subscriptionGroupContainer.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(0, dp(6), 0, dp(2))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            addView(TextView(this@MainActivity).apply {
-                text = if (groups.isEmpty()) {
-                    "Profile tabs: add subscriptions with +"
-                } else {
-                    "Profile tabs  ${groups.size} subscription${if (groups.size == 1) "" else "s"}"
-                }
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER_VERTICAL
-                setTextColor(0xFF64748B.toInt())
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-        })
         val tabRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
