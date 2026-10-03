@@ -902,8 +902,7 @@ class MainActivity : Activity() {
         // Use Locations > Queue tools for a capped manual ping test.
     }
 
-    private fun autoTestSelectedConfig(reason: String) {
-        val testLabel = "Ping test"
+    private fun autoTestSelectedConfig(reason: String, testLabel: String = "Ping test") {
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("$testLabel paused while VPN is running")
             return
@@ -978,10 +977,11 @@ class MainActivity : Activity() {
         inputProfiles: List<VpnProfile>,
         reason: String,
         autoSelect: Boolean = true,
-        scopeLabel: String = "configs"
+        scopeLabel: String = "configs",
+        testLabel: String = "Ping test"
     ) {
         if (autoTestsShouldPauseForLiveVpn()) {
-            setAutoTestStatus("Ping ranking paused while VPN is running")
+            setAutoTestStatus("$testLabel paused while VPN is running")
             return
         }
         if (autoTestInFlight) {
@@ -990,12 +990,12 @@ class MainActivity : Activity() {
         }
         val uniqueProfiles = inputProfiles.distinctBy { it.id }
         if (uniqueProfiles.isEmpty()) {
-            setAutoTestStatus("Ping ranking: add configs first")
+            setAutoTestStatus("$testLabel: add configs first")
             return
         }
         val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator()).take(MAX_AUTO_RANK_PROFILES)
         autoTestInFlight = true
-        setAutoTestStatus("Ping testing ${rankedInput.size} ${scopeLabel.shortUi(32)}...")
+        setAutoTestStatus("$testLabel testing ${rankedInput.size} ${scopeLabel.shortUi(32)} without connecting...")
         val network = currentNetworkLabel()
         Thread {
             val total = rankedInput.size
@@ -1013,7 +1013,7 @@ class MainActivity : Activity() {
                         val startedIndex = started.incrementAndGet()
                         mainHandler.post {
                             if (autoTestInFlight) {
-                                setAutoTestStatus("Ping ${finished.get()}/$total • testing $startedIndex/$total: ${compactProfileTitle(profile)}")
+                                setAutoTestStatus("$testLabel ${finished.get()}/$total • testing $startedIndex/$total: ${compactProfileTitle(profile)}")
                             }
                         }
                         val result = probeProfileForRanking(profile, network)
@@ -1026,7 +1026,7 @@ class MainActivity : Activity() {
                         }
                         mainHandler.post {
                             if (autoTestInFlight) {
-                                setAutoTestStatus("Ping $done/$total: ${compactProfileTitle(profile)} • $state")
+                                setAutoTestStatus("$testLabel $done/$total: ${compactProfileTitle(profile)} • $state")
                             }
                         }
                     } finally {
@@ -1042,7 +1042,7 @@ class MainActivity : Activity() {
             if (autoTestsShouldPauseForLiveVpn()) {
                 mainHandler.post {
                     autoTestInFlight = false
-                    setAutoTestStatus("Ping ranking paused while VPN is running")
+                    setAutoTestStatus("$testLabel paused while VPN is running")
                     refreshAutoTestSummary()
                 }
                 return@Thread
@@ -1055,9 +1055,9 @@ class MainActivity : Activity() {
                     .thenByDescending { it.profile.favorite })
             val report = buildAutoRankingReport(resultSnapshot, best, reason)
             val message = when {
-                best != null && autoSelect -> "Best ping selected: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                best != null -> "Best ping: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                else -> "Ping ranking found no reachable endpoints"
+                best != null && autoSelect -> "$testLabel selected best: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                best != null -> "$testLabel best: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                else -> "$testLabel found no reachable endpoints"
             }
             runOnUiThread {
                 autoTestInFlight = false
@@ -1201,10 +1201,10 @@ class MainActivity : Activity() {
         val target = anchorProfile ?: uniqueCandidates.firstOrNull()
         showBottomSheet(
             title = title,
-            subtitle = "Ping is quick. Real latency connects VPN and verifies outbound delay."
+            subtitle = "Quick tests do not start VPN. They measure endpoint latency before connecting."
         ) { dialog ->
             addView(TextView(this@MainActivity).apply {
-                text = "Ping test = fast TCP/TLS endpoint check before connecting. Real latency = start the VPN tunnel and measure the verified route."
+                text = "Ping / Real latency here are fast no-VPN checks. Use Connect only when you want to start the Android VPN tunnel."
                 textSize = 12f
                 setTextColor(0xFF64748B.toInt())
                 setPadding(dp(4), dp(8), dp(4), dp(4))
@@ -1214,9 +1214,9 @@ class MainActivity : Activity() {
                     dialog.dismiss()
                     runPingTestForProfile(target)
                 })
-                addView(bottomSheetActionRow("✓", "Real latency test", "Connect this profile and verify true VPN delay") {
+                addView(bottomSheetActionRow("✓", "Real latency test", "Fast no-VPN latency for ${compactProfileTitle(target).shortUi(24)}") {
                     dialog.dismiss()
-                    runRealLatencyTestForProfile(target)
+                    runQuickLatencyTestForProfile(target, "Real latency")
                 })
             } else {
                 addView(TextView(this@MainActivity).apply {
@@ -1253,8 +1253,12 @@ class MainActivity : Activity() {
     }
 
     private fun runPingTestForProfile(profile: VpnProfile) {
+        runQuickLatencyTestForProfile(profile, "Ping test")
+    }
+
+    private fun runQuickLatencyTestForProfile(profile: VpnProfile, label: String = "Real latency") {
         if (!selectProfileForTest(profile)) return
-        autoTestSelectedConfig("manual-ping")
+        autoTestSelectedConfig("manual-${label.lowercase(java.util.Locale.US).replace(" ", "-")}", testLabel = label)
     }
 
     private fun runRealLatencyTestForProfile(profile: VpnProfile) {
@@ -1294,7 +1298,7 @@ class MainActivity : Activity() {
         val lines = mutableListOf<String>()
         lines += "Ping ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
         lines += currentNetworkDiagnosticNote()
-        lines += "Note: ping test ranks endpoint reachability only. Real latency is measured after the VPN tunnel connects."
+        lines += "Note: Queue Ping/Real latency are fast no-VPN endpoint latency checks. Full VPN verification happens only when you connect."
         if (best != null) {
             lines += "Best now: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
         }
@@ -2379,12 +2383,13 @@ class MainActivity : Activity() {
     }
 
     private fun profileStatusLabel(profile: VpnProfile): String = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> "Fail"
+        profile.lastTestSuccess == false -> "Fail"
+        profile.lastVerifiedLatencyMs != null -> "${profile.lastVerifiedLatencyMs}ms"
+        profile.lastTestLatencyMs != null -> "${profile.lastTestLatencyMs}ms"
         profile.id == selectedProfileId -> "Selected"
         profile.lastVerifiedEpochMs != null -> "Good"
         profile.lastTestSuccess == true -> "Ping"
         profile.favorite -> "Fav"
-        profile.lastTestSuccess == false -> "Fail"
         else -> "New"
     }
 
@@ -3485,7 +3490,7 @@ class MainActivity : Activity() {
             ?: "Subscription"
     }
 
-    private fun testLocationFilter(filter: String) {
+    private fun testLocationFilter(filter: String, label: String = "Ping test") {
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         val allProfiles = activeLocationProfiles(storedProfiles, groups)
@@ -3501,12 +3506,13 @@ class MainActivity : Activity() {
             return
         }
         val capped = scoped.take(MAX_AUTO_RANK_PROFILES).size
-        setActionStatus("Manual ping test for $scope: testing $capped/${scoped.size} configs. Large queues are never auto-tested.")
+        setActionStatus("$label for $scope: testing $capped/${scoped.size} configs without connecting. Large queues are never auto-tested.")
         rankProfilesAndSelectBest(
             inputProfiles = scoped,
-            reason = "queue tools $scope",
+            reason = "queue tools $scope $label",
             autoSelect = false,
-            scopeLabel = scope.shortUi(28)
+            scopeLabel = scope.shortUi(28),
+            testLabel = label
         )
     }
 
@@ -3602,19 +3608,13 @@ class MainActivity : Activity() {
             title = "Queue tools",
             subtitle = "$scope • manual actions only • testing is capped at $capped/${scopedProfiles.size} configs"
         ) { dialog ->
-            addView(bottomSheetActionRow("◷", "Ping test", "TCP/TLS reachability for up to $capped configs in this queue") {
+            addView(bottomSheetActionRow("◷", "Ping test", "Fast reachability for up to $capped configs in this queue") {
                 dialog.dismiss()
-                testLocationFilter(selectedLocationGroupFilter)
+                testLocationFilter(selectedLocationGroupFilter, label = "Ping test")
             })
-            val realLatencyProfile = selectedProfile?.takeIf { selected -> scopedProfiles.any { it.id == selected.id } }
-                ?: scopedProfiles.sortedWith(profileRankingComparator()).firstOrNull()
-            addView(bottomSheetActionRow("✓", "Real latency", realLatencyProfile?.let { "Connect and verify ${compactProfileTitle(it).shortUi(28)}" } ?: "No config available in this queue") {
+            addView(bottomSheetActionRow("✓", "Real latency", "Fast no-VPN latency for up to $capped configs in this queue") {
                 dialog.dismiss()
-                if (realLatencyProfile == null) {
-                    setActionStatus("No config in $scope for real latency test.")
-                } else {
-                    runRealLatencyTestForProfile(realLatencyProfile)
-                }
+                testLocationFilter(selectedLocationGroupFilter, label = "Real latency")
             })
             if (groups.isNotEmpty()) {
                 addView(bottomSheetActionRow("↻", if (activeGroup == null) "Refresh all subscriptions" else "Refresh ${activeGroup.displayName.cleanProfileLabel().shortUi(24)}", if (activeGroup == null) "Update all saved subscription URLs" else "Update only the selected subscription queue") {
