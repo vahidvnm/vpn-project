@@ -214,7 +214,7 @@ class MainActivity : Activity() {
         profileListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(2), 0, 0)
         }
         profileCard.addView(profileListContainer)
         profilesSection.addView(profileCard)
@@ -313,14 +313,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 34)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(12).toFloat()
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            background = roundedBackground(0xF8FFFFFF.toInt(), 0xFFE0F2FE.toInt(), radiusDp = 32)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(14).toFloat()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(dp(26), dp(2), dp(26), navigationBarBottomPadding() + dp(10))
+                setMargins(dp(22), dp(2), dp(22), navigationBarBottomPadding() + dp(10))
             }
         }
         navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
@@ -356,18 +356,31 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, dp(2))
+        setPadding(0, 0, 0, dp(6))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(44)
+            ViewGroup.LayoutParams.WRAP_CONTENT
         )
         topProfileSummaryText = TextView(this@MainActivity).apply {
-            text = ""
-            visibility = View.GONE
+            text = "🌐  No config • tap +"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+            setTextColor(0xFF0F172A.toInt())
+            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(3).toFloat()
+            setPadding(dp(14), 0, dp(14), 0)
+            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                setMargins(0, 0, dp(10), 0)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showSection(AppSection.PROFILES) }
         }
-        addView(View(this@MainActivity).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-        })
+        addView(topProfileSummaryText)
         addView(headerIconButton("+") { showAddConfigMenu() })
     }
 
@@ -382,7 +395,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(6).toFloat()
         isClickable = true
         isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             setMargins(0, 0, 0, 0)
         }
         setOnClickListener { onClick() }
@@ -1436,7 +1449,7 @@ class MainActivity : Activity() {
 
     private fun createNavButton(textValue: String, onClick: () -> Unit): TextView = TextView(this).apply {
         text = textValue
-        textSize = 11.5f
+        textSize = 11.8f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
@@ -1446,7 +1459,7 @@ class MainActivity : Activity() {
         setPadding(dp(4), dp(5), dp(4), dp(5))
         layoutParams = LinearLayout.LayoutParams(
             0,
-            dp(56),
+            dp(54),
             1f
         ).apply {
             setMargins(dp(3), 0, dp(3), 0)
@@ -1637,14 +1650,19 @@ class MainActivity : Activity() {
     }
 
     private fun styleNavButton(button: TextView, selected: Boolean) {
-        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
-        button.background = roundedBackground(
-            fillColor = if (selected) 0xFF0F172A.toInt() else 0x00FFFFFF,
-            strokeColor = if (selected) 0xFF0F172A.toInt() else 0x00FFFFFF,
-            radiusDp = 24
-        )
+        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF64748B.toInt())
+        button.background = if (selected) {
+            verticalGradient(0xFF111827.toInt(), 0xFF0F172A.toInt(), 0xFF2563EB.toInt(), radiusDp = 26)
+        } else {
+            roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 24)
+        }
+        (button.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
+            params.height = if (selected) dp(58) else dp(50)
+            params.setMargins(dp(3), if (selected) 0 else dp(4), dp(3), if (selected) 0 else dp(4))
+            button.layoutParams = params
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            button.elevation = if (selected) dp(8).toFloat() else 0f
+            button.elevation = if (selected) dp(10).toFloat() else 0f
         }
     }
 
@@ -2435,7 +2453,6 @@ class MainActivity : Activity() {
     private fun addLocationSection(container: LinearLayout, title: String, profiles: List<VpnProfile>, remaining: Int): Int {
         if (profiles.isEmpty() || remaining <= 0) return 0
         val shown = profiles.take(remaining)
-        container.addView(createLocationSectionLabel(title, shown.size))
         shown.forEach { profile ->
             container.addView(profileListRow(profile, compact = false, onSelect = { loadProfile(profile) }))
         }
@@ -3556,50 +3573,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun locationQueueToolsPanel(
-        groups: List<SubscriptionGroup>,
-        filteredProfiles: List<VpnProfile>
-    ): LinearLayout = LinearLayout(this).apply {
-        val scoped = profilesForLocationFilter(filteredProfiles, groups)
-        val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
-        val scope = locationFilterLabel(groups)
-        val testCount = scoped.take(MAX_AUTO_RANK_PROFILES).size
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(dp(10), dp(8), dp(8), dp(8))
-        background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, dp(6), 0, dp(2))
-        }
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            addView(TextView(this@MainActivity).apply {
-                text = "Queue tools • ${scope.shortUi(22)}"
-                textSize = 13f
-                typeface = Typeface.DEFAULT_BOLD
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF0F172A.toInt())
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "Manual only • test $testCount/${scoped.size} max • no auto scan"
-                textSize = 10.5f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF64748B.toInt())
-            })
-        })
-        addView(queueMenuButton {
-            showQueueToolsSheet(groups, scoped, activeGroup, scope)
-        })
-    }
-
     private fun queueMenuButton(onClick: () -> Unit): TextView = TextView(this).apply {
         text = "⋯"
         textSize = 22f
@@ -3608,9 +3581,9 @@ class MainActivity : Activity() {
         maxLines = 1
         includeFontPadding = false
         setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
-        layoutParams = LinearLayout.LayoutParams(dp(42), dp(38)).apply {
-            setMargins(dp(8), 0, 0, 0)
+        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE0F2FE.toInt(), radiusDp = 17)
+        layoutParams = LinearLayout.LayoutParams(dp(36), dp(34)).apply {
+            setMargins(dp(5), 0, 0, 0)
         }
         isClickable = true
         isFocusable = true

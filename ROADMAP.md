@@ -562,7 +562,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] اصلاح بازخورد مرجع v2rayNG: حذف تست خودکار برای جلوگیری از اسکن subscriptionهای خیلی بزرگ، حذف دکمه‌های test/refresh چسبیده به تک‌تک tabها، و انتقال Test/Refresh به یک Queue tools section تمیز برای صف انتخاب‌شده.
 - [x] اصلاح بازخورد بعدی: تبدیل Queue tools به منوی سه‌نقطه شامل Ping test / Real latency / Refresh / Search، کوچک‌کردن header کانفیگ انتخاب‌شده در Locations، و تبدیل Auto ping به Auto latency برای کانفیگ انتخاب‌شده با پیش‌فرض OFF.
 - [x] polish اسکرین‌شات بعدی: حذف header برند/selected-config بزرگ از بالای Locations، انتقال نمایش کانفیگ وصل/انتخاب‌شده به یک pill کوچک بالای صفحه با پرچم و عدد تست/latency، و بالا آوردن tabها/Queue tools بعد از آزادشدن فضا.
-- [x] polish اسکرین‌شات بعدی: حذف همان بخش‌های خط‌کشی‌شده شامل برند/selected/search/sync status و کارت بزرگ Queue tools از Locations، نگه‌داشتن فقط + بالا، انتقال منوی Queue tools به سه‌نقطه کوچک کنار tabها، بالاتر آوردن لیست، lift کردن bottom sheet بالاتر از nav، و تبدیل bottom navigation به pill شناور سفارشی.
+- [x] polish اسکرین‌شات بعدی: حذف همان بخش‌های خط‌کشی‌شده شامل برند/search/sync status، کارت بزرگ Queue tools و titleهای میانی از Locations، نگه‌داشتن pill کوچک کانفیگ انتخاب‌شده کنار + بالا، انتقال منوی Queue tools به سه‌نقطه کوچک کنار tabها، بالاتر آوردن لیست، lift کردن bottom sheet بالاتر از nav، و تبدیل bottom navigation به glass island شناور.
+- [x] polish اسکرین‌شات بعدی: حذف کامل فاصله‌ی Queue tools/Player configs/section label بین tabها و ردیف‌های کانفیگ، تا لیست مستقیم بعد از tabها شروع شود؛ به‌روزرسانی bottom nav با selected pill گرادیانی و elevation بیشتر.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
