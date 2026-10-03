@@ -565,6 +565,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish اسکرین‌شات بعدی: حذف همان بخش‌های خط‌کشی‌شده شامل برند/search/sync status، کارت بزرگ Queue tools و titleهای میانی از Locations، نگه‌داشتن pill کوچک کانفیگ انتخاب‌شده کنار + بالا، انتقال منوی Queue tools به سه‌نقطه کوچک کنار tabها، بالاتر آوردن لیست، lift کردن bottom sheet بالاتر از nav، و تبدیل bottom navigation به glass island شناور.
 - [x] polish اسکرین‌شات بعدی: حذف کامل فاصله‌ی Queue tools/Player configs/section label بین tabها و ردیف‌های کانفیگ، تا لیست مستقیم بعد از tabها شروع شود؛ به‌روزرسانی bottom nav با selected pill گرادیانی و elevation بیشتر.
 - [x] اصلاح تست latency: گزینه Real latency در Queue tools دیگر VPN را وصل نمی‌کند و به صفحه اصلی نمی‌برد؛ کل صف انتخاب‌شده را به‌صورت سریع/no-VPN و capped تست می‌کند، و عدد ms روی pill جلوی هر کانفیگ نمایش داده می‌شود.
+- [x] اصلاح تکمیلی: Auto latency هم دیگر full VPN connect نمی‌کند؛ برای جلوگیری از رفتن ناخواسته به Home/اتصال، تست خودکار selected config به quick no-VPN latency تغییر کرد.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

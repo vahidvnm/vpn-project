@@ -247,7 +247,7 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsConnectionSummaryText)
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
-        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run real VPN verification after import/select", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run quick no-VPN latency after import/select", settingsAutoTestValueText) { toggleAutoTest() })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -826,7 +826,7 @@ class MainActivity : Activity() {
         appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, autoTestEnabled).apply()
         updateAutoTestToggle()
         setAutoTestStatus(
-            if (autoTestEnabled) "Auto latency enabled: selected configs will run real VPN verification."
+            if (autoTestEnabled) "Auto latency enabled: selected configs will run quick no-VPN latency."
             else "Auto latency disabled. Queue tests stay manual and capped."
         )
     }
@@ -875,7 +875,7 @@ class MainActivity : Activity() {
             !autoTestEnabled -> "Auto latency OFF"
             selectedProfile?.lastVerifiedEpochMs != null -> selectedProfile?.lastVerifiedLabel()?.shortUi(88)
                 ?: "Last real latency saved for selected config"
-            else -> "Auto latency ON for selected config only"
+            else -> "Auto latency ON for selected config only (no VPN connect)"
         }
     }
 
@@ -891,8 +891,8 @@ class MainActivity : Activity() {
         val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull() ?: return
         mainHandler.postDelayed({
             if (autoTestEnabled && !autoTestsShouldPauseForLiveVpn()) {
-                setActionStatus("Auto latency: verifying ${compactProfileTitle(profile).shortUi(28)}")
-                runRealLatencyTestForProfile(profile)
+                setActionStatus("Auto latency: quick testing ${compactProfileTitle(profile).shortUi(28)} without connecting")
+                runQuickLatencyTestForProfile(profile, "Auto latency")
             }
         }, 450L)
     }
