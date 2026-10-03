@@ -559,6 +559,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish بازخورد بعدی تست/refresh: انتقال refresh به chip کنار All و کنار هر subscription tab، مستقیم‌کردن دکمه‌های تست لیست/سابسکریپشن به ping-rank، نمایش status تست داخل Locations، و موازی‌کردن ping-rank با سقف ۳۶ config و ۶ worker تا صف‌های بزرگ فقط یکی‌دو مورد را کند و مبهم تست نکنند.
 - [x] اصلاح بازخورد بعدی Locations: حذف Manual از شمارنده/tab اصلی وقتی subscription فعال است، مخفی‌کردن profileهای subscription قدیمی/یتیم از All، پاک‌کردن profileهای حذف‌شده از همان group هنگام refresh، و محدودکردن کنترل‌های تست/refresh به chipهای چسبیده به All/subscription tabها.
 - [x] ساده‌سازی بیشتر Locations طبق بازخورد: تبدیل search bar به آیکن ذره‌بین collapsed، مخفی‌کردن manual از selector وقتی subscription وجود دارد، حذف راهنمای اضافه زیر tabها، و ساخت کنترل سه‌تکه `◷ / tab / ↻` برای All و هر subscription.
+- [x] اصلاح بازخورد مرجع v2rayNG: حذف تست خودکار برای جلوگیری از اسکن subscriptionهای خیلی بزرگ، حذف دکمه‌های test/refresh چسبیده به تک‌تک tabها، و انتقال Test/Refresh به یک Queue tools section تمیز برای صف انتخاب‌شده.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

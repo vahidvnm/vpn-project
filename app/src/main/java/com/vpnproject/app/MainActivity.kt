@@ -99,7 +99,7 @@ class MainActivity : Activity() {
     private lateinit var statEngineText: TextView
     private lateinit var autoTestToggleButton: TextView
     private lateinit var autoTestStatusText: TextView
-    private var autoTestEnabled = true
+    private var autoTestEnabled = false
     private var autoTestInFlight = false
     private lateinit var favoriteActionButton: Button
     private lateinit var locationTestStatusText: TextView
@@ -151,7 +151,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, true)
+        autoTestEnabled = false
+        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, false).apply()
 
         window.statusBarColor = 0xFFEAF6FF.toInt()
         window.navigationBarColor = 0xFFFFFFFF.toInt()
@@ -250,7 +251,7 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Normal controls stay simple. Technical diagnostics are tucked into Advanced."
+            text = "Tests are manual from Locations > Queue tools so large subscriptions are never scanned automatically."
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
@@ -273,17 +274,8 @@ class MainActivity : Activity() {
             }
         }
         settingsCard.addView(settingsConnectionSummaryText)
-        settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
+        settingsAutoTestValueText = TextView(this).apply { text = "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
-        settingsCard.addView(settingsRow("◷", "Test latency", "Choose quick ping or real VPN latency for selected config") {
-            showLatencyTestSheet(
-                anchorProfile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull(),
-                candidates = currentVisibleProfilesForTesting(),
-                title = "Test latency"
-            )
-        })
-        settingsCard.addView(settingsRow("A", "Auto ping", "Optional background ping-ranking after imports", settingsAutoTestValueText) { toggleAutoTest() })
-        settingsCard.addView(settingsRow("★", "Ping-rank configs", "Quick-test saved configs and select the fastest reachable one") { rankSavedProfilesAndSelectBest("settings") })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -866,11 +858,10 @@ class MainActivity : Activity() {
     }
 
     private fun toggleAutoTest() {
-        autoTestEnabled = !autoTestEnabled
-        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, autoTestEnabled).apply()
+        autoTestEnabled = false
+        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, false).apply()
         updateAutoTestToggle()
-        setAutoTestStatus(if (autoTestEnabled) "Auto test enabled" else "Auto test disabled")
-        if (autoTestEnabled) maybeAutoRankBestProfile("toggle")
+        setAutoTestStatus("Automatic testing is off. Use Queue tools to test a capped visible batch manually.")
     }
 
     private fun updateAutoTestToggle() {
@@ -926,13 +917,13 @@ class MainActivity : Activity() {
     }
 
     private fun maybeAutoTestSelectedConfig(reason: String) {
-        if (!autoTestEnabled || autoTestsShouldPauseForLiveVpn()) return
-        mainHandler.postDelayed({ autoTestSelectedConfig(reason) }, 350L)
+        // Disabled intentionally: large subscriptions can contain hundreds or thousands of configs.
+        // Testing now runs only from explicit Queue tools actions.
     }
 
     private fun maybeAutoRankBestProfile(reason: String) {
-        if (!autoTestEnabled || autoTestsShouldPauseForLiveVpn()) return
-        mainHandler.postDelayed({ rankSavedProfilesAndSelectBest(reason) }, 450L)
+        // Disabled intentionally: large subscriptions can contain hundreds or thousands of configs.
+        // Testing now runs only from explicit Queue tools actions.
     }
 
     private fun autoTestSelectedConfig(reason: String) {
@@ -3495,10 +3486,16 @@ class MainActivity : Activity() {
         val scoped = profilesForLocationFilter(filtered, groups)
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
+        if (scoped.isEmpty()) {
+            setActionStatus("No configs in $scope to test.")
+            return
+        }
+        val capped = scoped.take(MAX_AUTO_RANK_PROFILES).size
+        setActionStatus("Manual ping test for $scope: testing $capped/${scoped.size} configs. Large queues are never auto-tested.")
         rankProfilesAndSelectBest(
             inputProfiles = scoped,
-            reason = "locations $scope tab",
-            autoSelect = true,
+            reason = "queue tools $scope",
+            autoSelect = false,
             scopeLabel = scope.shortUi(28)
         )
     }
@@ -3544,33 +3541,16 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        tabRow.addView(locationQueueTab(
-            label = "All",
-            count = allProfiles.size,
-            selected = selectedLocationGroupFilter == LOCATION_FILTER_ALL,
-            showRefresh = groups.isNotEmpty(),
-            onTest = { testLocationFilter(LOCATION_FILTER_ALL) },
-            onSelect = {
-                selectedLocationGroupFilter = LOCATION_FILTER_ALL
-                refreshProfileButtons(syncVerified = false)
-            },
-            onRefresh = { refreshAllSubscriptionGroups() }
-        ))
+        tabRow.addView(locationFilterTab("All", allProfiles.size, selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
+            selectedLocationGroupFilter = LOCATION_FILTER_ALL
+            refreshProfileButtons(syncVerified = false)
+        })
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
-            val groupLabel = group.displayName.cleanProfileLabel().shortUi(16)
-            tabRow.addView(locationQueueTab(
-                label = groupLabel,
-                count = groupCount,
-                selected = selectedLocationGroupFilter == group.id,
-                showRefresh = true,
-                onTest = { testLocationFilter(group.id) },
-                onSelect = {
-                    selectedLocationGroupFilter = group.id
-                    refreshProfileButtons(syncVerified = false)
-                },
-                onRefresh = { refreshSubscriptionGroup(group) }
-            ))
+            tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
+                selectedLocationGroupFilter = group.id
+                refreshProfileButtons(syncVerified = false)
+            })
         }
         subscriptionGroupContainer.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -3581,6 +3561,7 @@ class MainActivity : Activity() {
             )
             addView(tabRow)
         })
+        subscriptionGroupContainer.addView(locationQueueToolsPanel(groups, filteredProfiles))
         if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
             subscriptionGroupContainer.addView(TextView(this).apply {
                 text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
@@ -3592,75 +3573,78 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun locationQueueTab(
-        label: String,
-        count: Int,
-        selected: Boolean,
-        showRefresh: Boolean,
-        onTest: () -> Unit,
-        onSelect: () -> Unit,
-        onRefresh: () -> Unit
+    private fun locationQueueToolsPanel(
+        groups: List<SubscriptionGroup>,
+        filteredProfiles: List<VpnProfile>
     ): LinearLayout = LinearLayout(this).apply {
+        val scoped = profilesForLocationFilter(filteredProfiles, groups)
+        val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
+        val scope = locationFilterLabel(groups)
+        val testCount = scoped.take(MAX_AUTO_RANK_PROFILES).size
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, 0)
-        background = roundedBackground(
-            fillColor = if (selected) 0xFFEFF6FF.toInt() else 0x00FFFFFF,
-            strokeColor = if (selected) 0xFF93C5FD.toInt() else 0x00FFFFFF,
-            radiusDp = 19
-        )
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply {
-            setMargins(dp(3), 0, dp(5), 0)
+        setPadding(dp(10), dp(8), dp(8), dp(8))
+        background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(6), 0, dp(2))
         }
-        addView(queueTabActionButton("◷", if (selected) 0xFF1D4ED8.toInt() else 0xFF2563EB.toInt(), "Test $label") {
-            onTest()
-        })
-        addView(TextView(this@MainActivity).apply {
-            text = "${label.shortUi(18)} ($count)"
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
-            background = roundedBackground(
-                fillColor = if (selected) 0xFF2563EB.toInt() else 0xFFF8FAFC.toInt(),
-                strokeColor = if (selected) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
-                radiusDp = 18
-            )
-            setPadding(dp(12), 0, dp(12), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onSelect() }
-        })
-        if (showRefresh) {
-            addView(queueTabActionButton("↻", 0xFF2563EB.toInt(), "Refresh $label") {
-                onRefresh()
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = "Queue tools • ${scope.shortUi(22)}"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF0F172A.toInt())
             })
-        }
+            addView(TextView(this@MainActivity).apply {
+                text = "Manual only • test $testCount/${scoped.size} max • no auto scan"
+                textSize = 10.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF64748B.toInt())
+            })
+        })
+        addView(queueToolButton("◷ Test", primary = true) {
+            testLocationFilter(selectedLocationGroupFilter)
+        })
+        addView(queueToolButton(if (activeGroup == null) "↻ All" else "↻ Refresh", primary = false) {
+            if (activeGroup == null) refreshAllSubscriptionGroups() else refreshSubscriptionGroup(activeGroup)
+        }.apply {
+            visibility = if (groups.isEmpty()) View.GONE else View.VISIBLE
+        })
     }
 
-    private fun queueTabActionButton(
-        label: String,
-        color: Int,
-        description: String,
+    private fun queueToolButton(
+        textValue: String,
+        primary: Boolean,
         onClick: () -> Unit
     ): TextView = TextView(this).apply {
-        text = label
-        textSize = 14f
+        text = textValue
+        textSize = 11.5f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
+        maxLines = 1
         includeFontPadding = false
-        setTextColor(color)
-        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
-        layoutParams = LinearLayout.LayoutParams(dp(34), dp(38)).apply {
-            setMargins(dp(1), 0, dp(1), 0)
+        setTextColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF2563EB.toInt())
+        background = roundedBackground(
+            fillColor = if (primary) 0xFF2563EB.toInt() else 0xFFFFFFFF.toInt(),
+            strokeColor = if (primary) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
+            radiusDp = 16
+        )
+        setPadding(dp(10), 0, dp(10), 0)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply {
+            setMargins(dp(6), 0, 0, 0)
         }
         isClickable = true
         isFocusable = true
-        contentDescription = description
         setOnClickListener { onClick() }
     }
 
@@ -3688,28 +3672,6 @@ class MainActivity : Activity() {
         }
         isClickable = true
         isFocusable = true
-        setOnClickListener { onClick() }
-    }
-
-    private fun locationRefreshTab(
-        label: String,
-        description: String,
-        onClick: () -> Unit
-    ): TextView = TextView(this).apply {
-        text = label
-        textSize = 14f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        maxLines = 1
-        includeFontPadding = false
-        setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
-        layoutParams = LinearLayout.LayoutParams(dp(32), dp(38)).apply {
-            setMargins(0, 0, dp(6), 0)
-        }
-        isClickable = true
-        isFocusable = true
-        contentDescription = description
         setOnClickListener { onClick() }
     }
 
