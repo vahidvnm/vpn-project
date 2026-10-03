@@ -1,6 +1,7 @@
 package com.vpnproject.app.engine
 
-import com.vpnproject.app.core.ConfigImporter
+import com.vpnproject.app.core.ConfigKind
+import com.vpnproject.app.core.ImportedConfig
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
@@ -8,67 +9,103 @@ import java.util.Base64
 
 class V2RayRuntimeConfigBuilderTest {
     @Test
-    fun buildsVlessRealityTunConfig() {
-        val imported = ConfigImporter.parse(
-            "vless://00000000-0000-4000-8000-000000000000@example.com:443?security=reality&type=tcp&sni=www.microsoft.com&fp=chrome&pbk=publicKey&sid=abcd&spx=%2F#reality"
+    fun buildsRealityTcpSettingsFromVlessLink() {
+        val json = buildJson(
+            "vless://11111111-1111-1111-1111-111111111111@example.com:443" +
+                "?security=reality&type=tcp&sni=www.microsoft.com&fp=chrome&pbk=PUBLICKEY&sid=abc123&spx=%2F#Reality"
         )
 
-        val runtime = V2RayRuntimeConfigBuilder.build(imported)
-
-        assertTrue(runtime.configJson.contains("\"protocol\": \"tun\""))
-        assertTrue(runtime.configJson.contains("\"protocol\": \"vless\""))
-        assertTrue(runtime.configJson.contains("\"vnext\""))
-        assertTrue(runtime.configJson.contains("\"security\": \"reality\""))
-        assertTrue(runtime.configJson.contains("\"publicKey\": \"publicKey\""))
-        assertTrue(runtime.configJson.contains("\"shortId\": \"abcd\""))
+        assertContains(json, "\"network\": \"tcp\"")
+        assertContains(json, "\"security\": \"reality\"")
+        assertContains(json, "\"realitySettings\"")
+        assertContains(json, "\"serverName\": \"www.microsoft.com\"")
+        assertContains(json, "\"fingerprint\": \"chrome\"")
+        assertContains(json, "\"publicKey\": \"PUBLICKEY\"")
+        assertContains(json, "\"shortId\": \"abc123\"")
+        assertContains(json, "\"spiderX\": \"/\"")
     }
 
     @Test
-    fun buildsVmessWebSocketTlsConfigFromSubscription() {
-        val vmessJson = """
-            {"v":"2","ps":"nl-ws","add":"edge.example.net","port":"443","id":"00000000-0000-4000-8000-000000000000","scy":"auto","net":"ws","type":"none","host":"front.example.net","path":"/ws","tls":"tls","sni":"sni.example.net","fp":"chrome"}
+    fun buildsGrpcTlsSettingsFromTrojanLink() {
+        val json = buildJson(
+            "trojan://pass@example.com:443" +
+                "?security=tls&type=grpc&serviceName=myService&authority=front.example&sni=sni.example&fp=random#Grpc"
+        )
+
+        assertContains(json, "\"network\": \"grpc\"")
+        assertContains(json, "\"grpcSettings\"")
+        assertContains(json, "\"serviceName\": \"myService\"")
+        assertContains(json, "\"multiMode\": false")
+        assertContains(json, "\"authority\": \"front.example\"")
+        assertContains(json, "\"tlsSettings\"")
+        assertContains(json, "\"serverName\": \"sni.example\"")
+    }
+
+    @Test
+    fun buildsWebSocketTlsSettingsFromVlessLink() {
+        val json = buildJson(
+            "vless://11111111-1111-1111-1111-111111111111@edge.example:443" +
+                "?type=ws&security=tls&host=front.example&path=%2Fws%3Fed%3D2560&sni=front.example#WS"
+        )
+
+        assertContains(json, "\"network\": \"ws\"")
+        assertContains(json, "\"wsSettings\"")
+        assertContains(json, "\"path\": \"/ws?ed=2560\"")
+        assertContains(json, "\"Host\": \"front.example\"")
+        assertContains(json, "\"tlsSettings\"")
+    }
+
+    @Test
+    fun buildsTcpHttpHeaderFromVmessLink() {
+        val vmess = """
+            {
+              "v": "2",
+              "ps": "tcp-http",
+              "add": "tcp.example",
+              "port": "80",
+              "id": "11111111-1111-1111-1111-111111111111",
+              "aid": "2",
+              "scy": "auto",
+              "net": "tcp",
+              "type": "http",
+              "host": "www.example.com",
+              "path": "/front"
+            }
         """.trimIndent()
-        val vmessLink = "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"
-        val subscription = Base64.getEncoder().encodeToString(vmessLink.toByteArray(StandardCharsets.UTF_8))
-        val imported = ConfigImporter.parse(subscription)
+        val link = "vmess://${Base64.getEncoder().encodeToString(vmess.toByteArray(StandardCharsets.UTF_8))}"
+        val json = buildJson(link)
 
-        val runtime = V2RayRuntimeConfigBuilder.build(imported)
-
-        assertTrue(runtime.configJson.contains("\"protocol\": \"vmess\""))
-        assertTrue(runtime.configJson.contains("\"wsSettings\""))
-        assertTrue(runtime.configJson.contains("\"Host\": \"front.example.net\""))
-        assertTrue(runtime.configJson.contains("\"serverName\": \"sni.example.net\""))
+        assertContains(json, "\"network\": \"tcp\"")
+        assertContains(json, "\"alterId\": 2")
+        assertContains(json, "\"tcpSettings\"")
+        assertContains(json, "\"type\": \"http\"")
+        assertContains(json, "\"path\": [\"/front\"]")
+        assertContains(json, "\"Host\": [\"www.example.com\"]")
     }
 
     @Test
-    fun buildsVlessHttpUpgradeConfig() {
-        val imported = ConfigImporter.parse(
-            "vless://00000000-0000-4000-8000-000000000000@api.example.ir:8880?security=none&type=httpupgrade&host=front.example.com&path=%2Fupgrade#hu"
+    fun buildsHttpUpgradeTlsSettingsFromVlessLink() {
+        val json = buildJson(
+            "vless://11111111-1111-1111-1111-111111111111@upgrade.example:443" +
+                "?type=httpupgrade&security=tls&host=front.example&path=%2Fupgrade&sni=front.example#HttpUpgrade"
         )
 
-        val runtime = V2RayRuntimeConfigBuilder.build(imported)
-
-        assertTrue(runtime.configJson.contains("\"network\": \"httpupgrade\""))
-        assertTrue(runtime.configJson.contains("\"httpupgradeSettings\""))
-        assertTrue(runtime.configJson.contains("\"path\": \"/upgrade\""))
-        assertTrue(runtime.configJson.contains("\"host\": \"front.example.com\""))
+        assertContains(json, "\"network\": \"httpupgrade\"")
+        assertContains(json, "\"httpupgradeSettings\"")
+        assertContains(json, "\"path\": \"/upgrade\"")
+        assertContains(json, "\"host\": \"front.example\"")
+        assertContains(json, "\"tlsSettings\"")
     }
 
-    @Test
-    fun buildsVmessTcpHttpHeaderAndAlterId() {
-        val vmessJson = """
-            {"v":"2","ps":"tcp-http","add":"edge.example.net","port":"80","id":"00000000-0000-4000-8000-000000000000","aid":"2","scy":"auto","net":"tcp","type":"http","host":"www.netlify.com","path":"/front","tls":"none"}
-        """.trimIndent()
-        val imported = ConfigImporter.parse(
-            "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"
+    private fun buildJson(link: String): String = V2RayRuntimeConfigBuilder.build(
+        ImportedConfig(
+            kind = ConfigKind.V2RAY,
+            originalText = link,
+            endpoints = emptyList()
         )
+    ).configJson
 
-        val runtime = V2RayRuntimeConfigBuilder.build(imported)
-
-        assertTrue(runtime.configJson.contains("\"alterId\": 2"))
-        assertTrue(runtime.configJson.contains("\"tcpSettings\""))
-        assertTrue(runtime.configJson.contains("\"type\": \"http\""))
-        assertTrue(runtime.configJson.contains("\"path\": [\"/front\"]"))
-        assertTrue(runtime.configJson.contains("\"Host\": [\"www.netlify.com\"]"))
+    private fun assertContains(text: String, expected: String) {
+        assertTrue("Expected <$expected> in:\n$text", text.contains(expected))
     }
 }

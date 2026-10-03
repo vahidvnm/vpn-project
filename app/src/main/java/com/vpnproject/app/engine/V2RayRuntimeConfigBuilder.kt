@@ -58,33 +58,39 @@ object V2RayRuntimeConfigBuilder {
         val authority = authorityAndPath.substringBefore('/')
         val userInfo = authority.substringBeforeLast('@', "")
         val hostPort = authority.substringAfterLast('@', authority)
-        val (host, port) = parseHostPort(hostPort, defaultPort = if (queryText.contains("security=reality", true) || queryText.contains("security=tls", true)) 443 else 80)
+        val defaultPort = if (queryText.contains("security=reality", true) || queryText.contains("security=tls", true)) 443 else 80
+        val (host, port) = parseHostPort(hostPort, defaultPort = defaultPort)
         val params = parseQuery(queryText)
-        val security = params["security"]?.lowercase()?.takeUnless { it == "none" }.orEmpty()
-        val network = params["type"]?.lowercase()?.takeUnless { it == "http" } ?: params["type"]?.lowercase() ?: "tcp"
+        val rawNetwork = params.param("type", "net", "network")
+        val network = normalizeNetwork(rawNetwork)
+        val headerType = params.param("headerType", "header_type", "header")
+            ?: rawNetwork?.takeIf { network == "tcp" && it.isTcpHeaderAlias() }
+        val security = params.param("security")
+            ?.lowercase(java.util.Locale.US)
+            ?.takeUnless { it == "none" }
+            .orEmpty()
         return V2RayProfile(
             scheme = scheme,
             address = host,
             port = port,
             idOrPassword = userInfo.urlDecodeOrSelf(),
-            method = if (scheme == "vless") params["encryption"]?.takeIf { it.isNotBlank() } ?: "none" else null,
-            flow = params["flow"],
+            method = if (scheme == "vless") params.param("encryption") ?: "none" else null,
+            flow = params.param("flow"),
             security = security,
-            network = when (network) {
-                "h2" -> "http"
-                else -> network
-            },
-            headerType = params["headerType"] ?: params["header_type"] ?: params["type"]?.takeIf { network == "tcp" && it != "tcp" },
-            hostHeader = params["host"],
-            path = params["path"],
-            sni = params["sni"],
-            fingerprint = params["fp"],
-            alpn = params["alpn"],
-            publicKey = params["pbk"] ?: params["publickey"] ?: params["publicKey"],
-            shortId = params["sid"] ?: params["shortid"] ?: params["shortId"],
-            spiderX = params["spx"] ?: params["spiderx"] ?: params["spiderX"],
-            serviceName = params["serviceName"] ?: params["serviceName".lowercase()] ?: params["path"],
-            authority = params["authority"] ?: params["host"],
+            network = network,
+            headerType = headerType,
+            hostHeader = params.param("host"),
+            path = params.param("path"),
+            sni = params.param("sni", "serverName", "servername"),
+            fingerprint = params.param("fp", "fingerprint"),
+            alpn = params.param("alpn"),
+            publicKey = params.param("pbk", "publickey", "publicKey"),
+            shortId = params["sid"] ?: params["shortid"],
+            spiderX = params.param("spx", "spiderx", "spiderX"),
+            serviceName = params.param("serviceName", "service", "service_name") ?: params.param("path")?.takeIf { network == "grpc" },
+            authority = params.param("authority") ?: params.param("host")?.firstHostHeader(),
+            allowInsecure = params.boolParam("allowInsecure", "allowinsecure", "insecure", "skip-cert-verify"),
+            grpcMultiMode = params.boolParam("multiMode", "multimode") || params.param("mode")?.equals("multi", ignoreCase = true) == true,
             name = fragment.urlDecodeOrSelf().takeIf { it.isNotBlank() }
         )
     }
@@ -96,7 +102,11 @@ object V2RayRuntimeConfigBuilder {
         val port = jsonStringField(json, "port")?.toIntOrNull()
             ?: jsonNumberField(json, "port")?.toInt()
             ?: 443
-        val security = jsonStringField(json, "tls")?.lowercase()?.takeUnless { it == "none" }.orEmpty()
+        val security = jsonStringField(json, "tls")
+            ?.lowercase(java.util.Locale.US)
+            ?.takeUnless { it == "none" }
+            .orEmpty()
+        val network = normalizeNetwork(jsonStringField(json, "net"))
         return V2RayProfile(
             scheme = "vmess",
             address = host,
@@ -107,15 +117,17 @@ object V2RayRuntimeConfigBuilder {
                 ?: jsonNumberField(json, "aid")?.toInt()
                 ?: 0,
             security = security,
-            network = jsonStringField(json, "net")?.lowercase()?.takeIf { it.isNotBlank() } ?: "tcp",
+            network = network,
             headerType = jsonStringField(json, "type"),
             hostHeader = jsonStringField(json, "host"),
             path = jsonStringField(json, "path"),
             sni = jsonStringField(json, "sni"),
-            fingerprint = jsonStringField(json, "fp"),
+            fingerprint = jsonStringField(json, "fp") ?: jsonStringField(json, "fingerprint"),
             alpn = jsonStringField(json, "alpn"),
-            serviceName = jsonStringField(json, "path"),
-            authority = jsonStringField(json, "host"),
+            serviceName = jsonStringField(json, "path")?.takeIf { network == "grpc" },
+            authority = jsonStringField(json, "host")?.firstHostHeader(),
+            allowInsecure = jsonBooleanLikeField(json, "allowInsecure") || jsonBooleanLikeField(json, "skip-cert-verify"),
+            grpcMultiMode = jsonStringField(json, "mode")?.equals("multi", ignoreCase = true) == true,
             name = jsonStringField(json, "ps")
         )
     }
@@ -264,33 +276,36 @@ object V2RayRuntimeConfigBuilder {
     }
 
     private fun networkSettings(profile: V2RayProfile): String? = when (profile.network) {
-        "ws", "websocket" -> {
-            val headers = profile.hostHeader?.takeIf { it.isNotBlank() }?.let { ", \"headers\": { \"Host\": ${it.json()} }" }.orEmpty()
-            "\"wsSettings\": { \"path\": ${(profile.path ?: "/").json()}$headers }"
+        "ws" -> {
+            val host = profile.hostHeader?.firstHostHeader()
+            val headers = host?.takeIf { it.isNotBlank() }?.let { ", \"headers\": { \"Host\": ${it.json()} }" }.orEmpty()
+            "\"wsSettings\": { \"path\": ${normalizedPath(profile.path).json()}$headers }"
         }
         "grpc" -> {
-            val authority = profile.authority?.takeIf { it.isNotBlank() }?.let { ", \"authority\": ${it.json()}" }.orEmpty()
-            "\"grpcSettings\": { \"serviceName\": ${profile.serviceName.orEmpty().json()}, \"multiMode\": false$authority }"
+            val authority = firstNonBlank(profile.authority, profile.hostHeader?.firstHostHeader(), profile.sni)
+                ?.let { ", \"authority\": ${it.json()}" }
+                .orEmpty()
+            "\"grpcSettings\": { \"serviceName\": ${grpcServiceName(profile.serviceName ?: profile.path).json()}, \"multiMode\": ${profile.grpcMultiMode}$authority }"
         }
-        "http", "h2" -> {
+        "http" -> {
             val hosts = profile.hostHeader.orEmpty().split(',').map { it.trim() }.filter { it.isNotBlank() }
-            "\"httpSettings\": { \"host\": [${hosts.joinToString(",") { it.json() }}], \"path\": ${(profile.path ?: "/").json()} }"
+            "\"httpSettings\": { \"host\": [${hosts.joinToString(",") { it.json() }}], \"path\": ${normalizedPath(profile.path).json()} }"
         }
         "httpupgrade" -> httpUpgradeSettings(profile)
-        "tcp", "raw" -> tcpSettings(profile)
+        "tcp" -> tcpSettings(profile)
         else -> null
     }
 
     private fun httpUpgradeSettings(profile: V2RayProfile): String {
-        val fields = mutableListOf("\"path\": ${(profile.path ?: "/").ifBlank { "/" }.json()}")
-        firstNonBlank(profile.hostHeader, profile.authority, profile.sni)?.let { host ->
+        val fields = mutableListOf("\"path\": ${normalizedPath(profile.path).json()}")
+        firstNonBlank(profile.hostHeader?.firstHostHeader(), profile.authority, profile.sni)?.let { host ->
             fields += "\"host\": ${host.json()}"
         }
         return "\"httpupgradeSettings\": { ${fields.joinToString(", ")} }"
     }
 
     private fun tcpSettings(profile: V2RayProfile): String? {
-        val headerType = profile.headerType?.lowercase()?.takeIf { it.isNotBlank() && it != "tcp" && it != "none" }
+        val headerType = profile.headerType?.lowercase(java.util.Locale.US)?.takeIf { it.isNotBlank() && it != "tcp" && it != "none" && it != "raw" }
             ?: return null
         if (headerType != "http") {
             return "\"tcpSettings\": { \"header\": { \"type\": ${headerType.json()} } }"
@@ -298,7 +313,7 @@ object V2RayRuntimeConfigBuilder {
 
         val requestFields = mutableListOf(
             "\"method\": \"GET\"",
-            "\"path\": [${(profile.path ?: "/").ifBlank { "/" }.json()}]"
+            "\"path\": [${normalizedPath(profile.path).json()}]"
         )
         val hosts = firstNonBlank(profile.hostHeader, profile.authority, profile.sni)
             ?.split(',')
@@ -314,15 +329,15 @@ object V2RayRuntimeConfigBuilder {
     private fun securitySettings(profile: V2RayProfile): String? = when (profile.security) {
         "tls" -> {
             val fields = mutableListOf<String>()
-            (profile.sni ?: profile.hostHeader ?: profile.address).takeIf { it.isNotBlank() }?.let { fields += "\"serverName\": ${it.json()}" }
+            firstNonBlank(profile.sni, profile.hostHeader?.firstHostHeader(), profile.address)?.let { fields += "\"serverName\": ${it.json()}" }
             profile.fingerprint?.takeIf { it.isNotBlank() }?.let { fields += "\"fingerprint\": ${it.json()}" }
             alpnArray(profile.alpn)?.let { fields += "\"alpn\": $it" }
-            fields += "\"allowInsecure\": false"
+            fields += "\"allowInsecure\": ${profile.allowInsecure}"
             "\"tlsSettings\": { ${fields.joinToString(", ")} }"
         }
         "reality" -> {
             val fields = mutableListOf<String>()
-            (profile.sni ?: profile.address).takeIf { it.isNotBlank() }?.let { fields += "\"serverName\": ${it.json()}" }
+            firstNonBlank(profile.sni, profile.hostHeader?.firstHostHeader(), profile.address)?.let { fields += "\"serverName\": ${it.json()}" }
             fields += "\"fingerprint\": ${(profile.fingerprint ?: "chrome").json()}"
             profile.publicKey?.takeIf { it.isNotBlank() }?.let { fields += "\"publicKey\": ${it.json()}" }
             profile.shortId?.let { fields += "\"shortId\": ${it.json()}" }
@@ -342,11 +357,47 @@ object V2RayRuntimeConfigBuilder {
         if (queryText.isBlank()) return emptyMap()
         return queryText.split('&').mapNotNull { part ->
             if (part.isBlank()) return@mapNotNull null
-            val key = part.substringBefore('=').urlDecodeOrSelf()
+            val key = part.substringBefore('=').urlDecodeOrSelf().lowercase(java.util.Locale.US)
             val value = part.substringAfter('=', "").urlDecodeOrSelf()
             key to value
         }.toMap()
     }
+
+    private fun Map<String, String>.param(vararg names: String): String? = names
+        .firstNotNullOfOrNull { name -> this[name.lowercase(java.util.Locale.US)]?.takeIf { it.isNotBlank() } }
+
+    private fun Map<String, String>.boolParam(vararg names: String): Boolean = names.any { name ->
+        val value = this[name.lowercase(java.util.Locale.US)]?.trim()?.lowercase(java.util.Locale.US) ?: return@any false
+        value == "1" || value == "true" || value == "yes" || value == "y" || value == "allow"
+    }
+
+    private fun normalizeNetwork(raw: String?): String = when (raw?.trim()?.lowercase(java.util.Locale.US)?.takeIf { it.isNotBlank() }) {
+        null, "tcp", "raw", "none" -> "tcp"
+        "ws", "websocket" -> "ws"
+        "grpc", "gun" -> "grpc"
+        "http", "h2" -> "http"
+        "httpupgrade", "http-upgrade", "http_upgrade" -> "httpupgrade"
+        else -> raw.trim().lowercase(java.util.Locale.US)
+    }
+
+    private fun String.isTcpHeaderAlias(): Boolean = trim().lowercase(java.util.Locale.US).let { value ->
+        value.isNotBlank() && value != "tcp" && value != "raw" && value != "none"
+    }
+
+    private fun normalizedPath(value: String?, defaultValue: String = "/"): String {
+        val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: defaultValue
+        return if (trimmed.startsWith("/") || trimmed.startsWith("?")) trimmed else "/$trimmed"
+    }
+
+    private fun grpcServiceName(value: String?): String = value
+        ?.trim()
+        ?.removePrefix("/")
+        ?.takeIf { it.isNotBlank() }
+        ?: ""
+
+    private fun String.firstHostHeader(): String? = split(',', ';')
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
 
     private fun parseHostPort(value: String, defaultPort: Int): Pair<String, Int> {
         val trimmed = value.trim()
@@ -408,6 +459,17 @@ object V2RayRuntimeConfigBuilder {
         return match.groupValues[1].toLongOrNull()
     }
 
+    private fun jsonBooleanLikeField(json: String, fieldName: String): Boolean {
+        jsonStringField(json, fieldName)?.trim()?.lowercase(java.util.Locale.US)?.let { value ->
+            return value == "1" || value == "true" || value == "yes" || value == "allow"
+        }
+        val match = Regex(
+            "\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(true|false|1|0)",
+            RegexOption.IGNORE_CASE
+        ).find(json) ?: return false
+        return match.groupValues[1].equals("true", ignoreCase = true) || match.groupValues[1] == "1"
+    }
+
     private fun unescapeJsonString(value: String): String = value
         .replace("\\/", "/")
         .replace("\\\"", "\"")
@@ -456,5 +518,7 @@ private data class V2RayProfile(
     val spiderX: String? = null,
     val serviceName: String? = null,
     val authority: String? = null,
+    val allowInsecure: Boolean = false,
+    val grpcMultiMode: Boolean = false,
     val name: String? = null
 )
