@@ -151,8 +151,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        autoTestEnabled = false
-        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, false).apply()
+        autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, false)
 
         window.statusBarColor = 0xFFEAF6FF.toInt()
         window.navigationBarColor = 0xFFFFFFFF.toInt()
@@ -206,15 +205,19 @@ class MainActivity : Activity() {
         profileCard.addView(sectionLabel("Locations"))
         selectedProfileText = TextView(this).apply {
             text = "No profile selected yet."
-            textSize = 14f
+            textSize = 11.5f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            maxLines = 3
+            maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF0F172A.toInt())
-            setPadding(dp(8), 0, dp(8), dp(10))
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, dp(2)) }
         }
-        profileCard.addView(selectedProfileText)
         profileCard.addView(createLocationSearchCard())
         locationTestStatusText = TextView(this).apply {
             text = ""
@@ -230,7 +233,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(0, 0, 0, dp(4))
+                setMargins(0, 0, 0, dp(2))
             }
         }
         profileCard.addView(locationTestStatusText)
@@ -251,7 +254,7 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Tests are manual from Locations > Queue tools so large subscriptions are never scanned automatically."
+            text = "Queue tests are manual and capped. Auto latency only verifies the selected config and is OFF by default."
             textSize = 14f
             gravity = Gravity.CENTER
             setTextColor(0xFF64748B.toInt())
@@ -274,8 +277,9 @@ class MainActivity : Activity() {
             }
         }
         settingsCard.addView(settingsConnectionSummaryText)
-        settingsAutoTestValueText = TextView(this).apply { text = "OFF" }
+        settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
+        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run real VPN verification after import/select", settingsAutoTestValueText) { toggleAutoTest() })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -858,10 +862,13 @@ class MainActivity : Activity() {
     }
 
     private fun toggleAutoTest() {
-        autoTestEnabled = false
-        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, false).apply()
+        autoTestEnabled = !autoTestEnabled
+        appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, autoTestEnabled).apply()
         updateAutoTestToggle()
-        setAutoTestStatus("Automatic testing is off. Use Queue tools to test a capped visible batch manually.")
+        setAutoTestStatus(
+            if (autoTestEnabled) "Auto latency enabled: selected configs will run real VPN verification."
+            else "Auto latency disabled. Queue tests stay manual and capped."
+        )
     }
 
     private fun updateAutoTestToggle() {
@@ -902,10 +909,10 @@ class MainActivity : Activity() {
     private fun refreshAutoTestSummary() {
         if (!::autoTestStatusText.isInitialized || autoTestInFlight) return
         autoTestStatusText.text = when {
-            !autoTestEnabled -> "Auto test disabled"
-            selectedProfile?.lastTestedEpochMs != null -> selectedProfile?.lastTestLabel()?.shortUi(88)
-                ?: "Last test saved for selected config"
-            else -> "Ranks saved configs and selects the best reachable one"
+            !autoTestEnabled -> "Auto latency OFF"
+            selectedProfile?.lastVerifiedEpochMs != null -> selectedProfile?.lastVerifiedLabel()?.shortUi(88)
+                ?: "Last real latency saved for selected config"
+            else -> "Auto latency ON for selected config only"
         }
     }
 
@@ -917,17 +924,23 @@ class MainActivity : Activity() {
     }
 
     private fun maybeAutoTestSelectedConfig(reason: String) {
-        // Disabled intentionally: large subscriptions can contain hundreds or thousands of configs.
-        // Testing now runs only from explicit Queue tools actions.
+        if (!autoTestEnabled || autoTestsShouldPauseForLiveVpn()) return
+        val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull() ?: return
+        mainHandler.postDelayed({
+            if (autoTestEnabled && !autoTestsShouldPauseForLiveVpn()) {
+                setActionStatus("Auto latency: verifying ${compactProfileTitle(profile).shortUi(28)}")
+                runRealLatencyTestForProfile(profile)
+            }
+        }, 450L)
     }
 
     private fun maybeAutoRankBestProfile(reason: String) {
-        // Disabled intentionally: large subscriptions can contain hundreds or thousands of configs.
-        // Testing now runs only from explicit Queue tools actions.
+        // Queue-wide ranking is never automatic; subscriptions can contain hundreds or thousands of configs.
+        // Use Locations > Queue tools for a capped manual ping test.
     }
 
     private fun autoTestSelectedConfig(reason: String) {
-        val testLabel = if (reason.contains("ping", ignoreCase = true) || reason == "actions") "Ping test" else "Auto ping"
+        val testLabel = "Ping test"
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("$testLabel paused while VPN is running")
             return
@@ -1352,49 +1365,34 @@ class MainActivity : Activity() {
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
+        gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, dp(2), 0, dp(6))
+        setPadding(0, 0, 0, dp(2))
         background = ColorDrawable(Color.TRANSPARENT)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(0, 0, 0, dp(4))
+            setMargins(0, 0, 0, dp(2))
         }
-        if (locationSearchQuery.isNotBlank()) {
-            addView(TextView(this@MainActivity).apply {
-                text = "Search: ${locationSearchQuery.shortUi(26)}"
-                textSize = 11.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f).apply {
-                    setMargins(0, 0, dp(6), 0)
-                }
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { showLocationSearchSheet() }
-            })
-        } else {
-            addView(View(this@MainActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-            })
+        selectedProfileText.layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+            setMargins(0, 0, dp(6), 0)
         }
+        addView(selectedProfileText)
         addView(TextView(this@MainActivity).apply {
             text = "⌕"
-            textSize = 20f
+            textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                setMargins(dp(4), 0, dp(4), 0)
+            background = roundedBackground(
+                fillColor = if (locationSearchQuery.isBlank()) 0xFFFFFFFF.toInt() else 0xFFEFF6FF.toInt(),
+                strokeColor = 0xFFD8EAFE.toInt(),
+                radiusDp = 18
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+                setMargins(dp(3), 0, dp(3), 0)
             }
             isClickable = true
             isFocusable = true
@@ -1404,13 +1402,13 @@ class MainActivity : Activity() {
         if (locationSearchQuery.isNotBlank()) {
             addView(TextView(this@MainActivity).apply {
                 text = "×"
-                textSize = 20f
+                textSize = 18f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 includeFontPadding = false
                 setTextColor(0xFF64748B.toInt())
                 background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
-                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
                     setMargins(dp(2), 0, 0, 0)
                 }
                 isClickable = true
@@ -1940,9 +1938,9 @@ class MainActivity : Activity() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         if (::selectedProfileText.isInitialized) {
             selectedProfileText.text = if (profile == null) {
-                "No profile selected yet. Use the top + or pick a saved profile."
+                "No profile selected • use + or pick a location"
             } else {
-                selectedProfileSummary(profile)
+                locationSelectedProfileSummary(profile)
             }
         }
         if (::homeProfileNameText.isInitialized) {
@@ -2471,6 +2469,17 @@ class MainActivity : Activity() {
             subtitle,
             verified
         ).joinToString("\n")
+    }
+
+    private fun locationSelectedProfileSummary(profile: VpnProfile): String {
+        val health = profile.lastVerifiedLatencyMs?.let { "Good ${it}ms" }
+            ?: profile.lastTestLatencyMs?.let { "Ping ${it}ms" }
+            ?: profile.lastTestSuccess?.let { if (it) "Ping" else "Fail" }
+            ?: "Ready"
+        val title = compactProfileTitle(profile).shortUi(22)
+        val subtitle = compactProfileSubtitle(profile)?.shortUi(18)
+        return listOfNotNull(profileFlagOrIcon(profile), title, subtitle, health)
+            .joinToString(" • ")
     }
 
     private fun restoreLatestProfileMetadata() {
@@ -3612,40 +3621,65 @@ class MainActivity : Activity() {
                 setTextColor(0xFF64748B.toInt())
             })
         })
-        addView(queueToolButton("◷ Test", primary = true) {
-            testLocationFilter(selectedLocationGroupFilter)
-        })
-        addView(queueToolButton(if (activeGroup == null) "↻ All" else "↻ Refresh", primary = false) {
-            if (activeGroup == null) refreshAllSubscriptionGroups() else refreshSubscriptionGroup(activeGroup)
-        }.apply {
-            visibility = if (groups.isEmpty()) View.GONE else View.VISIBLE
+        addView(queueMenuButton {
+            showQueueToolsSheet(groups, scoped, activeGroup, scope)
         })
     }
 
-    private fun queueToolButton(
-        textValue: String,
-        primary: Boolean,
-        onClick: () -> Unit
-    ): TextView = TextView(this).apply {
-        text = textValue
-        textSize = 11.5f
+    private fun queueMenuButton(onClick: () -> Unit): TextView = TextView(this).apply {
+        text = "⋯"
+        textSize = 22f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         maxLines = 1
         includeFontPadding = false
-        setTextColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF2563EB.toInt())
-        background = roundedBackground(
-            fillColor = if (primary) 0xFF2563EB.toInt() else 0xFFFFFFFF.toInt(),
-            strokeColor = if (primary) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
-            radiusDp = 16
-        )
-        setPadding(dp(10), 0, dp(10), 0)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply {
-            setMargins(dp(6), 0, 0, 0)
+        setTextColor(0xFF2563EB.toInt())
+        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+        layoutParams = LinearLayout.LayoutParams(dp(42), dp(38)).apply {
+            setMargins(dp(8), 0, 0, 0)
         }
         isClickable = true
         isFocusable = true
+        contentDescription = "Queue tools menu"
         setOnClickListener { onClick() }
+    }
+
+    private fun showQueueToolsSheet(
+        groups: List<SubscriptionGroup>,
+        scopedProfiles: List<VpnProfile>,
+        activeGroup: SubscriptionGroup?,
+        scope: String
+    ) {
+        val capped = scopedProfiles.take(MAX_AUTO_RANK_PROFILES).size
+        showBottomSheet(
+            title = "Queue tools",
+            subtitle = "$scope • manual actions only • testing is capped at $capped/${scopedProfiles.size} configs"
+        ) { dialog ->
+            addView(bottomSheetActionRow("◷", "Ping test", "TCP/TLS reachability for up to $capped configs in this queue") {
+                dialog.dismiss()
+                testLocationFilter(selectedLocationGroupFilter)
+            })
+            val realLatencyProfile = selectedProfile?.takeIf { selected -> scopedProfiles.any { it.id == selected.id } }
+                ?: scopedProfiles.sortedWith(profileRankingComparator()).firstOrNull()
+            addView(bottomSheetActionRow("✓", "Real latency", realLatencyProfile?.let { "Connect and verify ${compactProfileTitle(it).shortUi(28)}" } ?: "No config available in this queue") {
+                dialog.dismiss()
+                if (realLatencyProfile == null) {
+                    setActionStatus("No config in $scope for real latency test.")
+                } else {
+                    runRealLatencyTestForProfile(realLatencyProfile)
+                }
+            })
+            if (groups.isNotEmpty()) {
+                addView(bottomSheetActionRow("↻", if (activeGroup == null) "Refresh all subscriptions" else "Refresh ${activeGroup.displayName.cleanProfileLabel().shortUi(24)}", if (activeGroup == null) "Update all saved subscription URLs" else "Update only the selected subscription queue") {
+                    dialog.dismiss()
+                    if (activeGroup == null) refreshAllSubscriptionGroups() else refreshSubscriptionGroup(activeGroup)
+                })
+            }
+            addView(bottomSheetActionRow("⌕", "Search", "Filter country, operator, or host") {
+                dialog.dismiss()
+                showLocationSearchSheet()
+            })
+        }
     }
 
     private fun locationFilterTab(
