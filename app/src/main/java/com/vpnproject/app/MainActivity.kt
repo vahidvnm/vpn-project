@@ -102,7 +102,6 @@ class MainActivity : Activity() {
     private var autoTestEnabled = true
     private var autoTestInFlight = false
     private lateinit var favoriteActionButton: Button
-    private lateinit var locationSearchInput: EditText
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
@@ -1362,55 +1361,114 @@ class MainActivity : Activity() {
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
+        gravity = Gravity.CENTER
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(dp(10), dp(8), dp(8), dp(8))
-        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 22)
+        setPadding(0, dp(2), 0, dp(6))
+        background = ColorDrawable(Color.TRANSPARENT)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(0, 0, 0, dp(8))
+            setMargins(0, 0, 0, dp(4))
+        }
+        if (locationSearchQuery.isNotBlank()) {
+            addView(TextView(this@MainActivity).apply {
+                text = "Search: ${locationSearchQuery.shortUi(26)}"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(0xFF2563EB.toInt())
+                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+                    setMargins(0, 0, dp(6), 0)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { showLocationSearchSheet() }
+            })
+        } else {
+            addView(View(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+            })
         }
         addView(TextView(this@MainActivity).apply {
             text = "⌕"
             textSize = 20f
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(0xFF2563EB.toInt())
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(40))
-        })
-        locationSearchInput = EditText(this@MainActivity).apply {
-            hint = "Search locations or configs"
-            setSingleLine(true)
-            textSize = 13f
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setTextColor(0xFF0F172A.toInt())
-            setHintTextColor(0xFF94A3B8.toInt())
-            background = ColorDrawable(Color.TRANSPARENT)
-            setPadding(dp(4), 0, dp(4), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    locationSearchQuery = s?.toString().orEmpty()
-                    refreshProfileButtons(syncVerified = false)
-                }
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-        }
-        addView(locationSearchInput)
-        addView(TextView(this@MainActivity).apply {
-            text = "×"
-            textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFF64748B.toInt())
-            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
-            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
-            setOnClickListener { if (::locationSearchInput.isInitialized) locationSearchInput.setText("") }
+            setTextColor(0xFF2563EB.toInt())
+            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(dp(4), 0, dp(4), 0)
+            }
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Search locations"
+            setOnClickListener { showLocationSearchSheet() }
         })
+        if (locationSearchQuery.isNotBlank()) {
+            addView(TextView(this@MainActivity).apply {
+                text = "×"
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(0xFF64748B.toInt())
+                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                    setMargins(dp(2), 0, 0, 0)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    locationSearchQuery = ""
+                    refreshProfileButtons(syncVerified = false)
+                }
+            })
+        }
+    }
+
+    private fun showLocationSearchSheet() {
+        val searchInput = EditText(this).apply {
+            hint = "Country, operator, host..."
+            setSingleLine(true)
+            textSize = 14f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setTextColor(0xFF0F172A.toInt())
+            setHintTextColor(0xFF94A3B8.toInt())
+            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            setPadding(dp(12), 0, dp(12), 0)
+            setText(locationSearchQuery)
+            selectAll()
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                setMargins(0, dp(10), 0, dp(4))
+            }
+        }
+        showBottomSheet(
+            title = "Search locations",
+            subtitle = "Search stays collapsed so test/refresh controls stay next to the tabs."
+        ) { dialog ->
+            addView(searchInput)
+            addView(bottomSheetActionRow("⌕", "Apply search", "Filter the current subscription queue") {
+                locationSearchQuery = searchInput.text?.toString().orEmpty().trim()
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            if (locationSearchQuery.isNotBlank()) {
+                addView(bottomSheetActionRow("×", "Clear search", "Show the full queue again") {
+                    locationSearchQuery = ""
+                    dialog.dismiss()
+                    refreshProfileButtons(syncVerified = false)
+                })
+            }
+        }
     }
 
     private fun createCard(): LinearLayout = LinearLayout(this).apply {
@@ -2059,7 +2117,9 @@ class MainActivity : Activity() {
                 })
             }
         }
-        addSheetSection("Manual configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+        if (groups.isEmpty()) {
+            addSheetSection("Imported configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+        }
         if (profiles.size > shown) {
             container.addView(TextView(this@MainActivity).apply {
                 text = "Subscription configs are separated into tabs. Use Locations search for a specific config."
@@ -3333,7 +3393,7 @@ class MainActivity : Activity() {
             profileListContainer.addView(TextView(this).apply {
                 text = when {
                     query.isNotBlank() -> "No matching configs in ${locationFilterLabel(groups)}. Try another tab, country, operator, or host."
-                    selectedLocationGroupFilter == LOCATION_FILTER_MANUAL -> "No manual configs. Subscription configs are in their own tabs above."
+                    selectedLocationGroupFilter == LOCATION_FILTER_MANUAL -> "No imported configs in this view."
                     selectedLocationGroupFilter != LOCATION_FILTER_ALL -> "This subscription profile has no saved configs yet. Refresh it or paste the subscription again."
                     else -> "No configs in this tab yet."
                 }
@@ -3366,7 +3426,7 @@ class MainActivity : Activity() {
                 }
             }
             LOCATION_FILTER_MANUAL -> addUniqueSection(
-                if (query.isBlank()) "Manual configs" else "Manual results",
+                if (query.isBlank()) "Imported configs" else "Imported results",
                 rankedScoped
             )
             else -> addUniqueSection(
@@ -3416,7 +3476,7 @@ class MainActivity : Activity() {
 
     private fun locationFilterLabel(groups: List<SubscriptionGroup>): String = when (selectedLocationGroupFilter) {
         LOCATION_FILTER_ALL -> "All"
-        LOCATION_FILTER_MANUAL -> "Manual imports"
+        LOCATION_FILTER_MANUAL -> "Imported"
         else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
             ?.displayName
             ?.cleanProfileLabel()
@@ -3484,28 +3544,33 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        tabRow.addView(locationRefreshTab("◷", "Test all shown subscription configs") {
-            testLocationFilter(LOCATION_FILTER_ALL)
-        })
-        tabRow.addView(locationFilterTab("All", allProfiles.size, selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
-            selectedLocationGroupFilter = LOCATION_FILTER_ALL
-            refreshProfileButtons(syncVerified = false)
-        })
-        if (groups.isNotEmpty()) {
-            tabRow.addView(locationRefreshTab("↻", "Refresh all subscriptions") { refreshAllSubscriptionGroups() })
-        }
+        tabRow.addView(locationQueueTab(
+            label = "All",
+            count = allProfiles.size,
+            selected = selectedLocationGroupFilter == LOCATION_FILTER_ALL,
+            showRefresh = groups.isNotEmpty(),
+            onTest = { testLocationFilter(LOCATION_FILTER_ALL) },
+            onSelect = {
+                selectedLocationGroupFilter = LOCATION_FILTER_ALL
+                refreshProfileButtons(syncVerified = false)
+            },
+            onRefresh = { refreshAllSubscriptionGroups() }
+        ))
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
-            tabRow.addView(locationRefreshTab("◷", "Test ${group.displayName.cleanProfileLabel().shortUi(24)}") {
-                testLocationFilter(group.id)
-            })
-            tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
-                selectedLocationGroupFilter = group.id
-                refreshProfileButtons(syncVerified = false)
-            })
-            tabRow.addView(locationRefreshTab("↻", "Refresh ${group.displayName.cleanProfileLabel().shortUi(24)}") {
-                refreshSubscriptionGroup(group)
-            })
+            val groupLabel = group.displayName.cleanProfileLabel().shortUi(16)
+            tabRow.addView(locationQueueTab(
+                label = groupLabel,
+                count = groupCount,
+                selected = selectedLocationGroupFilter == group.id,
+                showRefresh = true,
+                onTest = { testLocationFilter(group.id) },
+                onSelect = {
+                    selectedLocationGroupFilter = group.id
+                    refreshProfileButtons(syncVerified = false)
+                },
+                onRefresh = { refreshSubscriptionGroup(group) }
+            ))
         }
         subscriptionGroupContainer.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -3516,15 +3581,6 @@ class MainActivity : Activity() {
             )
             addView(tabRow)
         })
-        if (groups.isNotEmpty()) {
-            subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "◷ beside a tab tests that queue. ↻ beside a tab refreshes subscription data."
-                textSize = 11.5f
-                gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
-                setPadding(dp(8), dp(4), dp(8), dp(2))
-            })
-        }
         if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
             subscriptionGroupContainer.addView(TextView(this).apply {
                 text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
@@ -3534,6 +3590,78 @@ class MainActivity : Activity() {
                 setPadding(dp(8), dp(4), dp(8), dp(2))
             })
         }
+    }
+
+    private fun locationQueueTab(
+        label: String,
+        count: Int,
+        selected: Boolean,
+        showRefresh: Boolean,
+        onTest: () -> Unit,
+        onSelect: () -> Unit,
+        onRefresh: () -> Unit
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        setPadding(0, 0, 0, 0)
+        background = roundedBackground(
+            fillColor = if (selected) 0xFFEFF6FF.toInt() else 0x00FFFFFF,
+            strokeColor = if (selected) 0xFF93C5FD.toInt() else 0x00FFFFFF,
+            radiusDp = 19
+        )
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply {
+            setMargins(dp(3), 0, dp(5), 0)
+        }
+        addView(queueTabActionButton("◷", if (selected) 0xFF1D4ED8.toInt() else 0xFF2563EB.toInt(), "Test $label") {
+            onTest()
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = "${label.shortUi(18)} ($count)"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+            background = roundedBackground(
+                fillColor = if (selected) 0xFF2563EB.toInt() else 0xFFF8FAFC.toInt(),
+                strokeColor = if (selected) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
+                radiusDp = 18
+            )
+            setPadding(dp(12), 0, dp(12), 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onSelect() }
+        })
+        if (showRefresh) {
+            addView(queueTabActionButton("↻", 0xFF2563EB.toInt(), "Refresh $label") {
+                onRefresh()
+            })
+        }
+    }
+
+    private fun queueTabActionButton(
+        label: String,
+        color: Int,
+        description: String,
+        onClick: () -> Unit
+    ): TextView = TextView(this).apply {
+        text = label
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTextColor(color)
+        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+        layoutParams = LinearLayout.LayoutParams(dp(34), dp(38)).apply {
+            setMargins(dp(1), 0, dp(1), 0)
+        }
+        isClickable = true
+        isFocusable = true
+        contentDescription = description
+        setOnClickListener { onClick() }
     }
 
     private fun locationFilterTab(
