@@ -106,9 +106,9 @@ class MainActivity : Activity() {
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
-    private lateinit var navHomeButton: Button
-    private lateinit var navProfilesButton: Button
-    private lateinit var navToolsButton: Button
+    private lateinit var navHomeButton: TextView
+    private lateinit var navProfilesButton: TextView
+    private lateinit var navToolsButton: TextView
     private lateinit var homeSection: LinearLayout
     private lateinit var profilesSection: LinearLayout
     private lateinit var toolsSection: LinearLayout
@@ -313,17 +313,18 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 30)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 34)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(12).toFloat()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                setMargins(dp(18), dp(4), dp(18), navigationBarBottomPadding() + dp(12))
+                setMargins(dp(26), dp(2), dp(26), navigationBarBottomPadding() + dp(10))
             }
         }
         navHomeButton = createNavButton("⌂\nHome") { showSection(AppSection.HOME) }
-        navProfilesButton = createNavButton("◎\nLocations") { showSection(AppSection.PROFILES) }
+        navProfilesButton = createNavButton("◉\nLocations") { showSection(AppSection.PROFILES) }
         navToolsButton = createNavButton("⚙\nSettings") { showSection(AppSection.TOOLS) }
         navRow.addView(navHomeButton)
         navRow.addView(navProfilesButton)
@@ -355,30 +356,18 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
-        setPadding(0, 0, 0, dp(4))
+        setPadding(0, 0, 0, dp(2))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+            dp(44)
         )
         topProfileSummaryText = TextView(this@MainActivity).apply {
-            text = "🌐  No config • tap +"
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER_VERTICAL
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            includeFontPadding = false
-            setTextColor(0xFF0F172A.toInt())
-            background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
-            setPadding(dp(12), 0, dp(12), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                setMargins(0, 0, dp(8), 0)
-            }
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { showSection(AppSection.PROFILES) }
+            text = ""
+            visibility = View.GONE
         }
-        addView(topProfileSummaryText)
+        addView(View(this@MainActivity).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        })
         addView(headerIconButton("+") { showAddConfigMenu() })
     }
 
@@ -389,7 +378,8 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTextColor(if (textValue == "+") 0xFF2563EB.toInt() else 0xFF0F172A.toInt())
-        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(6).toFloat()
         isClickable = true
         isFocusable = true
         layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
@@ -1444,25 +1434,25 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun createNavButton(textValue: String, onClick: () -> Unit): Button = Button(this).apply {
+    private fun createNavButton(textValue: String, onClick: () -> Unit): TextView = TextView(this).apply {
         text = textValue
-        textSize = 12f
+        textSize = 11.5f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        setAllCaps(false)
-        setLineSpacing(0f, 0.95f)
+        includeFontPadding = false
+        setLineSpacing(0f, 0.92f)
         setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0xFFE2E8F0.toInt(), 0xFFCBD5E1.toInt(), radiusDp = 22)
-        minHeight = 0
-        minimumHeight = 0
-        setPadding(dp(6), dp(6), dp(6), dp(6))
+        background = roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 24)
+        setPadding(dp(4), dp(5), dp(4), dp(5))
         layoutParams = LinearLayout.LayoutParams(
             0,
-            dp(64),
+            dp(56),
             1f
         ).apply {
-            setMargins(dp(4), 0, dp(4), 0)
+            setMargins(dp(3), 0, dp(3), 0)
         }
+        isClickable = true
+        isFocusable = true
         setOnClickListener { onClick() }
     }
 
@@ -1646,13 +1636,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun styleNavButton(button: Button, selected: Boolean) {
-        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+    private fun styleNavButton(button: TextView, selected: Boolean) {
+        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
         button.background = roundedBackground(
-            fillColor = if (selected) 0xFF0F172A.toInt() else 0xFFE2E8F0.toInt(),
-            strokeColor = if (selected) 0xFF0F172A.toInt() else 0xFFCBD5E1.toInt(),
-            radiusDp = 22
+            fillColor = if (selected) 0xFF0F172A.toInt() else 0x00FFFFFF,
+            strokeColor = if (selected) 0xFF0F172A.toInt() else 0x00FFFFFF,
+            radiusDp = 24
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            button.elevation = if (selected) dp(8).toFloat() else 0f
+        }
     }
 
     private fun toggleAdvancedPanel() {
@@ -2148,7 +2141,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            setPadding(dp(18), dp(10), dp(18), navigationBarBottomPadding() + dp(14))
+            setPadding(dp(18), dp(10), dp(18), dp(18))
             background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 30)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2208,7 +2201,10 @@ class MainActivity : Activity() {
         dialog.show()
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setGravity(Gravity.BOTTOM)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply {
+                y = navigationBarBottomPadding() + dp(78)
+            }
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
@@ -3363,18 +3359,20 @@ class MainActivity : Activity() {
         val scopedProfiles = profilesForLocationFilter(profiles, groups)
         refreshSubscriptionGroupButtons(groups, allProfiles, profiles)
 
-        profileListContainer.addView(TextView(this).apply {
-            val scope = locationFilterLabel(groups)
-            text = when {
-                allProfiles.isEmpty() -> "No saved configs yet."
-                query.isNotBlank() -> "$scope search (${scopedProfiles.size}/${allProfiles.size})"
-                else -> "$scope configs (${scopedProfiles.size})"
-            }
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF475569.toInt())
-            setPadding(0, dp(4), 0, dp(4))
-        })
+        if (allProfiles.isEmpty() || query.isNotBlank()) {
+            profileListContainer.addView(TextView(this).apply {
+                val scope = locationFilterLabel(groups)
+                text = if (allProfiles.isEmpty()) {
+                    "No saved configs yet."
+                } else {
+                    "$scope search (${scopedProfiles.size}/${allProfiles.size})"
+                }
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF475569.toInt())
+                setPadding(0, dp(4), 0, dp(4))
+            })
+        }
         if (allProfiles.isNotEmpty() && scopedProfiles.isEmpty()) {
             profileListContainer.addView(TextView(this).apply {
                 text = when {
@@ -3525,16 +3523,28 @@ class MainActivity : Activity() {
                 refreshProfileButtons(syncVerified = false)
             })
         }
-        subscriptionGroupContainer.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        val scoped = profilesForLocationFilter(filteredProfiles, groups)
+        val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
+        val scope = locationFilterLabel(groups)
+        subscriptionGroupContainer.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(0, 0, 0, dp(2))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            addView(tabRow)
+            addView(HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(tabRow)
+            })
+            addView(queueMenuButton {
+                showQueueToolsSheet(groups, scoped, activeGroup, scope)
+            })
         })
-        subscriptionGroupContainer.addView(locationQueueToolsPanel(groups, filteredProfiles))
         if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
             subscriptionGroupContainer.addView(TextView(this).apply {
                 text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
