@@ -572,6 +572,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله دوم/سوم Xray polish: نام‌های subscription profile کوتاه‌تر و امن‌تر شدند، labelها از fragment/ps بدون raw secret ساخته می‌شوند، subscriptionهای JSON/YAML-style که داخلشان share-link است بهتر استخراج می‌شوند، و diagnostics حالا warningهای runtime support را نشان می‌دهد.
 - [x] مرحله چهارم import UX: ردیف‌هایی که هنوز mapper نیاز دارند badge نارنجی `Map` می‌گیرند، و paste از wrapper URLهای رایج Hiddify/v2rayNG/NekoBox/Clash/Stash که query `url/link/sub/config` دارند به subscription URL واقعی normalize می‌شود.
 - [x] مرحله پنجم تمرکز محصول: متن‌های اصلی UI دوباره Xray-first شدند؛ WireGuard و OpenVPN به‌عنوان advanced fallback/handoff توضیح داده می‌شوند نه مسیر اصلی.
+- [x] شروع sing-box بعد از Xray: import آزمایشی sing-box JSON اضافه شد؛ outboundهای `vless`, `vmess`, `trojan`, `shadowsocks` endpoint/tag/TLS/REALITY/transport را به‌صورت امن استخراج می‌کنند، در پروفایل جدا ذخیره می‌شوند، engine registry آن را import-only نشان می‌دهد، و فعلاً فقط grouping/search/no-VPN diagnostics فعال است تا embedded sing-box در مرحله بعد اضافه شود.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

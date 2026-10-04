@@ -9,6 +9,10 @@ enum class VpnProtocol {
     V2RAY_TCP,
     V2RAY_REALITY,
     V2RAY_UNKNOWN,
+    SING_BOX_TLS,
+    SING_BOX_TCP,
+    SING_BOX_REALITY,
+    SING_BOX_UNKNOWN,
     UNKNOWN
 }
 

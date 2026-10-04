@@ -4,6 +4,7 @@ enum class ConfigKind {
     OPENVPN,
     WIREGUARD,
     V2RAY,
+    SING_BOX,
     UNKNOWN
 }
 

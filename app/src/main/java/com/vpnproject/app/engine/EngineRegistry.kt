@@ -19,13 +19,22 @@ object EngineRegistry {
             description = "Primary Iran MVP path for user-owned V2Ray/Xray links."
         ),
         RegisteredEngine(
+            id = VpnEngineId.SING_BOX_EXPERIMENTAL,
+            engineKind = EngineKind.SING_BOX_EXPERIMENTAL,
+            displayName = "sing-box import",
+            embedded = false,
+            startableInApp = false,
+            priority = 20,
+            description = "Experimental: import user-owned sing-box JSON for grouping and diagnostics; embedded engine comes next."
+        ),
+        RegisteredEngine(
             id = VpnEngineId.WIREGUARD_GO,
             engineKind = EngineKind.WIREGUARD_GO,
             displayName = "WireGuard GoBackend",
             embedded = true,
             startableInApp = true,
             priority = 30,
-            description = "Useful where UDP is not filtered; secondary for Iran."
+            description = "Advanced fallback for official user-supplied WireGuard configs; not the primary Iran path."
         ),
         RegisteredEngine(
             id = VpnEngineId.OPENVPN_EXTERNAL,
@@ -40,6 +49,7 @@ object EngineRegistry {
 
     fun engineFor(kind: VpnProfileKind): RegisteredEngine = when (kind) {
         VpnProfileKind.XRAY -> engine(VpnEngineId.XRAY_CORE)
+        VpnProfileKind.SING_BOX -> engine(VpnEngineId.SING_BOX_EXPERIMENTAL)
         VpnProfileKind.WIREGUARD -> engine(VpnEngineId.WIREGUARD_GO)
         VpnProfileKind.OPENVPN -> engine(VpnEngineId.OPENVPN_EXTERNAL)
         VpnProfileKind.UNKNOWN -> RegisteredEngine.none()
@@ -47,6 +57,7 @@ object EngineRegistry {
 
     fun engineFor(kind: ConfigKind): RegisteredEngine = when (kind) {
         ConfigKind.V2RAY -> engine(VpnEngineId.XRAY_CORE)
+        ConfigKind.SING_BOX -> engine(VpnEngineId.SING_BOX_EXPERIMENTAL)
         ConfigKind.WIREGUARD -> engine(VpnEngineId.WIREGUARD_GO)
         ConfigKind.OPENVPN -> engine(VpnEngineId.OPENVPN_EXTERNAL)
         ConfigKind.UNKNOWN -> RegisteredEngine.none()
@@ -57,6 +68,7 @@ object EngineRegistry {
 
 enum class VpnEngineId {
     XRAY_CORE,
+    SING_BOX_EXPERIMENTAL,
     WIREGUARD_GO,
     OPENVPN_EXTERNAL,
     NONE

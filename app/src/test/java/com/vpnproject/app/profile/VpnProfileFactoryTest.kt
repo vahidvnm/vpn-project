@@ -24,6 +24,30 @@ class VpnProfileFactoryTest {
     }
 
     @Test
+    fun createsSingBoxProfileMetadata() {
+        val imported = ConfigImporter.parse(
+            """
+                { "outbounds": [{
+                  "type": "trojan",
+                  "tag": "singbox tls",
+                  "server": "sb.example.net",
+                  "server_port": 443,
+                  "password": "secret",
+                  "tls": { "enabled": true, "server_name": "front.example.net" }
+                }] }
+            """.trimIndent()
+        )
+
+        val profile = VpnProfileFactory.fromImportedConfig(imported, nowEpochMs = 234L)
+
+        assertEquals(VpnProfileKind.SING_BOX, profile.kind)
+        assertEquals("singbox tls", profile.name)
+        assertEquals("SING_BOX_TLS", profile.endpoints.single().protocol)
+        assertEquals("sb.example.net", profile.endpoints.single().host)
+        assertFalse(profile.summary().contains("secret"))
+    }
+
+    @Test
     fun createsWireGuardProfileMetadata() {
         val imported = ConfigImporter.parse(
             """

@@ -104,6 +104,7 @@ object VpnHubStatusMapper {
 
     private fun EngineKind.displayName(): String = when (this) {
         EngineKind.XRAY_CORE -> "Embedded Xray"
+        EngineKind.SING_BOX_EXPERIMENTAL -> "sing-box"
         EngineKind.WIREGUARD_GO -> "WireGuard"
         EngineKind.OPENVPN_UNAVAILABLE -> "OpenVPN handoff"
     }

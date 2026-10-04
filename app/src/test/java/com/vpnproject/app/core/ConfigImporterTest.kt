@@ -128,6 +128,28 @@ class ConfigImporterTest {
     }
 
     @Test
+    fun parsesSingBoxJsonConfig() {
+        val text = """
+            {
+              "outbounds": [{
+                "type": "vless",
+                "tag": "singbox-reality",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "00000000-0000-4000-8000-000000000000",
+                "tls": { "enabled": true, "server_name": "www.example.com", "reality": { "enabled": true, "public_key": "PUB" } }
+              }]
+            }
+        """.trimIndent()
+
+        val config = ConfigImporter.parse(text)
+
+        assertEquals(ConfigKind.SING_BOX, config.kind)
+        assertEquals("sb.example.com", config.endpoints.single().host)
+        assertEquals(VpnProtocol.SING_BOX_REALITY, config.endpoints.single().protocol)
+    }
+
+    @Test
     fun parsesTrojanRealityAsTcpDiagnosticEndpoint() {
         val text = "trojan://password@example.org:443?security=reality&sni=www.microsoft.com&type=tcp#reality"
 

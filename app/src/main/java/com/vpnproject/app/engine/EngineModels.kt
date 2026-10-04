@@ -3,6 +3,7 @@ package com.vpnproject.app.engine
 enum class EngineKind {
     WIREGUARD_GO,
     XRAY_CORE,
+    SING_BOX_EXPERIMENTAL,
     OPENVPN_UNAVAILABLE
 }
 
