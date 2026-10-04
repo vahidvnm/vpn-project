@@ -568,6 +568,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] اصلاح تکمیلی: Auto latency هم دیگر full VPN connect نمی‌کند؛ برای جلوگیری از رفتن ناخواسته به Home/اتصال، تست خودکار selected config به quick no-VPN latency تغییر کرد.
 - [x] شروع پنج مرحله بهبود Xray: hardening runtime builder برای REALITY، gRPC، WebSocket/TLS، TCP HTTP header و HTTPUpgrade با parsing مقاوم‌تر پارامترها، path/host normalization، allowInsecure اختیاری، gRPC authority/multiMode، و unit test برای هر پنج transport.
 - [x] polish subscriptionهای فعلی: چون subscription تست‌شده فعلاً HTTPUpgrade و Reality دارد، برچسب transport غیرمحرمانه روی ردیف‌های Locations/top pill/search و خلاصه import/refresh اضافه شد تا کاربر ببیند هر کانفیگ از Reality یا HTTPUpgrade است بدون نمایش secret/raw link.
+- [x] diagnostics مرحله Xray: قبل از start اگر transport/security هنوز map نشده باشد یا REALITY بدون public key باشد، خطای واضح و امن نشان داده می‌شود به‌جای fail مبهم Xray.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

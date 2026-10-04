@@ -13,6 +13,7 @@ object V2RayRuntimeConfigBuilder {
         val link = firstShareLink(config.originalText)
             ?: throw ConfigParseException("No V2Ray/Xray share link found for runtime start.")
         val profile = parseLink(link)
+        validateRuntimeSupport(profile)
         return V2RayRuntimeConfig(
             configJson = buildXrayConfig(profile),
             profileName = profile.name ?: config.name ?: "v2ray-import",
@@ -158,6 +159,26 @@ object V2RayRuntimeConfigBuilder {
             network = "tcp",
             name = fragment.urlDecodeOrSelf().takeIf { it.isNotBlank() }
         )
+    }
+
+    private fun validateRuntimeSupport(profile: V2RayProfile) {
+        val supportedNetworks = setOf("tcp", "ws", "grpc", "http", "httpupgrade")
+        if (profile.network !in supportedNetworks) {
+            throw ConfigParseException(
+                "Unsupported V2Ray/Xray transport ${profile.network}. Embedded Xray start currently supports TCP, WebSocket, gRPC, H2, HTTPUpgrade, TLS, and REALITY. Import stays saved, but connect needs a mapper update for this transport."
+            )
+        }
+
+        val supportedSecurity = setOf("", "tls", "reality")
+        if (profile.security !in supportedSecurity) {
+            throw ConfigParseException(
+                "Unsupported V2Ray/Xray security ${profile.security}. Embedded Xray start currently supports none, TLS, and REALITY."
+            )
+        }
+
+        if (profile.security == "reality" && profile.publicKey.isNullOrBlank()) {
+            throw ConfigParseException("REALITY link is missing public key (pbk/publicKey), so embedded Xray cannot start it safely.")
+        }
     }
 
     private fun buildXrayConfig(profile: V2RayProfile): String {

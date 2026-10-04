@@ -1,7 +1,9 @@
 package com.vpnproject.app.engine
 
 import com.vpnproject.app.core.ConfigKind
+import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
@@ -95,6 +97,30 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(json, "\"path\": \"/upgrade\"")
         assertContains(json, "\"host\": \"front.example\"")
         assertContains(json, "\"tlsSettings\"")
+    }
+
+    @Test
+    fun unsupportedTransportFailsClearly() {
+        val error = assertThrows(ConfigParseException::class.java) {
+            buildJson(
+                "vless://11111111-1111-1111-1111-111111111111@example.com:443" +
+                    "?security=tls&type=kcp#Unsupported"
+            )
+        }
+
+        assertContains(error.message.orEmpty(), "Unsupported V2Ray/Xray transport kcp")
+    }
+
+    @Test
+    fun realityWithoutPublicKeyFailsClearly() {
+        val error = assertThrows(ConfigParseException::class.java) {
+            buildJson(
+                "vless://11111111-1111-1111-1111-111111111111@example.com:443" +
+                    "?security=reality&type=tcp&sni=www.example.com#BrokenReality"
+            )
+        }
+
+        assertContains(error.message.orEmpty(), "REALITY link is missing public key")
     }
 
     private fun buildJson(link: String): String = V2RayRuntimeConfigBuilder.build(
