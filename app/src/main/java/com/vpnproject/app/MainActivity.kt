@@ -2013,12 +2013,18 @@ class MainActivity : Activity() {
     private fun profileRowSubtitle(profile: VpnProfile): String {
         val transport = profileTransportLabel(profile)
         val detail = compactProfileSubtitle(profile)?.shortUi(18)
+        val runtime = profileRuntimeLabel(profile)
         val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
             ?: profile.lastTestMiniLabel()
         val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }
             ?: profile.lastTestNetwork?.takeIf { it.isNotBlank() }
-        return listOfNotNull(transport, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
+        return listOfNotNull(transport, runtime, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
     }
+
+    private fun profileRuntimeLabel(profile: VpnProfile): String? = profileXrayDescriptor(profile)
+        ?.takeIf { !it.runtimeSupported }
+        ?.runtimeIssue
+        ?.shortUi(18)
 
     private fun profileTransportLabel(profile: VpnProfile): String? =
         profileXrayDescriptor(profile)?.shortLabel
@@ -2408,6 +2414,7 @@ class MainActivity : Activity() {
 
     private fun profileStatusLabel(profile: VpnProfile): String = when {
         profile.lastTestSuccess == false -> "Fail"
+        profileNeedsXrayMapper(profile) -> "Map"
         profile.lastVerifiedLatencyMs != null -> "${profile.lastVerifiedLatencyMs}ms"
         profile.lastTestLatencyMs != null -> "${profile.lastTestLatencyMs}ms"
         profile.id == selectedProfileId -> "Selected"
@@ -2419,6 +2426,7 @@ class MainActivity : Activity() {
 
     private fun profileStatusFillColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
+        profileNeedsXrayMapper(profile) -> 0xFFFFF7ED.toInt()
         profile.id == selectedProfileId -> 0xFFEFF6FF.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFFD1FAE5.toInt()
         profile.lastTestSuccess == true -> 0xFFEFF6FF.toInt()
@@ -2429,6 +2437,7 @@ class MainActivity : Activity() {
 
     private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
+        profileNeedsXrayMapper(profile) -> 0xFFFED7AA.toInt()
         profile.id == selectedProfileId -> 0xFF93C5FD.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF6EE7B7.toInt()
         profile.lastTestSuccess == true -> 0xFFBFDBFE.toInt()
@@ -2439,6 +2448,7 @@ class MainActivity : Activity() {
 
     private fun profileStatusTextColor(profile: VpnProfile): Int = when {
         profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
+        profileNeedsXrayMapper(profile) -> 0xFFC2410C.toInt()
         profile.id == selectedProfileId -> 0xFF2563EB.toInt()
         profile.lastVerifiedEpochMs != null -> 0xFF047857.toInt()
         profile.lastTestSuccess == true -> 0xFF1D4ED8.toInt()
@@ -2446,6 +2456,9 @@ class MainActivity : Activity() {
         profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
         else -> 0xFF64748B.toInt()
     }
+
+    private fun profileNeedsXrayMapper(profile: VpnProfile): Boolean =
+        profileXrayDescriptor(profile)?.runtimeSupported == false
 
     private fun matchesLocationSearch(profile: VpnProfile, query: String): Boolean {
         val terms = query.replace(Regex("\\s+"), " ").trim().lowercase(java.util.Locale.US)
@@ -2509,7 +2522,8 @@ class MainActivity : Activity() {
         val title = compactProfileTitle(profile).shortUi(22)
         val subtitle = compactProfileSubtitle(profile)?.shortUi(18)
         val transport = profileTransportLabel(profile)
-        return listOfNotNull(profileFlagOrIcon(profile), title, transport, subtitle, health)
+        val runtime = profileRuntimeLabel(profile)
+        return listOfNotNull(profileFlagOrIcon(profile), title, transport, runtime, subtitle, health)
             .joinToString(" • ")
     }
 
@@ -2666,7 +2680,7 @@ class MainActivity : Activity() {
     private fun prepareAndStartImportedEngine() {
         val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
         if (config == null) {
-            status.text = "Import or load a saved WireGuard or V2Ray/Xray profile first."
+            status.text = "Import or pick a saved V2Ray/Xray profile first. WireGuard/OpenVPN remain advanced fallback imports only."
             updateDashboardSummary()
             return
         }
@@ -3209,12 +3223,12 @@ class MainActivity : Activity() {
             .orEmpty()
 
         if (clipText.isBlank()) {
-            status.text = "Clipboard is empty. Copy a config link, subscription URL, OpenVPN, or WireGuard config first."
+            status.text = "Clipboard is empty. Copy a V2Ray/Xray link, subscription URL, or advanced fallback config first."
             return
         }
 
-        if (looksLikeSubscriptionUrl(clipText)) {
-            addOrRefreshSubscriptionGroup(subscriptionNameFromUrl(clipText), clipText, existingGroup = null)
+        normalizedSubscriptionUrl(clipText)?.let { subscriptionUrl ->
+            addOrRefreshSubscriptionGroup(subscriptionNameFromUrl(subscriptionUrl), subscriptionUrl, existingGroup = null)
             return
         }
 
@@ -3228,13 +3242,46 @@ class MainActivity : Activity() {
         importConfigText(clipText, null)
     }
 
-    private fun looksLikeSubscriptionUrl(text: String): Boolean {
+    private fun normalizedSubscriptionUrl(text: String): String? {
         val candidate = text.trim()
-        if (candidate.contains(Regex("\\s"))) return false
-        return runCatching {
-            val parsed = URL(candidate)
-            parsed.protocol.equals("https", ignoreCase = true) || parsed.protocol.equals("http", ignoreCase = true)
-        }.getOrDefault(false)
+        if (candidate.isBlank() || candidate.contains(Regex("\\s"))) return null
+        if (candidate.isHttpUrl()) return candidate
+
+        val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase(java.util.Locale.US) ?: return null
+        if (scheme !in setOf("hiddify", "v2rayng", "nekobox", "clash", "clashmeta", "sing-box", "singbox", "stash")) {
+            return null
+        }
+
+        val queryUrl = runCatching {
+            listOf("url", "link", "sub", "subscription", "config")
+                .firstNotNullOfOrNull { key -> uri.getQueryParameter(key)?.takeIf { it.isHttpUrl() } }
+        }.getOrNull()
+        if (queryUrl != null) return queryUrl
+
+        return firstHttpUrlInText(Uri.decode(candidate))
+    }
+
+    private fun firstHttpUrlInText(text: String): String? {
+        val httpsIndex = text.indexOf("https://", ignoreCase = true).takeIf { it >= 0 }
+        val httpIndex = text.indexOf("http://", ignoreCase = true).takeIf { it >= 0 }
+        val start = listOfNotNull(httpsIndex, httpIndex).minOrNull() ?: return null
+        val end = text.indexOfFirstFrom(start) { char ->
+            char.isWhitespace() || char == '"' || char == '\'' || char == '<' || char == '>'
+        }.let { if (it < 0) text.length else it }
+        return text.substring(start, end).trimEnd(',', ';', ')', ']', '}').takeIf { it.isHttpUrl() }
+    }
+
+    private fun String.isHttpUrl(): Boolean = runCatching {
+        val parsed = URL(trim())
+        parsed.protocol.equals("https", ignoreCase = true) || parsed.protocol.equals("http", ignoreCase = true)
+    }.getOrDefault(false)
+
+    private inline fun String.indexOfFirstFrom(startIndex: Int, predicate: (Char) -> Boolean): Int {
+        for (index in startIndex until length) {
+            if (predicate(this[index])) return index
+        }
+        return -1
     }
 
     private fun subscriptionNameFromUrl(text: String): String = runCatching {
@@ -3265,9 +3312,9 @@ class MainActivity : Activity() {
                 "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
             val nextStep = when (config.kind) {
                 ConfigKind.WIREGUARD ->
-                    "\n\nNext: tap Connect. If UDP is blocked, try an official OpenVPN TCP/443 or V2Ray/Xray config instead."
+                    "\n\nNext: WireGuard is kept as an advanced fallback only; if UDP is blocked, import a V2Ray/Xray profile instead."
                 ConfigKind.OPENVPN ->
-                    "\n\nNext: open Advanced, tap Save pinned OpenVPN TCP config, then import it in an OpenVPN-compatible client while the internal OpenVPN engine is pending."
+                    "\n\nNext: OpenVPN is an advanced handoff path; save a pinned TCP config and import it in an OpenVPN-compatible client if you explicitly need it."
                 ConfigKind.V2RAY ->
                     "\n\nNext: tap Connect. Advanced endpoint probe is optional."
                 else -> ""
@@ -3901,7 +3948,7 @@ class MainActivity : Activity() {
         val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
         val config = importedConfig ?: profile?.let { loadProfileConfig(it) }
         if (config == null) {
-            status.text = "Import an OpenVPN, WireGuard, or V2Ray/Xray config first."
+            status.text = "Import a V2Ray/Xray config first, or explicitly import WireGuard/OpenVPN as advanced fallbacks."
             return
         }
 

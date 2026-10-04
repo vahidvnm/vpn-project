@@ -34,7 +34,7 @@ object EngineRegistry {
             embedded = false,
             startableInApp = false,
             priority = 40,
-            description = "Exports a TCP-preferred pinned config for an official OpenVPN-compatible client."
+            description = "Advanced handoff: exports a TCP-preferred pinned config for an official OpenVPN-compatible client."
         )
     )
 

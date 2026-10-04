@@ -570,6 +570,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish subscriptionهای فعلی: چون subscription تست‌شده فعلاً HTTPUpgrade و Reality دارد، برچسب transport غیرمحرمانه روی ردیف‌های Locations/top pill/search و خلاصه import/refresh اضافه شد تا کاربر ببیند هر کانفیگ از Reality یا HTTPUpgrade است بدون نمایش secret/raw link.
 - [x] diagnostics مرحله Xray: قبل از start اگر transport/security هنوز map نشده باشد یا REALITY بدون public key باشد، خطای واضح و امن نشان داده می‌شود به‌جای fail مبهم Xray.
 - [x] مرحله دوم/سوم Xray polish: نام‌های subscription profile کوتاه‌تر و امن‌تر شدند، labelها از fragment/ps بدون raw secret ساخته می‌شوند، subscriptionهای JSON/YAML-style که داخلشان share-link است بهتر استخراج می‌شوند، و diagnostics حالا warningهای runtime support را نشان می‌دهد.
+- [x] مرحله چهارم import UX: ردیف‌هایی که هنوز mapper نیاز دارند badge نارنجی `Map` می‌گیرند، و paste از wrapper URLهای رایج Hiddify/v2rayNG/NekoBox/Clash/Stash که query `url/link/sub/config` دارند به subscription URL واقعی normalize می‌شود.
+- [x] مرحله پنجم تمرکز محصول: متن‌های اصلی UI دوباره Xray-first شدند؛ WireGuard و OpenVPN به‌عنوان advanced fallback/handoff توضیح داده می‌شوند نه مسیر اصلی.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
