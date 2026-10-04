@@ -56,6 +56,7 @@ import com.vpnproject.app.core.ProbeKind
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.V2RaySubscriptionParser
+import com.vpnproject.app.core.V2RayLinkInspector
 import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.engine.EngineRegistry
 import com.vpnproject.app.engine.EngineStatus
@@ -106,6 +107,7 @@ class MainActivity : Activity() {
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
+    private val transportLabelCache = mutableMapOf<String, Pair<Long, String?>>()
     private lateinit var navHomeButton: TextView
     private lateinit var navProfilesButton: TextView
     private lateinit var navToolsButton: TextView
@@ -1944,9 +1946,10 @@ class MainActivity : Activity() {
             profile.lastTestSuccess == false -> "Fail"
             else -> "Ready"
         }
-        return listOf(
+        return listOfNotNull(
             profileFlagOrIcon(profile),
             compactProfileTitle(profile).shortUi(24),
+            profileTransportLabel(profile),
             health
         ).joinToString(" • ")
     }
@@ -2002,12 +2005,24 @@ class MainActivity : Activity() {
     }
 
     private fun profileRowSubtitle(profile: VpnProfile): String {
-        val detail = compactProfileSubtitle(profile)?.shortUi(20)
+        val transport = profileTransportLabel(profile)
+        val detail = compactProfileSubtitle(profile)?.shortUi(18)
         val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
             ?: profile.lastTestMiniLabel()
         val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }
             ?: profile.lastTestNetwork?.takeIf { it.isNotBlank() }
-        return listOfNotNull(detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
+        return listOfNotNull(transport, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
+    }
+
+    private fun profileTransportLabel(profile: VpnProfile): String? {
+        if (profile.kind != VpnProfileKind.XRAY) return null
+        val cached = transportLabelCache[profile.id]
+        if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
+        val label = runCatching { profileStore.loadRawConfig(profile.id) }
+            .getOrNull()
+            ?.let { raw -> V2RayLinkInspector.inspect(raw)?.shortLabel }
+        transportLabelCache[profile.id] = profile.updatedAtEpochMs to label
+        return label
     }
 
     private fun primaryProfileNameSegment(name: String): String {
@@ -2432,6 +2447,7 @@ class MainActivity : Activity() {
             profile.displayName.cleanProfileLabel(),
             compactProfileTitle(profile),
             compactProfileSubtitle(profile),
+            profileTransportLabel(profile),
             profile.kind.displayName,
             profile.lastVerifiedNetwork,
             profile.lastTestNetwork,
@@ -2482,7 +2498,8 @@ class MainActivity : Activity() {
             ?: "Ready"
         val title = compactProfileTitle(profile).shortUi(22)
         val subtitle = compactProfileSubtitle(profile)?.shortUi(18)
-        return listOfNotNull(profileFlagOrIcon(profile), title, subtitle, health)
+        val transport = profileTransportLabel(profile)
+        return listOfNotNull(profileFlagOrIcon(profile), title, transport, subtitle, health)
             .joinToString(" • ")
     }
 
