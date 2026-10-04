@@ -2983,6 +2983,7 @@ class MainActivity : Activity() {
                         refreshProfileButtons()
                         updateDashboardSummary()
                         setActionStatus("Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
+                            sync.transportSummary.statusSuffix() +
                             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
                         showSection(AppSection.PROFILES)
                         maybeAutoRankBestProfile("subscription")
@@ -3012,6 +3013,7 @@ class MainActivity : Activity() {
                         refreshProfileButtons()
                         updateDashboardSummary()
                         setActionStatus("Clipboard subscription ${sync.group.displayName.shortUi(28)} imported: ${sync.profiles.size} profiles saved" +
+                            sync.transportSummary.statusSuffix() +
                             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
                         showSection(AppSection.PROFILES)
                         maybeAutoRankBestProfile("clipboard subscription")
@@ -3053,6 +3055,7 @@ class MainActivity : Activity() {
             throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links.")
         }
 
+        val transportSummary = summarizeTransportLabels(links)
         val savedProfiles = mutableListOf<VpnProfile>()
         var skipped = 0
         links.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, link ->
@@ -3079,8 +3082,28 @@ class MainActivity : Activity() {
             profileIds = savedProfileIds,
             result = resultText
         ) ?: storedGroup
-        return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped)
+        return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped, transportSummary)
     }
+
+    private fun summarizeTransportLabels(links: List<String>): String? {
+        val counts = links.asSequence()
+            .mapNotNull { link -> V2RayLinkInspector.inspectLink(link)?.shortLabel }
+            .filter { it.isNotBlank() }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(4)
+        if (counts.isEmpty()) return null
+        val hidden = (links.size - counts.sumOf { it.value }).coerceAtLeast(0)
+        return counts.joinToString(", ") { (label, count) -> "$label $count" } +
+            if (hidden > 0) ", +$hidden other" else ""
+    }
+
+    private fun String?.statusSuffix(): String = this
+        ?.takeIf { it.isNotBlank() }
+        ?.let { " • $it" }
+        .orEmpty()
 
     private fun fetchSubscriptionText(urlText: String): String {
         val parsedUrl = URL(urlText.trim())
@@ -4169,7 +4192,8 @@ class MainActivity : Activity() {
         val group: SubscriptionGroup,
         val profiles: List<VpnProfile>,
         val linkCount: Int,
-        val skippedCount: Int
+        val skippedCount: Int,
+        val transportSummary: String?
     )
 
     private data class ConfigProbeSummary(
