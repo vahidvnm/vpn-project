@@ -1,7 +1,9 @@
 package com.vpnproject.app.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -13,6 +15,7 @@ class V2RayLinkInspectorTest {
             "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=reality&type=tcp&sni=www.example.com&pbk=KEY&sid=1#r"
         )
         assertEquals("Reality", descriptor?.shortLabel)
+        assertTrue(descriptor?.runtimeSupported == true)
     }
 
     @Test
@@ -26,11 +29,12 @@ class V2RayLinkInspectorTest {
     @Test
     fun labelsGrpcTlsFromVmess() {
         val vmess = """
-            {"v":"2","ps":"grpc","add":"example.com","port":"443","id":"11111111-1111-1111-1111-111111111111","net":"grpc","tls":"tls","path":"svc"}
+            {"v":"2","ps":"🇩🇪 Germany / Berlin / fast grpc","add":"example.com","port":"443","id":"11111111-1111-1111-1111-111111111111","net":"grpc","tls":"tls","path":"svc"}
         """.trimIndent()
         val link = "vmess://${Base64.getEncoder().encodeToString(vmess.toByteArray(StandardCharsets.UTF_8))}"
         val descriptor = V2RayLinkInspector.inspectLink(link)
         assertEquals("gRPC/TLS", descriptor?.shortLabel)
+        assertEquals("🇩🇪 Germany / Berlin", descriptor?.displayName)
     }
 
     @Test
@@ -47,6 +51,22 @@ class V2RayLinkInspectorTest {
         val encoded = Base64.getEncoder().encodeToString(subscription.toByteArray(StandardCharsets.UTF_8))
         val descriptor = V2RayLinkInspector.inspect(encoded)
         assertEquals("WS/TLS", descriptor?.shortLabel)
+    }
+
+    @Test
+    fun rejectsRawLinkOrSecretLikeDisplayNames() {
+        assertNull(V2RayLinkInspector.safeDisplayName("vless://uuid@example.com:443?security=reality"))
+        assertNull(V2RayLinkInspector.safeDisplayName("11111111-1111-1111-1111-111111111111"))
+    }
+
+    @Test
+    fun marksUnsupportedRuntimeTransport() {
+        val descriptor = V2RayLinkInspector.inspectLink(
+            "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&type=kcp#old-kcp"
+        )
+        assertEquals("mKCP", descriptor?.shortLabel)
+        assertFalse(descriptor?.runtimeSupported == true)
+        assertEquals("Unsupported transport kcp", descriptor?.runtimeIssue)
     }
 
     @Test

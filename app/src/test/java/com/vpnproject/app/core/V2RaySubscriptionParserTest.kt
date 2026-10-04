@@ -18,6 +18,16 @@ class V2RaySubscriptionParserTest {
     }
 
     @Test
+    fun extractsLinksFromJsonOrYamlStyleText() {
+        val vless = "vless://00000000-0000-4000-8000-000000000000@edge.example.com:443?security=tls&type=ws&host=a.example,b.example#Edge"
+        val trojan = "trojan://secret@trojan.example.com:443?security=reality&pbk=KEY&type=tcp#Reality"
+
+        val links = V2RaySubscriptionParser.extractLinks("{\"nodes\":[\"$vless\",\"$trojan\"]}")
+
+        assertEquals(listOf(vless, trojan), links)
+    }
+
+    @Test
     fun deduplicatesDirectAndDecodedLinks() {
         val vmessJson = "{\"v\":\"2\",\"ps\":\"node\",\"add\":\"edge.example.net\",\"port\":\"443\",\"id\":\"00000000-0000-4000-8000-000000000000\",\"aid\":\"0\",\"net\":\"ws\",\"type\":\"none\",\"tls\":\"tls\"}"
         val vmess = "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"

@@ -100,6 +100,16 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsFromJsonArrayWrappedShareLink() {
+        val link = "vless://11111111-1111-1111-1111-111111111111@edge.example:443" +
+            "?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Wrapped"
+        val json = buildJson("{\"nodes\":[\"$link\"]}")
+
+        assertContains(json, "\"network\": \"ws\"")
+        assertContains(json, "\"wsSettings\"")
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

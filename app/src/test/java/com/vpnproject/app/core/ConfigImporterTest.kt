@@ -95,7 +95,18 @@ class ConfigImporterTest {
             ),
             config.endpoints.single()
         )
+        assertTrue(config.warnings.any { it.contains("Detected WS/TLS") })
         assertTrue(config.warnings.any { it.contains("experimental embedded Xray engine") })
+    }
+
+    @Test
+    fun warnsWhenV2RayTransportIsNotRuntimeMappedYet() {
+        val text = "vless://00000000-0000-4000-8000-000000000000@cdn.example.com:443?security=tls&type=kcp#old-kcp"
+
+        val config = ConfigImporter.parse(text)
+
+        assertEquals(ConfigKind.V2RAY, config.kind)
+        assertTrue(config.warnings.any { it.contains("Embedded Xray support warning") && it.contains("Unsupported transport kcp") })
     }
 
     @Test

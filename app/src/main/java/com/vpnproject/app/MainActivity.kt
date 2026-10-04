@@ -107,7 +107,7 @@ class MainActivity : Activity() {
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
-    private val transportLabelCache = mutableMapOf<String, Pair<Long, String?>>()
+    private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
     private lateinit var navHomeButton: TextView
     private lateinit var navProfilesButton: TextView
     private lateinit var navToolsButton: TextView
@@ -1965,6 +1965,7 @@ class MainActivity : Activity() {
         profile?.let { compactProfileTitle(it) } ?: fallback.shortUi(24)
 
     private fun compactProfileTitle(profile: VpnProfile): String {
+        val inspectedName = profileXrayDescriptor(profile)?.displayName
         val base = primaryProfileNameSegment(profile.displayName.cleanProfileLabel())
         val title = base.substringBefore("/")
             .substringBefore("(")
@@ -1974,7 +1975,9 @@ class MainActivity : Activity() {
             .replace("✅", "")
             .trim(' ', '•', '-', '·')
             .trim()
-        return title.ifBlank { profile.endpoints.firstOrNull()?.host?.shortHost() ?: profile.kind.displayName }.shortUi(24)
+        return (inspectedName ?: title)
+            .ifBlank { profile.endpoints.firstOrNull()?.host?.shortHost() ?: profile.kind.displayName }
+            .shortUi(24)
     }
 
     private fun compactProfileSubtitle(profile: VpnProfile): String? {
@@ -1993,7 +1996,10 @@ class MainActivity : Activity() {
     }
 
     private fun profileFlagOrIcon(profile: VpnProfile): String {
-        val label = profile.displayName.cleanProfileLabel()
+        val label = listOfNotNull(
+            profile.displayName.cleanProfileLabel(),
+            profileXrayDescriptor(profile)?.displayName
+        ).joinToString(" ")
         return listOf("🇮🇷", "🇳🇱", "🇺🇸", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺", "🇸🇬")
             .firstOrNull { label.contains(it) }
             ?: when (profile.kind) {
@@ -2014,15 +2020,18 @@ class MainActivity : Activity() {
         return listOfNotNull(transport, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
     }
 
-    private fun profileTransportLabel(profile: VpnProfile): String? {
+    private fun profileTransportLabel(profile: VpnProfile): String? =
+        profileXrayDescriptor(profile)?.shortLabel
+
+    private fun profileXrayDescriptor(profile: VpnProfile): V2RayLinkInspector.Descriptor? {
         if (profile.kind != VpnProfileKind.XRAY) return null
-        val cached = transportLabelCache[profile.id]
+        val cached = xrayDescriptorCache[profile.id]
         if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
-        val label = runCatching { profileStore.loadRawConfig(profile.id) }
+        val descriptor = runCatching { profileStore.loadRawConfig(profile.id) }
             .getOrNull()
-            ?.let { raw -> V2RayLinkInspector.inspect(raw)?.shortLabel }
-        transportLabelCache[profile.id] = profile.updatedAtEpochMs to label
-        return label
+            ?.let { raw -> V2RayLinkInspector.inspect(raw) }
+        xrayDescriptorCache[profile.id] = profile.updatedAtEpochMs to descriptor
+        return descriptor
     }
 
     private fun primaryProfileNameSegment(name: String): String {
@@ -2448,6 +2457,7 @@ class MainActivity : Activity() {
             compactProfileTitle(profile),
             compactProfileSubtitle(profile),
             profileTransportLabel(profile),
+            profileXrayDescriptor(profile)?.displayName,
             profile.kind.displayName,
             profile.lastVerifiedNetwork,
             profile.lastTestNetwork,
@@ -2660,7 +2670,6 @@ class MainActivity : Activity() {
             updateDashboardSummary()
             return
         }
-        activeConnectionProfileId = selectedProfileId
         lastRecordedVerificationKey = null
         when (config.kind) {
             ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
@@ -2688,6 +2697,7 @@ class MainActivity : Activity() {
     }
 
     private fun startWireGuardEngine(selection: RuntimeConfigSelection, config: ImportedConfig) {
+        activeConnectionProfileId = selectedProfileId
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         val intent = Intent(this, WireGuardVpnService::class.java).apply {
             action = WireGuardVpnService.ACTION_START
@@ -2712,7 +2722,10 @@ class MainActivity : Activity() {
                 result.fold(
                     onSuccess = { runtime -> startXrayEngine(runtime) },
                     onFailure = { error ->
+                        activeConnectionProfileId = null
                         status.text = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        hubStatusTitle.text = "Needs mapper"
+                        hubStatusDetail.text = "This config stayed saved, but embedded Xray cannot start it until the unsupported field is mapped."
                     }
                 )
             }
@@ -2720,6 +2733,7 @@ class MainActivity : Activity() {
     }
 
     private fun startXrayEngine(runtime: V2RayRuntimeConfig) {
+        activeConnectionProfileId = selectedProfileId
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         val intent = Intent(this, XrayVpnService::class.java).apply {
             action = XrayVpnService.ACTION_START
@@ -3061,7 +3075,7 @@ class MainActivity : Activity() {
         links.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, link ->
             val saved = runCatching {
                 val config = ConfigImporter.parse(link)
-                val displayName = config.name?.takeIf { it.isNotBlank() } ?: "${storedGroup.displayName} #${index + 1}"
+                val displayName = subscriptionProfileDisplayName(storedGroup, link, config, index)
                 val profileId = profileStore.stableSubscriptionProfileId(storedGroup.id, link)
                 profileStore.saveImportedConfig(config, displayName, stableProfileId = profileId)
             }.getOrNull()
@@ -3076,13 +3090,28 @@ class MainActivity : Activity() {
         val savedProfileIdSet = savedProfileIds.toSet()
         val staleProfileIds = storedGroup.profileIds.filterNot { it in savedProfileIdSet }
         staleProfileIds.forEach { staleId -> runCatching { profileStore.deleteProfile(staleId) } }
-        val resultText = "$resultVerb ${savedProfiles.size}/${links.size} profiles"
+        val resultText = "$resultVerb ${savedProfiles.size}/${links.size} profiles" + transportSummary.statusSuffix()
         val updatedGroup = profileStore.markSubscriptionSynced(
             groupId = storedGroup.id,
             profileIds = savedProfileIds,
             result = resultText
         ) ?: storedGroup
         return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped, transportSummary)
+    }
+
+    private fun subscriptionProfileDisplayName(
+        group: SubscriptionGroup,
+        link: String,
+        config: ImportedConfig,
+        index: Int
+    ): String {
+        val descriptor = V2RayLinkInspector.inspectLink(link)
+        val inspectedName = descriptor?.displayName
+            ?: V2RayLinkInspector.safeDisplayName(config.name)
+        if (!inspectedName.isNullOrBlank()) return inspectedName.shortUi(72)
+        val groupName = group.displayName.cleanProfileLabel().shortUi(28).ifBlank { "Subscription" }
+        val transport = descriptor?.shortLabel?.takeIf { it.isNotBlank() }
+        return listOfNotNull(groupName, "#${index + 1}", transport).joinToString(" • ").shortUi(72)
     }
 
     private fun summarizeTransportLabels(links: List<String>): String? {
@@ -3196,7 +3225,7 @@ class MainActivity : Activity() {
             return
         }
 
-        importConfigText(clipText, "clipboard")
+        importConfigText(clipText, null)
     }
 
     private fun looksLikeSubscriptionUrl(text: String): Boolean {
@@ -3227,7 +3256,7 @@ class MainActivity : Activity() {
         try {
             val config = ConfigImporter.parse(text, name)
             importedConfig = config
-            val savedProfileLine = saveImportedProfile(config, name)
+            val savedProfileLine = saveImportedProfile(config, importedProfileDisplayName(config, text, name))
             val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
                 "• ${endpoint.protocol}  ${endpoint.host}:${endpoint.port}" +
                     (endpoint.verifyHost?.let { "  verify: $it" } ?: "")
@@ -3257,6 +3286,16 @@ class MainActivity : Activity() {
         }
     }
 
+
+    private fun importedProfileDisplayName(config: ImportedConfig, rawText: String, externalName: String?): String? {
+        if (config.kind == ConfigKind.V2RAY) {
+            V2RayLinkInspector.inspect(rawText)?.displayName?.let { return it }
+            if (externalName.isNullOrBlank()) {
+                V2RayLinkInspector.safeDisplayName(config.name)?.let { return it }
+            }
+        }
+        return externalName ?: config.name
+    }
 
     private fun saveImportedProfile(config: ImportedConfig, displayName: String?): String {
         return runCatching { profileStore.saveImportedConfig(config, displayName) }.fold(
@@ -3915,6 +3954,7 @@ class MainActivity : Activity() {
         val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
         lines += "Endpoint test results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
         lines += currentNetworkDiagnosticNote()
+        config.warnings.take(8).forEach { warning -> lines += "Import note: $warning" }
 
         for (endpoint in config.endpoints) {
             lines += ""

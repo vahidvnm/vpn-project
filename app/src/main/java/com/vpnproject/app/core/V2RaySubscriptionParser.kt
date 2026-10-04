@@ -10,6 +10,7 @@ import java.util.Base64
  */
 object V2RaySubscriptionParser {
     private val supportedSchemes = setOf("vless", "vmess", "trojan", "ss")
+    private val shareLinkPattern = Regex("(?i)(?:vless|vmess|trojan|ss)://[^\\s\"'<>]+")
 
     fun extractLinks(text: String): List<String> {
         val normalized = text.replace("\uFEFF", "").trim()
@@ -20,12 +21,19 @@ object V2RaySubscriptionParser {
         return (direct + decoded).distinctBy { it.trim() }
     }
 
-    private fun candidateLinks(text: String): List<String> = text
-        .lineSequence()
-        .flatMap { line -> line.trim().splitToSequence(Regex("\\s+")) }
-        .map { it.trim().trim('"', '\'') }
+    private fun candidateLinks(text: String): List<String> = shareLinkPattern
+        .findAll(text)
+        .map { match -> cleanCandidate(match.value) }
         .filter { token -> token.isNotBlank() && supportedSchemes.any { scheme -> token.startsWith("$scheme://", ignoreCase = true) } }
         .toList()
+
+    private fun cleanCandidate(value: String): String {
+        var cleaned = value.trim().trim('"', '\'', '[', ']', '(', ')', '{', '}')
+        while (cleaned.lastOrNull() in listOf(',', ';', '.', ']')) {
+            cleaned = cleaned.dropLast(1).trimEnd()
+        }
+        return cleaned
+    }
 
     private fun decodeWholeSubscription(text: String): String? {
         val compact = text.lineSequence()

@@ -3,6 +3,7 @@ package com.vpnproject.app.engine
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
+import com.vpnproject.app.core.V2RaySubscriptionParser
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -21,25 +22,7 @@ object V2RayRuntimeConfigBuilder {
         )
     }
 
-    internal fun firstShareLink(text: String): String? {
-        val direct = text.replace("\uFEFF", "")
-            .lineSequence()
-            .flatMap { line -> line.trim().splitToSequence(Regex("\\s+")) }
-            .firstOrNull { token -> isShareLink(token) }
-        if (direct != null) return direct.trim()
-
-        val decoded = decodeBase64Text(text.replace("\uFEFF", "").trim().lineSequence().joinToString("")) ?: return null
-        return decoded.lineSequence()
-            .flatMap { line -> line.trim().splitToSequence(Regex("\\s+")) }
-            .firstOrNull { token -> isShareLink(token) }
-            ?.trim()
-    }
-
-    private fun isShareLink(token: String): Boolean =
-        token.startsWith("vless://", ignoreCase = true) ||
-            token.startsWith("vmess://", ignoreCase = true) ||
-            token.startsWith("trojan://", ignoreCase = true) ||
-            token.startsWith("ss://", ignoreCase = true)
+    internal fun firstShareLink(text: String): String? = V2RaySubscriptionParser.extractLinks(text).firstOrNull()
 
     private fun parseLink(link: String): V2RayProfile {
         val scheme = link.substringBefore("://").lowercase()

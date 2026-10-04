@@ -19,17 +19,10 @@ import java.util.Base64
 object V2RayConfigParser {
     private val supportedSchemes = setOf("vless", "vmess", "trojan", "ss")
 
-    fun looksLikeV2Ray(text: String): Boolean = candidateLines(text).any { line ->
-        supportedSchemes.any { scheme -> line.startsWith("$scheme://", ignoreCase = true) }
-    } || decodeWholeSubscription(text).orEmpty().lineSequence().any { line ->
-        supportedSchemes.any { scheme -> line.trim().startsWith("$scheme://", ignoreCase = true) }
-    }
+    fun looksLikeV2Ray(text: String): Boolean = V2RaySubscriptionParser.extractLinks(text).isNotEmpty()
 
     fun parse(text: String, name: String? = null): ImportedConfig {
-        val directLines = candidateLines(text)
-        val lines = directLines.ifEmpty {
-            decodeWholeSubscription(text)?.let { candidateLines(it) }.orEmpty()
-        }
+        val lines = V2RaySubscriptionParser.extractLinks(text)
 
         val endpoints = mutableListOf<EndpointCandidate>()
         val warnings = mutableListOf<String>()
@@ -103,8 +96,9 @@ object V2RayConfigParser {
             host.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
         )
         val warnings = buildList {
+            addAll(inspectorWarnings(line, host, port))
             if (protocol == VpnProtocol.V2RAY_REALITY) {
-                add("$scheme REALITY endpoint ${host}:$port can only be TCP-probed for now; REALITY validation needs the eventual Xray engine.")
+                add("$scheme REALITY endpoint ${host}:$port can only be TCP-probed for now; REALITY validation needs the embedded Xray engine.")
             }
             if (params["type"].equals("grpc", ignoreCase = true)) {
                 add("gRPC transport detected for ${host}:$port; the current probe checks reachability, not full gRPC/V2Ray login.")
@@ -145,6 +139,7 @@ object V2RayConfigParser {
             host.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
         )
         val warnings = buildList {
+            addAll(inspectorWarnings(line, host, port))
             jsonStringField(json, "net")?.let { net ->
                 if (net.equals("grpc", ignoreCase = true)) {
                     add("VMess gRPC transport detected for ${host}:$port; the current probe checks reachability, not full gRPC/V2Ray login.")
@@ -191,21 +186,14 @@ object V2RayConfigParser {
         )
     }
 
-    private fun candidateLines(text: String): List<String> = text
-        .replace("\uFEFF", "")
-        .lineSequence()
-        .flatMap { line -> line.trim().splitToSequence(Regex("\\s+")) }
-        .map { it.trim() }
-        .filter { token ->
-            token.isNotBlank() &&
-                !token.startsWith("#") &&
-                supportedSchemes.any { scheme -> token.startsWith("$scheme://", ignoreCase = true) }
+    private fun inspectorWarnings(line: String, host: String, port: Int): List<String> {
+        val descriptor = V2RayLinkInspector.inspectLink(line) ?: return emptyList()
+        val warnings = mutableListOf("Detected ${descriptor.shortLabel} V2Ray/Xray profile for ${host}:$port; secrets stay encrypted locally and are not shown in UI labels.")
+        if (!descriptor.runtimeSupported) {
+            warnings += "Embedded Xray support warning for ${host}:$port: ${descriptor.runtimeIssue ?: "unsupported feature"}. Endpoint tests can still run, but Connect needs runtime mapper support for this feature."
         }
-        .toList()
-
-    private fun decodeWholeSubscription(text: String): String? = decodeBase64Text(
-        text.replace("\uFEFF", "").trim().lineSequence().filterNot { it.trim().startsWith("#") }.joinToString("")
-    )
+        return warnings
+    }
 
     private fun parseQuery(queryText: String): Map<String, String> {
         if (queryText.isBlank()) return emptyMap()
