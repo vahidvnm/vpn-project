@@ -3027,25 +3027,36 @@ class MainActivity : Activity() {
             setActionStatus("Subscription URL is empty.")
             return
         }
+        if (existingGroup == null) {
+            prepareNewSubscriptionImport(name, url)
+        } else {
+            startSubscriptionUrlSync(name, url, existingGroup, requestedLimit = null)
+        }
+    }
+
+    private fun prepareNewSubscriptionImport(name: String, url: String) {
         setActionStatus("Fetching subscription group ${name.shortUi(28)}...")
         Thread {
-            val result = runCatching { syncSubscriptionGroupBlocking(name, url, existingGroup) }
+            val result = runCatching {
+                val subscriptionText = fetchSubscriptionText(url)
+                val candidates = subscriptionCandidateTexts(subscriptionText)
+                if (candidates.isEmpty()) {
+                    throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links or Clash YAML proxies.")
+                }
+                SubscriptionImportPreview(
+                    subscriptionText = subscriptionText,
+                    totalCount = candidates.size,
+                    transportSummary = summarizeSubscriptionCandidates(subscriptionText, candidates)
+                )
+            }
             runOnUiThread {
                 result.fold(
-                    onSuccess = { sync ->
-                        selectedLocationGroupFilter = sync.group.id
-                        sync.profiles.firstOrNull()?.let { profile ->
-                            selectedProfile = profile
-                            selectedProfileId = profile.id
-                            importedConfig = loadProfileConfig(profile)
+                    onSuccess = { preview ->
+                        if (preview.totalCount > MAX_SUBSCRIPTION_LINKS) {
+                            showSubscriptionImportLimitSheet(name, url, preview)
+                        } else {
+                            startFetchedSubscriptionSync(name, url, existingGroup = null, subscriptionText = preview.subscriptionText, requestedLimit = preview.totalCount)
                         }
-                        refreshProfileButtons()
-                        updateDashboardSummary()
-                        setActionStatus("Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size} profiles saved" +
-                            sync.transportSummary.statusSuffix() +
-                            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
-                        showSection(AppSection.PROFILES)
-                        maybeAutoRankBestProfile("subscription")
                     },
                     onFailure = { error ->
                         setActionStatus("Subscription sync failed: ${error.message ?: error.javaClass.simpleName}")
@@ -3054,6 +3065,147 @@ class MainActivity : Activity() {
                 )
             }
         }.start()
+    }
+
+    private fun showSubscriptionImportLimitSheet(
+        name: String,
+        url: String,
+        preview: SubscriptionImportPreview
+    ) {
+        val safeAll = preview.totalCount.coerceAtMost(MAX_SUBSCRIPTION_TOTAL_PROFILES)
+        val quarter = ((preview.totalCount + 3) / 4).coerceAtLeast(1)
+        val half = ((preview.totalCount + 1) / 2).coerceAtLeast(1)
+        showBottomSheet(
+            title = "Large subscription found",
+            subtitle = "${preview.totalCount} configs detected. Choose how many to save now."
+        ) { dialog ->
+            addView(TextView(this@MainActivity).apply {
+                text = "Import fewer configs for a lighter phone list, or import all when you want the full provider queue. Queue tests stay manual and capped."
+                textSize = 12.5f
+                setTextColor(0xFF64748B.toInt())
+                setPadding(dp(8), dp(10), dp(8), dp(6))
+            })
+            fun addLimitRow(icon: String, title: String, requested: Int, description: String) {
+                val limit = clampSubscriptionImportLimit(requested, preview.totalCount)
+                addView(bottomSheetActionRow(icon, title, "Save $limit/${preview.totalCount}. $description") {
+                    dialog.dismiss()
+                    startFetchedSubscriptionSync(name, url, existingGroup = null, subscriptionText = preview.subscriptionText, requestedLimit = limit)
+                })
+            }
+            addLimitRow("◎", "Recommended 80", MAX_SUBSCRIPTION_LINKS, "Fastest import; use Load more later.")
+            addLimitRow("1", "100 configs", 100, "Small manual queue.")
+            addLimitRow("2", "200 configs", 200, "Bigger but still light.")
+            addLimitRow("¼", "Quarter", quarter, "About one quarter of this subscription.")
+            addLimitRow("½", "Half", half, "About half of this subscription.")
+            addLimitRow("∞", if (preview.totalCount <= MAX_SUBSCRIPTION_TOTAL_PROFILES) "All configs" else "Max safe import", safeAll, if (preview.totalCount <= MAX_SUBSCRIPTION_TOTAL_PROFILES) "Import the full subscription." else "This preview build caps huge imports at $MAX_SUBSCRIPTION_TOTAL_PROFILES.")
+            addView(bottomSheetActionRow("#", "Custom amount", "Type any number up to $safeAll") {
+                dialog.dismiss()
+                promptCustomSubscriptionImportLimit(name, url, preview)
+            })
+            addView(bottomSheetActionRow("×", "Cancel", "Do not save this subscription now") {
+                dialog.dismiss()
+                setActionStatus("Subscription import cancelled.")
+            })
+        }
+    }
+
+    private fun promptCustomSubscriptionImportLimit(
+        name: String,
+        url: String,
+        preview: SubscriptionImportPreview
+    ) {
+        val maxAllowed = preview.totalCount.coerceAtMost(MAX_SUBSCRIPTION_TOTAL_PROFILES)
+        showBottomSheet(
+            title = "Custom import amount",
+            subtitle = "${preview.totalCount} configs detected. Enter 1 to $maxAllowed."
+        ) { dialog ->
+            val amountInput = EditText(this@MainActivity).apply {
+                hint = "e.g. 300"
+                textSize = 14f
+                inputType = InputType.TYPE_CLASS_NUMBER
+                setSingleLine(true)
+                setText(MAX_SUBSCRIPTION_LINKS.toString())
+                setPadding(dp(14), 0, dp(14), 0)
+                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(54)
+                ).apply { setMargins(0, dp(8), 0, dp(8)) }
+            }
+            addView(amountInput)
+            addView(bottomSheetActionRow("✓", "Import custom amount", "Save the requested number now") {
+                val requested = amountInput.text?.toString()?.trim()?.toIntOrNull()
+                if (requested == null || requested <= 0) {
+                    setActionStatus("Enter a valid number between 1 and $maxAllowed.")
+                    return@bottomSheetActionRow
+                }
+                val limit = clampSubscriptionImportLimit(requested, preview.totalCount)
+                dialog.dismiss()
+                startFetchedSubscriptionSync(name, url, existingGroup = null, subscriptionText = preview.subscriptionText, requestedLimit = limit)
+            })
+            addView(bottomSheetActionRow("×", "Cancel", "Back without saving") {
+                dialog.dismiss()
+                setActionStatus("Subscription import cancelled.")
+            })
+        }
+    }
+
+    private fun startSubscriptionUrlSync(
+        name: String,
+        url: String,
+        existingGroup: SubscriptionGroup?,
+        requestedLimit: Int?
+    ) {
+        setActionStatus("Fetching subscription group ${name.shortUi(28)}...")
+        Thread {
+            val result = runCatching { syncSubscriptionGroupBlocking(name, url, existingGroup, requestedLimit = requestedLimit) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { sync -> handleSubscriptionSyncSuccess(sync) },
+                    onFailure = { error -> handleSubscriptionSyncFailure(error) }
+                )
+            }
+        }.start()
+    }
+
+    private fun startFetchedSubscriptionSync(
+        name: String,
+        url: String,
+        existingGroup: SubscriptionGroup?,
+        subscriptionText: String,
+        requestedLimit: Int
+    ) {
+        setActionStatus("Saving ${requestedLimit} configs for ${name.shortUi(28)}...")
+        Thread {
+            val result = runCatching { syncFetchedSubscriptionGroupBlocking(name, url, existingGroup, subscriptionText, requestedLimit) }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { sync -> handleSubscriptionSyncSuccess(sync) },
+                    onFailure = { error -> handleSubscriptionSyncFailure(error) }
+                )
+            }
+        }.start()
+    }
+
+    private fun handleSubscriptionSyncSuccess(sync: SubscriptionSyncResult) {
+        selectedLocationGroupFilter = sync.group.id
+        sync.profiles.firstOrNull()?.let { profile ->
+            selectedProfile = profile
+            selectedProfileId = profile.id
+            importedConfig = loadProfileConfig(profile)
+        }
+        refreshProfileButtons()
+        updateDashboardSummary()
+        setActionStatus("Subscription group ${sync.group.displayName.shortUi(28)} synced: ${sync.profiles.size}/${sync.linkCount} profiles saved" +
+            sync.transportSummary.statusSuffix() +
+            if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
+        showSection(AppSection.PROFILES)
+        maybeAutoRankBestProfile("subscription")
+    }
+
+    private fun handleSubscriptionSyncFailure(error: Throwable) {
+        setActionStatus("Subscription sync failed: ${error.message ?: error.javaClass.simpleName}")
+        refreshProfileButtons()
     }
 
     private fun loadMoreSubscriptionGroup(group: SubscriptionGroup) {
@@ -3129,6 +3281,16 @@ class MainActivity : Activity() {
         requestedLimit: Int? = null
     ): SubscriptionSyncResult {
         val subscriptionText = fetchSubscriptionText(url)
+        return syncFetchedSubscriptionGroupBlocking(name, url, existingGroup, subscriptionText, requestedLimit)
+    }
+
+    private fun syncFetchedSubscriptionGroupBlocking(
+        name: String,
+        url: String,
+        existingGroup: SubscriptionGroup?,
+        subscriptionText: String,
+        requestedLimit: Int? = null
+    ): SubscriptionSyncResult {
         val existingName = existingGroup?.displayName?.cleanProfileLabel()
         val savedName = when {
             existingName.isNullOrBlank() -> name
@@ -3136,10 +3298,16 @@ class MainActivity : Activity() {
             else -> existingName
         }
         val storedGroup = profileStore.saveSubscriptionGroup(savedName, url)
+        val candidateCount = subscriptionCandidateTexts(subscriptionText).size.takeIf { it > 0 }
         val profileLimit = requestedLimit
             ?: existingGroup?.profileIds?.size?.coerceAtLeast(MAX_SUBSCRIPTION_LINKS)
             ?: MAX_SUBSCRIPTION_LINKS
-        return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Synced", profileLimit = profileLimit)
+        return syncSubscriptionTextIntoGroup(
+            storedGroup = storedGroup,
+            subscriptionText = subscriptionText,
+            resultVerb = "Synced",
+            profileLimit = candidateCount?.let { profileLimit.coerceAtMost(it) } ?: profileLimit
+        )
     }
 
     private fun syncClipboardSubscriptionGroupBlocking(
@@ -3150,24 +3318,31 @@ class MainActivity : Activity() {
         return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Imported from clipboard", profileLimit = MAX_SUBSCRIPTION_LINKS)
     }
 
+    private fun subscriptionCandidateTexts(subscriptionText: String): List<String> {
+        val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
+        return if (links.isNotEmpty()) links else ClashConfigParser.splitProxyTexts(subscriptionText)
+    }
+
+    private fun summarizeSubscriptionCandidates(subscriptionText: String, candidates: List<String>): String? {
+        val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
+        return if (links.isNotEmpty()) summarizeTransportLabels(links) else summarizeClashProxyTexts(candidates)
+    }
+
+    private fun clampSubscriptionImportLimit(requested: Int, totalCount: Int): Int =
+        requested.coerceIn(1, totalCount.coerceAtMost(MAX_SUBSCRIPTION_TOTAL_PROFILES).coerceAtLeast(1))
+
     private fun syncSubscriptionTextIntoGroup(
         storedGroup: SubscriptionGroup,
         subscriptionText: String,
         resultVerb: String,
         profileLimit: Int
     ): SubscriptionSyncResult {
-        val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
-        val clashProxyTexts = if (links.isEmpty()) ClashConfigParser.splitProxyTexts(subscriptionText) else emptyList()
-        val candidates = if (links.isNotEmpty()) links else clashProxyTexts
+        val candidates = subscriptionCandidateTexts(subscriptionText)
         if (candidates.isEmpty()) {
             throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links or Clash YAML proxies.")
         }
 
-        val transportSummary = if (links.isNotEmpty()) {
-            summarizeTransportLabels(links)
-        } else {
-            summarizeClashProxyTexts(clashProxyTexts)
-        }
+        val transportSummary = summarizeSubscriptionCandidates(subscriptionText, candidates)
         val importLimit = profileLimit.coerceIn(1, MAX_SUBSCRIPTION_TOTAL_PROFILES)
         val importCandidates = candidates.take(importLimit)
         val savedProfiles = mutableListOf<VpnProfile>()
@@ -4482,6 +4657,12 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private data class SubscriptionImportPreview(
+        val subscriptionText: String,
+        val totalCount: Int,
+        val transportSummary: String?
+    )
+
     private data class SubscriptionSyncResult(
         val group: SubscriptionGroup,
         val profiles: List<VpnProfile>,
@@ -4535,7 +4716,7 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val SUBSCRIPTION_LOAD_MORE_STEP = 80
-        const val MAX_SUBSCRIPTION_TOTAL_PROFILES = 400
+        const val MAX_SUBSCRIPTION_TOTAL_PROFILES = 2_000
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
