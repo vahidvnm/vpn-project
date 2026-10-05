@@ -578,6 +578,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] اصلاح Clash subscription URL: فایل‌های YAML مثل `clash.yaml` که به‌جای share-link دارای بخش `proxies:` هستند، هنگام refresh به proxyهای جدا تقسیم می‌شوند و تا سقف امن فعلی در subscription group ذخیره می‌شوند.
 - [x] polish بعد از تست گوشی Clash: نام‌های Clash که escape هشت‌رقمی YAML مثل `\U0001F1FA` دارند به emoji/flag واقعی decode می‌شوند، نام subscription از raw GitHub به عنوان قابل‌فهم‌تری مثل `Clash` تبدیل می‌شود، و refresh گروه‌های generic مثل `Raw` هم آن‌ها را rename می‌کند.
 - [x] polish بعد از اسکرین‌شات Clash: flag تکراری از title ردیف/top pill حذف شد و تشخیص flag برای کشورهایی مثل کانادا کامل‌تر شد.
+- [x] مرحله بعدی مدیریت subscription بزرگ: منوی Queue tools برای subscription فعال گزینه `Load more configs` دارد؛ به‌جای import هزاران کانفیگ، هر بار ۸۰ مورد دیگر تا سقف preview امن ۴۰۰ ذخیره می‌شود و refresh همان مقدار load‌شده را حفظ می‌کند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
