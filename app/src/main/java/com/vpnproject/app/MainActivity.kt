@@ -152,6 +152,13 @@ class MainActivity : Activity() {
     private lateinit var autoTestStatusText: TextView
     private var autoTestEnabled = false
     private var autoTestInFlight = false
+    private lateinit var settingsSmartFallbackValueText: TextView
+    private var smartFallbackEnabled = false
+    private var smartFallbackProfileQueue: MutableList<String> = mutableListOf()
+    private var smartFallbackAttemptCount = 0
+    private var smartFallbackInFlight = false
+    private var smartFallbackSessionId = 0
+    private var smartFallbackSuppressFailureUntilMs = 0L
     private lateinit var favoriteActionButton: Button
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
@@ -209,6 +216,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, false)
+        smartFallbackEnabled = appSettings.getBoolean(KEY_SMART_FALLBACK_ENABLED, false)
 
         window.statusBarColor = PearlPalette.PEARL_TOP
         window.navigationBarColor = PearlPalette.PEARL_WHITE
@@ -302,8 +310,10 @@ class MainActivity : Activity() {
         }
         settingsCard.addView(settingsConnectionSummaryText)
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
+        settingsSmartFallbackValueText = TextView(this).apply { text = if (smartFallbackEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
         settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run quick no-VPN latency after import/select", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default. If Connect fails, try a few nearby configs only", settingsSmartFallbackValueText) { toggleSmartFallback() })
         settingsCard.addView(settingsRow("◷", "Test settings", "Real delay URL, queue limits, and live row updates") { showTestSettingsSheet() })
         settingsCard.addView(settingsRow("▦", "Subscriptions", "Groups, refresh all, load more, and search") { showSubscriptionSettingsSheet() })
         settingsCard.addView(settingsRow("⇄", "Routing & DNS", "Kill switch, VPN permission, and advanced routing plan") { showRoutingSettingsSheet() })
@@ -394,6 +404,7 @@ class MainActivity : Activity() {
         setContentView(appRoot)
 
         updateAutoTestToggle()
+        updateSmartFallbackToggle()
         restoreLatestProfileMetadata()
         refreshProfileButtons()
         updateDashboardSummary()
@@ -907,6 +918,32 @@ class MainActivity : Activity() {
             settingsAutoTestValueText.background = roundedBackground(
                 fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
                 strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
+                radiusDp = 14
+            )
+        }
+    }
+
+    private fun toggleSmartFallback() {
+        smartFallbackEnabled = !smartFallbackEnabled
+        appSettings.edit().putBoolean(KEY_SMART_FALLBACK_ENABLED, smartFallbackEnabled).apply()
+        if (!smartFallbackEnabled) clearSmartFallbackSession()
+        updateSmartFallbackToggle()
+        setActionStatus(
+            if (smartFallbackEnabled) {
+                "Smart fallback enabled: after a failed Connect, try up to $MAX_SMART_FALLBACK_ATTEMPTS nearby configs; no queue-wide testing."
+            } else {
+                "Smart fallback disabled. Connect verifies only the selected config."
+            }
+        )
+    }
+
+    private fun updateSmartFallbackToggle() {
+        if (::settingsSmartFallbackValueText.isInitialized) {
+            settingsSmartFallbackValueText.text = if (smartFallbackEnabled) "ON" else "OFF"
+            settingsSmartFallbackValueText.setTextColor(if (smartFallbackEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
+            settingsSmartFallbackValueText.background = roundedBackground(
+                fillColor = if (smartFallbackEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
+                strokeColor = if (smartFallbackEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = 14
             )
         }
@@ -2288,6 +2325,7 @@ class MainActivity : Activity() {
             appendLine("Subscription groups: ${groups.size}")
             appendLine("Quick check limit: ${quickCheckProfileLimit()}")
             appendLine("Real delay limit: ${realDelayProfileLimit()}")
+            appendLine("Smart fallback: ${smartFallbackEnabled} (max $MAX_SMART_FALLBACK_ATTEMPTS)")
             appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
             appendLine("VPN DNS: ${vpnDnsServers(includeLocalhost = false).joinToString(", ")}")
             appendLine("Bypass app packages: ${bypassAppPackages().size}")
@@ -2438,6 +2476,7 @@ class MainActivity : Activity() {
         if (updated != null) {
             lastRecordedVerificationKey = key
             lastRecordedFailureKey = null
+            clearSmartFallbackSession()
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
@@ -2449,6 +2488,7 @@ class MainActivity : Activity() {
         refreshProfiles: Boolean = true
     ) {
         if (hub.state != VpnHubConnectionState.FAILED) return
+        if (smartFallbackInFlight || System.currentTimeMillis() < smartFallbackSuppressFailureUntilMs) return
         val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
         val network = currentNetworkLabel()
         val key = "$profileId:${hub.activeEngine}:${hub.title}:${hub.detail.shortUi(72)}:${network.orEmpty()}"
@@ -2469,6 +2509,100 @@ class MainActivity : Activity() {
             activeConnectionProfileId = updated.id
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
+        maybeStartSmartFallback(hub.detail)
+    }
+
+    private fun beginSmartFallbackSession() {
+        clearSmartFallbackSession()
+        if (!smartFallbackEnabled) return
+        val anchorId = selectedProfileId ?: selectedProfile?.id ?: return
+        val queue = smartFallbackCandidateProfiles(anchorId)
+            .filter { it.id != anchorId }
+            .filter { it.isConnectableByEmbeddedEngines() }
+            .map { it.id }
+            .take(MAX_SMART_FALLBACK_ATTEMPTS)
+        smartFallbackProfileQueue = queue.toMutableList()
+        smartFallbackAttemptCount = 0
+        if (queue.isNotEmpty()) {
+            setActionStatus("Smart fallback armed: ${queue.size} nearby config${if (queue.size == 1) "" else "s"} available if Connect fails.")
+        }
+    }
+
+    private fun clearSmartFallbackSession() {
+        smartFallbackSessionId += 1
+        smartFallbackProfileQueue.clear()
+        smartFallbackAttemptCount = 0
+        smartFallbackInFlight = false
+        smartFallbackSuppressFailureUntilMs = 0L
+    }
+
+    private fun maybeStartSmartFallback(reason: String): Boolean {
+        if (!smartFallbackEnabled || smartFallbackInFlight || smartFallbackProfileQueue.isEmpty()) return false
+        if (VpnService.prepare(this) != null) {
+            clearSmartFallbackSession()
+            setActionStatus("Smart fallback stopped: Android VPN permission is missing.")
+            return false
+        }
+
+        while (smartFallbackProfileQueue.isNotEmpty()) {
+            val nextId = smartFallbackProfileQueue.removeAt(0)
+            val profile = runCatching { profileStore.profile(nextId) }.getOrNull() ?: continue
+            if (!profile.isConnectableByEmbeddedEngines()) continue
+            val config = loadProfileConfigQuiet(profile) ?: continue
+            smartFallbackInFlight = true
+            smartFallbackAttemptCount += 1
+            importedConfig = config
+            selectedProfileId = profile.id
+            selectedProfile = profile
+            activeConnectionProfileId = null
+            lastRecordedVerificationKey = null
+            lastRecordedFailureKey = null
+            val delayMs = SMART_FALLBACK_BASE_DELAY_MS * smartFallbackAttemptCount
+            val sessionId = smartFallbackSessionId
+            smartFallbackSuppressFailureUntilMs = System.currentTimeMillis() + delayMs + SMART_FALLBACK_SUPPRESS_FAILURE_MS
+            val nextLabel = compactProfileTitle(profile)
+            setActionStatus("Smart fallback ${smartFallbackAttemptCount}/$MAX_SMART_FALLBACK_ATTEMPTS: trying $nextLabel after failure. Reason: ${reason.shortUi(48)}")
+            refreshProfileButtons(syncVerified = false)
+            updateDashboardSummary()
+            mainHandler.postDelayed({
+                smartFallbackInFlight = false
+                if (smartFallbackEnabled && smartFallbackSessionId == sessionId && selectedProfileId == profile.id && !isLiveState(currentHubStatus().state)) {
+                    prepareAndStartImportedEngine(isSmartFallbackAttempt = true)
+                }
+            }, delayMs)
+            return true
+        }
+
+        clearSmartFallbackSession()
+        setActionStatus("Smart fallback finished: no more nearby connectable configs in this small capped queue.")
+        return false
+    }
+
+    private fun smartFallbackCandidateProfiles(anchorId: String): List<VpnProfile> {
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val byId = storedProfiles.associateBy { it.id }
+        val sameGroup = groups.firstOrNull { anchorId in it.profileIds }
+        val candidates = if (sameGroup != null) {
+            sameGroup.profileIds.mapNotNull { byId[it] }
+        } else {
+            val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+            storedProfiles.filter { it.id !in subscriptionProfileIds }
+                .ifEmpty { activeLocationProfiles(storedProfiles, groups) }
+        }
+        return candidates
+            .distinctBy { it.id }
+            .sortedWith(profileRankingComparator())
+            .take(MAX_SMART_FALLBACK_CANDIDATES)
+    }
+
+    private fun VpnProfile.isConnectableByEmbeddedEngines(): Boolean = when (kind) {
+        VpnProfileKind.XRAY,
+        VpnProfileKind.SING_BOX,
+        VpnProfileKind.CLASH,
+        VpnProfileKind.WIREGUARD -> true
+        VpnProfileKind.OPENVPN,
+        VpnProfileKind.UNKNOWN -> false
     }
 
     private fun handlePrimaryAction() {
@@ -3430,13 +3564,14 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun prepareAndStartImportedEngine() {
+    private fun prepareAndStartImportedEngine(isSmartFallbackAttempt: Boolean = false) {
         val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
         if (config == null) {
             status.text = "Import or pick a saved V2Ray/Xray profile first. WireGuard/OpenVPN remain advanced fallback imports only."
             updateDashboardSummary()
             return
         }
+        if (!isSmartFallbackAttempt) beginSmartFallbackSession()
         lastRecordedVerificationKey = null
         when (config.kind) {
             ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
@@ -3458,7 +3593,9 @@ class MainActivity : Activity() {
                 result.fold(
                     onSuccess = { selection -> startWireGuardEngine(selection, config) },
                     onFailure = { error ->
-                        status.text = "WireGuard runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        val message = "WireGuard runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        status.text = message
+                        maybeStartSmartFallback(message)
                     }
                 )
             }
@@ -3502,9 +3639,11 @@ class MainActivity : Activity() {
                     onSuccess = { runtime -> startXrayEngine(runtime) },
                     onFailure = { error ->
                         activeConnectionProfileId = null
-                        status.text = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        val message = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        status.text = message
                         hubStatusTitle.text = "Needs mapper"
                         hubStatusDetail.text = "This config stayed saved, but embedded Xray cannot start it until the unsupported field is mapped."
+                        maybeStartSmartFallback(message)
                     }
                 )
             }
@@ -3537,6 +3676,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopImportedEngines() {
+        clearSmartFallbackSession()
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         status.text = "Disconnect requested for active engines."
@@ -5496,6 +5636,10 @@ class MainActivity : Activity() {
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 36
         const val MAX_REAL_DELAY_PROFILES = 8
+        const val MAX_SMART_FALLBACK_ATTEMPTS = 3
+        const val MAX_SMART_FALLBACK_CANDIDATES = 24
+        const val SMART_FALLBACK_BASE_DELAY_MS = 1_500L
+        const val SMART_FALLBACK_SUPPRESS_FAILURE_MS = 5_000L
         const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
         const val MAX_REAL_DELAY_SETTING_LIMIT = 32
         const val MAX_REAL_DELAY_URLS = 4
@@ -5512,6 +5656,7 @@ class MainActivity : Activity() {
         const val LIVE_REFRESH_IDLE_MS = 6_000L
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
+        const val KEY_SMART_FALLBACK_ENABLED = "smart_fallback_enabled"
         const val KEY_QUICK_CHECK_LIMIT = "quick_check_limit"
         const val KEY_REAL_DELAY_LIMIT = "real_delay_limit"
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"

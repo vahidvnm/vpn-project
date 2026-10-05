@@ -589,12 +589,13 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله بعد Routing & DNS: تنظیم VPN DNS برای Android VPN/Xray core و لیست packageهای bypass برای per-app routing پایه اضافه شد؛ LAN/private IP bypass فعلاً برای Xray مستقیم/ON نگه داشته شد و گزینه‌های Fragment/Mux/FakeDNS به مرحله Advanced موکول شدند.
 - [x] مرحله Advanced Xray: کنترل‌های Sniffing، Mux/concurrency و log level به Settings اضافه شدند و واقعاً وارد runtime JSON/Real delay می‌شوند؛ Fragment و FakeDNS فعلاً planned/خاموش ماندند تا بدون نگاشت مطمئن اتصال خراب نشود.
 - [x] مرحله verification تکمیلی Xray: هنگام Connect یک HTTP proxy لوکال فقط روی `127.0.0.1` داخل runtime ساخته می‌شود تا بعد از بالا آمدن VPN، public egress IP و مسیر DNS/DoH به‌صورت best-effort از مسیر Xray چک شود؛ جزئیات leak همچنان امن/غیرمحرمانه گزارش می‌شود.
-- [x] مرحله lifecycle/reconnect اولیه Xray: سرویس Xray تغییر شبکه Wi‑Fi/mobile/VPN capability را با `ConnectivityManager` می‌گیرد، underlying network را refresh می‌کند، foreground notification را زنده نگه می‌دارد و verification را با debounce دوباره اجرا می‌کند؛ auto-switch بین کانفیگ‌ها هنوز مرحله بعد است.
+- [x] مرحله lifecycle/reconnect اولیه Xray: سرویس Xray تغییر شبکه Wi‑Fi/mobile/VPN capability را با `ConnectivityManager` می‌گیرد، underlying network را refresh می‌کند، foreground notification را زنده نگه می‌دارد و verification را با debounce دوباره اجرا می‌کند.
+- [x] مرحله Smart fallback امن: گزینه Settings با پیش‌فرض OFF اضافه شد؛ اگر کاربر روشن کند و Connect شکست بخورد، اپ فقط تا ۳ کانفیگ نزدیک/هم‌گروه را با backoff کوتاه امتحان می‌کند و queue-wide test یا اسکن هزاران کانفیگ انجام نمی‌دهد.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
 - [ ] DNS leak test کامل‌تر با سرویس authoritative/اختصاصی یا endpoint قابل‌اعتماد، فراتر از check فعلی DoH-through-Xray.
-- [ ] reconnect کامل با restart/backoff و انتخاب لینک/route بعدی در صورت شکست.
+- [ ] reconnect کامل production-grade با restart/backoff سرویس، معیارهای شکست دقیق‌تر، و انتخاب لینک/route بعدی در background؛ نسخه امن UI-driven Smart fallback فعلاً انجام شده است.
 - [ ] review نهایی license/notice برای Xray/V2Ray داخلی.
 - [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN، اگر config سالم پیدا شد.
 - [ ] انتخاب license/engine برای OpenVPN داخلی.
