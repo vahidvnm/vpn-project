@@ -294,7 +294,7 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [ ] test matrix گوشی برای transportهای بیشتر: `ws/tls`, `tcp/none`, `tcp` با HTTP header, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
   - [ ] تشخیص credential/transport/server failure با پیام‌های قابل فهم‌تر برای کاربر.
   - [ ] review کامل license/LGPL و noticeهای production.
-  - [ ] verification قوی‌تر با egress IP، DNS leak check و جلوگیری از leak.
+  - [x] verification قوی‌تر Xray با public egress IP و DNS-route check از مسیر loopback proxy داخلی؛ DNS leak test کامل‌تر هنوز به endpoint اختصاصی/قابل‌اعتماد نیاز دارد.
 
 تصمیم اجرایی: برای اولین engine، WireGuard انتخاب شد چون embeddable Android tunnel library رسمی و Apache-2.0 دارد و سریع‌تر از OpenVPN قابل embed بود؛ اما تست ایران نشان داد WireGuard/UDP نمی‌تواند مسیر اصلی باشد. بعد از تست موفق `VERIFIED` با embedded Xray، مسیر عملی MVP برای ایران به Xray/V2Ray-compatible configs با config کاربر تغییر کرده است. OpenVPN TCP/443 هنوز fallback/handoff مهم است و WireGuard برای شبکه‌هایی که UDP کار می‌کند باقی می‌ماند.
 
@@ -387,8 +387,8 @@ Failed
 
 - [ ] verification تکمیلی:
   - [x] Xray HTTP delay check + core traffic stats.
-  - [ ] public egress IP check بعد از Xray بدون leak.
-  - [ ] DNS leak check از داخل تونل.
+  - [x] public egress IP check بعد از Xray با HTTP proxy لوکال داخل همان runtime.
+  - [x] DNS route check best-effort از مسیر Xray/DoH؛ leak test authoritative واقعی هنوز باقی است.
   - [x] نمایش RX/TX خلاصه برای Xray از `queryAllOutboundTrafficStats`.
   - [x] live polling اولیه traffic counter از Xray service به dashboard.
   - [x] جلوگیری از تکرار چندباره lineهای `Stats:` در Advanced diagnostics.
@@ -587,10 +587,11 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] شروع Settings شبیه v2rayNG ولی ساده‌تر: ردیف‌های Test settings، Subscriptions، Routing & DNS و Diagnostics اضافه شدند؛ Quick check/Real delay limit و Real delay URL قابل تنظیم شدند و safe diagnostics قابل کپی است.
 - [x] مرحله بعد Routing & DNS: تنظیم VPN DNS برای Android VPN/Xray core و لیست packageهای bypass برای per-app routing پایه اضافه شد؛ LAN/private IP bypass فعلاً برای Xray مستقیم/ON نگه داشته شد و گزینه‌های Fragment/Mux/FakeDNS به مرحله Advanced موکول شدند.
 - [x] مرحله Advanced Xray: کنترل‌های Sniffing، Mux/concurrency و log level به Settings اضافه شدند و واقعاً وارد runtime JSON/Real delay می‌شوند؛ Fragment و FakeDNS فعلاً planned/خاموش ماندند تا بدون نگاشت مطمئن اتصال خراب نشود.
+- [x] مرحله verification تکمیلی Xray: هنگام Connect یک HTTP proxy لوکال فقط روی `127.0.0.1` داخل runtime ساخته می‌شود تا بعد از بالا آمدن VPN، public egress IP و مسیر DNS/DoH به‌صورت best-effort از مسیر Xray چک شود؛ جزئیات leak همچنان امن/غیرمحرمانه گزارش می‌شود.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
-- [ ] public egress IP + DNS leak verification برای Xray.
+- [ ] DNS leak test کامل‌تر با سرویس authoritative/اختصاصی یا endpoint قابل‌اعتماد، فراتر از check فعلی DoH-through-Xray.
 - [ ] reconnect کامل با restart/backoff و انتخاب لینک/route بعدی در صورت شکست.
 - [ ] review نهایی license/notice برای Xray/V2Ray داخلی.
 - [ ] تست گوشی با OpenVPN TCP/443 pinned config در یک کلاینت OpenVPN، اگر config سالم پیدا شد.

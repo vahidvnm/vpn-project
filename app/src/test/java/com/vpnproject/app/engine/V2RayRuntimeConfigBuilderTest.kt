@@ -229,6 +229,24 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun optionalLoopbackHttpInboundIsAddedForPostConnectChecks() {
+        val runtime = V2RayRuntimeConfigBuilder.build(
+            ImportedConfig(
+                kind = ConfigKind.V2RAY,
+                originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#LocalCheck",
+                endpoints = emptyList()
+            ),
+            localHttpProxyPort = 23456
+        )
+
+        assertContains(runtime.configJson, "\"tag\": \"loopback-http\"")
+        assertContains(runtime.configJson, "\"listen\": \"127.0.0.1\"")
+        assertContains(runtime.configJson, "\"port\": 23456")
+        assertContains(runtime.configJson, "\"protocol\": \"http\"")
+        assertTrue(runtime.localHttpProxyPort == 23456)
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

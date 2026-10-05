@@ -17,7 +17,8 @@ object V2RayRuntimeConfigBuilder {
         sniffingEnabled: Boolean = true,
         muxEnabled: Boolean = false,
         muxConcurrency: Int = DEFAULT_MUX_CONCURRENCY,
-        logLevel: String = DEFAULT_LOG_LEVEL
+        logLevel: String = DEFAULT_LOG_LEVEL,
+        localHttpProxyPort: Int? = null
     ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         return V2RayRuntimeConfig(
@@ -28,9 +29,11 @@ object V2RayRuntimeConfigBuilder {
                 sniffingEnabled = sniffingEnabled,
                 muxEnabled = muxEnabled,
                 muxConcurrency = muxConcurrency,
-                logLevel = logLevel
+                logLevel = logLevel,
+                localHttpProxyPort = localHttpProxyPort
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
+            localHttpProxyPort = localHttpProxyPort?.takeIf { it in MIN_LOCAL_HTTP_PROXY_PORT..MAX_LOCAL_HTTP_PROXY_PORT },
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray."
         )
     }
@@ -51,7 +54,8 @@ object V2RayRuntimeConfigBuilder {
                 sniffingEnabled = false,
                 muxEnabled = muxEnabled,
                 muxConcurrency = muxConcurrency,
-                logLevel = logLevel
+                logLevel = logLevel,
+                localHttpProxyPort = null
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN."
@@ -225,7 +229,8 @@ object V2RayRuntimeConfigBuilder {
         sniffingEnabled: Boolean,
         muxEnabled: Boolean,
         muxConcurrency: Int,
-        logLevel: String
+        logLevel: String,
+        localHttpProxyPort: Int?
     ): String {
         val outbound = buildOutbound(profile, muxEnabled, muxConcurrency)
         val dnsJson = dnsServers
@@ -239,19 +244,35 @@ object V2RayRuntimeConfigBuilder {
         } else {
             "\"sniffing\": { \"enabled\": false }"
         }
-        val inbounds = if (includeTunInbound) {
-            """
-                [
-                  {
-                    "tag": "tun",
-                    "protocol": "tun",
-                    "settings": { "name": "xray0", "MTU": 1500, "userLevel": 8 },
-                    $sniffingJson
-                  }
-                ]
+        val inboundBlocks = mutableListOf<String>()
+        if (includeTunInbound) {
+            inboundBlocks += """
+                {
+                  "tag": "tun",
+                  "protocol": "tun",
+                  "settings": { "name": "xray0", "MTU": 1500, "userLevel": 8 },
+                  $sniffingJson
+                }
             """.trimIndent()
-        } else {
+        }
+        localHttpProxyPort
+            ?.takeIf { it in MIN_LOCAL_HTTP_PROXY_PORT..MAX_LOCAL_HTTP_PROXY_PORT }
+            ?.let { port ->
+                inboundBlocks += """
+                    {
+                      "tag": "loopback-http",
+                      "listen": "127.0.0.1",
+                      "port": $port,
+                      "protocol": "http",
+                      "settings": { "allowTransparent": false },
+                      "sniffing": { "enabled": false }
+                    }
+                """.trimIndent()
+            }
+        val inbounds = if (inboundBlocks.isEmpty()) {
             "[]"
+        } else {
+            inboundBlocks.joinToString(prefix = "[\n", postfix = "\n]", separator = ",\n")
         }
         val safeLogLevel = safeLogLevel(logLevel)
         return """
@@ -590,13 +611,16 @@ object V2RayRuntimeConfigBuilder {
     private const val DEFAULT_MUX_CONCURRENCY = 8
     private const val MIN_MUX_CONCURRENCY = 1
     private const val MAX_MUX_CONCURRENCY = 32
+    private const val MIN_LOCAL_HTTP_PROXY_PORT = 1024
+    private const val MAX_LOCAL_HTTP_PROXY_PORT = 65535
     private val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
 }
 
 data class V2RayRuntimeConfig(
     val configJson: String,
     val profileName: String,
-    val note: String
+    val note: String,
+    val localHttpProxyPort: Int? = null
 )
 
 private data class PreparedProfile(

@@ -79,6 +79,8 @@ import com.vpnproject.app.vpn.WireGuardVpnService
 import com.vpnproject.app.vpn.XrayVpnService
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.URL
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -3491,7 +3493,8 @@ class MainActivity : Activity() {
                     sniffingEnabled = xraySniffingEnabled(),
                     muxEnabled = xrayMuxEnabled(),
                     muxConcurrency = xrayMuxConcurrency(),
-                    logLevel = xrayLogLevel()
+                    logLevel = xrayLogLevel(),
+                    localHttpProxyPort = allocateXrayLocalProxyPort()
                 )
             }
             runOnUiThread {
@@ -3508,6 +3511,12 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun allocateXrayLocalProxyPort(): Int? = runCatching {
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
+            socket.localPort.takeIf { it in 1024..65535 }
+        }
+    }.getOrNull()
+
     private fun startXrayEngine(runtime: V2RayRuntimeConfig) {
         activeConnectionProfileId = selectedProfileId
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
@@ -3516,6 +3525,7 @@ class MainActivity : Activity() {
             putExtra(XrayVpnService.EXTRA_CONFIG_JSON, runtime.configJson)
             putExtra(XrayVpnService.EXTRA_PROFILE_NAME, safeTunnelName(runtime.profileName))
             putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
+            runtime.localHttpProxyPort?.let { putExtra(XrayVpnService.EXTRA_LOCAL_HTTP_PROXY_PORT, it) }
             putStringArrayListExtra(XrayVpnService.EXTRA_DNS_SERVERS, ArrayList(vpnDnsServers(includeLocalhost = false)))
             putStringArrayListExtra(XrayVpnService.EXTRA_BYPASS_PACKAGES, ArrayList(bypassAppPackages()))
         }

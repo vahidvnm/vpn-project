@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.util.Base64
+import com.vpnproject.app.core.IpClassifier
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
@@ -21,6 +22,10 @@ import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.URL
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -70,9 +75,10 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 val note = intent.getStringExtra(EXTRA_NOTE).orEmpty()
                 val dnsServers = intent.getStringArrayListExtra(EXTRA_DNS_SERVERS).orEmpty().ifEmpty { DEFAULT_DNS_SERVERS }
                 val bypassPackages = intent.getStringArrayListExtra(EXTRA_BYPASS_PACKAGES).orEmpty()
+                val localHttpProxyPort = intent.getIntExtra(EXTRA_LOCAL_HTTP_PROXY_PORT, 0)
                 startForegroundNotification("Starting embedded Xray engine…")
                 updateStatus(EngineState.CONNECTING, "Starting embedded Xray engine for $profileName.", note)
-                Thread({ startXray(configJson, profileName, note, dnsServers, bypassPackages) }, "xray-start").start()
+                Thread({ startXray(configJson, profileName, note, dnsServers, bypassPackages, localHttpProxyPort) }, "xray-start").start()
                 Service.START_REDELIVER_INTENT
             }
             else -> Service.START_NOT_STICKY
@@ -118,7 +124,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 verified = previous.verified,
                 rxBytes = previous.rxBytes,
                 txBytes = previous.txBytes,
-                latencyMs = previous.latencyMs
+                latencyMs = previous.latencyMs,
+                egressIp = previous.egressIp
             )
         }
         return 0L
@@ -129,7 +136,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         profileName: String,
         note: String,
         dnsServers: List<String>,
-        bypassPackages: List<String>
+        bypassPackages: List<String>,
+        localHttpProxyPort: Int
     ) {
         if (configJson.isBlank()) {
             updateStatus(EngineState.FAILED, "Xray runtime config is empty.", note)
@@ -167,7 +175,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 note
             )
             startForegroundNotification("Xray core is running; verifying proxy egress…")
-            startVerification(controller, note)
+            startVerification(controller, note, localHttpProxyPort)
         } catch (e: Exception) {
             stopCoreOnly()
             val errorText = e.message ?: e.javaClass.simpleName
@@ -233,7 +241,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
     }
 
-    private fun startVerification(controller: CoreController, note: String) {
+    private fun startVerification(controller: CoreController, note: String, localHttpProxyPort: Int) {
         verifierThread?.interrupt()
         verifierThread = Thread({
             try {
@@ -257,24 +265,37 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 }
 
                 if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
+                val postConnectCheck = runPostConnectChecks(localHttpProxyPort)
+                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
                 val stats = runCatching { controller.queryAllOutboundTrafficStats() }.getOrNull()
                 val traffic = XrayTrafficStatsParser.parse(stats)
-                if (verifiedDelayMs != null) {
+                val egressIp = postConnectCheck.egressIp
+                val isVerified = verifiedDelayMs != null || egressIp != null
+                if (isVerified) {
+                    val proofText = buildList {
+                        verifiedDelayMs?.let { add("HTTP delay ${it}ms") }
+                        egressIp?.let { add("public IP $it") }
+                        if (postConnectCheck.dnsRouteOk) add("DNS route checked")
+                    }.joinToString("; ").ifBlank { "proxy egress check passed" }
                     updateStatus(
                         EngineState.VERIFIED,
-                        "Xray verified: outbound HTTP check passed through the proxy in ${verifiedDelayMs}ms.",
-                        verificationDetail(note, attempts, stats, verifiedUrl),
+                        "Xray verified: $proofText.",
+                        verificationDetail(note, attempts, stats, verifiedUrl, postConnectCheck),
                         verified = true,
                         rxBytes = traffic.rxBytes,
                         txBytes = traffic.txBytes,
+                        egressIp = egressIp,
                         latencyMs = verifiedDelayMs
                     )
-                    startForegroundNotification("Xray verified through proxy: ${verifiedDelayMs}ms")
+                    startForegroundNotification(
+                        egressIp?.let { "Xray verified: IP $it${verifiedDelayMs?.let { delay -> " • ${delay}ms" }.orEmpty()}" }
+                            ?: "Xray verified through proxy: ${verifiedDelayMs}ms"
+                    )
                 } else {
                     updateStatus(
                         EngineState.RUNNING,
                         "Xray core is running and the Android VPN is established, but proxy egress verification failed for the test URLs.",
-                        verificationDetail(note, attempts, stats, null),
+                        verificationDetail(note, attempts, stats, null, postConnectCheck),
                         verified = false,
                         rxBytes = traffic.rxBytes,
                         txBytes = traffic.txBytes
@@ -287,7 +308,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 updateStatus(
                     EngineState.RUNNING,
                     "Xray core is running, but verification failed: ${e.message ?: e.javaClass.simpleName}",
-                    verificationDetail(note, listOf("${e.javaClass.simpleName}: ${e.message.orEmpty()}"), null, null),
+                    verificationDetail(note, listOf("${e.javaClass.simpleName}: ${e.message.orEmpty()}"), null, null, null),
                     verified = false
                 )
                 startForegroundNotification("Xray running; verification failed.")
@@ -313,6 +334,79 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
         return queue.poll(timeoutMs, TimeUnit.MILLISECONDS)
             ?: DelayProbeResult(error = "timed out after ${timeoutMs / 1000}s")
+    }
+
+    private fun runPostConnectChecks(localHttpProxyPort: Int): XrayPostConnectCheck {
+        val port = localHttpProxyPort.takeIf { it in MIN_LOCAL_HTTP_PROXY_PORT..MAX_LOCAL_HTTP_PROXY_PORT }
+            ?: return XrayPostConnectCheck(
+                notes = listOf("Public IP/DNS route: local Xray check proxy was not available.")
+            )
+        val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
+        val notes = mutableListOf<String>()
+        var egressIp: String? = null
+
+        for (endpoint in PUBLIC_IP_CHECK_URLS) {
+            val result = runCatching { fetchViaProxy(endpoint, proxy, "text/plain, application/json") }
+            val body = result.getOrNull()
+            val ip = body?.let { extractPublicIpv4(it) }
+            if (ip != null) {
+                egressIp = ip
+                notes += "Public egress IP: $ip via ${endpoint.hostLabel()}"
+                break
+            } else if (notes.size < 2) {
+                notes += "Public IP ${endpoint.hostLabel()}: ${result.exceptionOrNull()?.message?.shortForStatus(90) ?: "no public IPv4 in response"}"
+            }
+        }
+
+        val dnsRouteOk = runCatching {
+            fetchViaProxy(DNS_ROUTE_CHECK_URL, proxy, "application/dns-json")
+        }.getOrNull()?.let { body ->
+            body.contains("\"Status\":0") || body.contains("\"Answer\"") || body.contains("\"AD\":")
+        } == true
+        notes += if (dnsRouteOk) {
+            "DNS route: DoH can be reached through Xray local proxy."
+        } else {
+            "DNS route: inconclusive; full resolver leak service is still best-effort."
+        }
+
+        return XrayPostConnectCheck(
+            egressIp = egressIp,
+            dnsRouteOk = dnsRouteOk,
+            notes = notes
+        )
+    }
+
+    private fun fetchViaProxy(url: String, proxy: Proxy, accept: String): String {
+        val connection = (URL(url).openConnection(proxy) as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
+            readTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
+            instanceFollowRedirects = true
+            setRequestProperty("Accept", accept)
+            setRequestProperty("User-Agent", "VPNProject-Android/0.1")
+        }
+        return try {
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText().take(MAX_POST_CHECK_RESPONSE_CHARS) }.orEmpty()
+            if (code !in 200..299) error("HTTP $code")
+            body
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun extractPublicIpv4(body: String): String? {
+        val cloudflareTrace = body.lineSequence()
+            .firstOrNull { it.startsWith("ip=", ignoreCase = true) }
+            ?.substringAfter('=')
+            ?.trim()
+        if (cloudflareTrace != null && IpClassifier.isPublicIpv4(cloudflareTrace)) {
+            return cloudflareTrace
+        }
+        return IPV4_REGEX.findAll(body)
+            .map { it.value }
+            .firstOrNull { IpClassifier.isPublicIpv4(it) }
     }
 
     private fun startForegroundHeartbeat() {
@@ -389,10 +483,17 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         note: String,
         attempts: List<String>,
         stats: String?,
-        verifiedUrl: String?
+        verifiedUrl: String?,
+        postConnectCheck: XrayPostConnectCheck?
     ): String? = buildString {
         append(note)
         if (verifiedUrl != null) append("\nVerified URL: $verifiedUrl")
+        postConnectCheck?.egressIp?.let { append("\nPublic egress IP: $it") }
+        if (postConnectCheck?.dnsRouteOk == true) append("\nDNS route check: OK via Xray proxy")
+        val postCheckNotes = postConnectCheck?.notes.orEmpty()
+        if (postCheckNotes.isNotEmpty()) {
+            append("\nPost-connect checks: ${postCheckNotes.joinToString("; ")}")
+        }
         if (attempts.isNotEmpty()) append("\nVerification attempts: ${attempts.joinToString("; ")}")
         if (!stats.isNullOrBlank()) append("\nStats: $stats")
     }.ifBlank { null }
@@ -466,7 +567,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         verified: Boolean = false,
         rxBytes: Long? = null,
         txBytes: Long? = null,
-        latencyMs: Long? = null
+        latencyMs: Long? = null,
+        egressIp: String? = null
     ) {
         lastStatus = EngineStatus(
             kind = EngineKind.XRAY_CORE,
@@ -476,6 +578,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             rxBytes = rxBytes,
             txBytes = txBytes,
             latencyMs = latencyMs,
+            egressIp = egressIp,
             verified = verified
         )
     }
@@ -548,6 +651,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         const val EXTRA_NOTE = "com.vpnproject.app.vpn.xray.extra.NOTE"
         const val EXTRA_DNS_SERVERS = "com.vpnproject.app.vpn.xray.extra.DNS_SERVERS"
         const val EXTRA_BYPASS_PACKAGES = "com.vpnproject.app.vpn.xray.extra.BYPASS_PACKAGES"
+        const val EXTRA_LOCAL_HTTP_PROXY_PORT = "com.vpnproject.app.vpn.xray.extra.LOCAL_HTTP_PROXY_PORT"
         val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
 
         @Volatile
@@ -563,8 +667,20 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val STOP_REQUEST_CODE = 62
         private const val VERIFY_START_DELAY_MS = 3_000L
         private const val VERIFY_URL_TIMEOUT_MS = 15_000L
+        private const val POST_CONNECT_CHECK_TIMEOUT_MS = 5_000
+        private const val MAX_POST_CHECK_RESPONSE_CHARS = 4_096
         private const val STATS_REFRESH_MS = 2_000L
         private const val FOREGROUND_HEARTBEAT_MS = 60_000L
+        private const val MIN_LOCAL_HTTP_PROXY_PORT = 1024
+        private const val MAX_LOCAL_HTTP_PROXY_PORT = 65535
+        private val IPV4_REGEX = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
+        private const val DNS_ROUTE_CHECK_URL = "https://cloudflare-dns.com/dns-query?name=example.com&type=A"
+        private val PUBLIC_IP_CHECK_URLS = listOf(
+            "https://www.cloudflare.com/cdn-cgi/trace",
+            "https://api.ipify.org",
+            "https://checkip.amazonaws.com",
+            "https://icanhazip.com"
+        )
         private val VERIFY_URLS = listOf(
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",
@@ -578,4 +694,10 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 private data class DelayProbeResult(
     val delayMs: Long? = null,
     val error: String? = null
+)
+
+private data class XrayPostConnectCheck(
+    val egressIp: String? = null,
+    val dnsRouteOk: Boolean = false,
+    val notes: List<String> = emptyList()
 )
