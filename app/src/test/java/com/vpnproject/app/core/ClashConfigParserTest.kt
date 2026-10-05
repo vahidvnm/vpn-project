@@ -45,13 +45,13 @@ class ClashConfigParserTest {
     fun parsesInlineTrojanWebSocketTlsProxy() {
         val yaml = """
             proxies:
-              - { name: trojan-ws, type: trojan, server: cdn.example.net, port: 443, password: secret, network: ws, tls: true, sni: front.example.net }
+              - { name: Germany WS, type: trojan, server: cdn.example.net, port: 443, password: secret, network: ws, tls: true, sni: front.example.net }
         """.trimIndent()
 
         val config = ClashConfigParser.parse(yaml)
 
         assertEquals(ConfigKind.CLASH, config.kind)
-        assertEquals("trojan-ws", config.name)
+        assertEquals("Germany WS", config.name)
         assertEquals("cdn.example.net", config.endpoints.single().host)
         assertEquals(VpnProtocol.CLASH_TLS, config.endpoints.single().protocol)
         assertEquals("front.example.net", config.endpoints.single().verifyHost)
