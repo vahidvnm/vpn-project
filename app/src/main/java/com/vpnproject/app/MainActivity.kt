@@ -3148,9 +3148,7 @@ class MainActivity : Activity() {
         }
         val suffixes = mutableListOf<String>()
         if (!isLatencyFresh(state.checkedAtEpochMs)) suffixes += "old"
-        if (!isSameNetworkLabel(state.network, currentNetwork) && !state.network.isNullOrBlank() && !currentNetwork.isNullOrBlank()) {
-            suffixes += "other net"
-        }
+        if (isDifferentKnownNetwork(state.network, currentNetwork)) suffixes += "other net"
         return (listOf(status) + suffixes).joinToString(" ").shortUi(24)
     }
 
@@ -3160,17 +3158,38 @@ class MainActivity : Activity() {
     private fun profileLatencyDetailLine(profile: VpnProfile): String? {
         val currentNetwork = currentNetworkLabel()
         val state = profileLatencyState(profile, currentNetwork) ?: return null
-        val result = if (state.success == true) {
-            state.latencyMs?.let { "${it}ms" } ?: "OK"
-        } else {
-            "failed"
-        }
+        val result = profileLatencyResultText(state)
         val age = if (isLatencyFresh(state.checkedAtEpochMs)) "fresh" else "old"
         val network = compactNetworkLabel(state.network.orEmpty())?.let { " • $it" }.orEmpty()
-        val mismatch = if (!isSameNetworkLabel(state.network, currentNetwork) && !state.network.isNullOrBlank() && !currentNetwork.isNullOrBlank()) {
-            " • other network"
-        } else ""
-        return "Last ${state.label}: $result • $age$network$mismatch"
+        val mismatch = if (isDifferentKnownNetwork(state.network, currentNetwork)) " • other network" else ""
+        return "Best signal: ${state.label} $result • $age$network$mismatch"
+    }
+
+    private fun profileLatencyMemoryLines(profile: VpnProfile): List<String> {
+        val currentNetwork = currentNetworkLabel()
+        return profileLatencyStates(profile)
+            .sortedWith(compareBy<ProfileLatencyState> { profileLatencyStateBucket(it, currentNetwork) }
+                .thenBy { it.kindRank }
+                .thenBy { it.latencyMs ?: Long.MAX_VALUE }
+                .thenByDescending { it.checkedAtEpochMs ?: 0L })
+            .distinctBy { "${it.label}|${normalizeNetworkLabel(it.network).orEmpty()}" }
+            .take(4)
+            .map { state ->
+                val age = if (isLatencyFresh(state.checkedAtEpochMs)) "fresh" else "old"
+                val network = compactNetworkLabel(state.network.orEmpty())?.let { " • $it" }.orEmpty()
+                val relation = when {
+                    isSameNetworkLabel(state.network, currentNetwork) -> " • current"
+                    isDifferentKnownNetwork(state.network, currentNetwork) -> " • other"
+                    else -> ""
+                }
+                "Memory: ${state.label} ${profileLatencyResultText(state)} • $age$network$relation"
+            }
+    }
+
+    private fun profileLatencyResultText(state: ProfileLatencyState): String = if (state.success == true) {
+        state.latencyMs?.let { "${it}ms" } ?: "OK"
+    } else {
+        "failed"
     }
 
     private fun testKindForLabel(label: String): String =
@@ -3201,11 +3220,17 @@ class MainActivity : Activity() {
         return normalizedLeft != null && normalizedLeft == normalizedRight
     }
 
+    private fun isDifferentKnownNetwork(left: String?, right: String?): Boolean {
+        val normalizedLeft = normalizeNetworkLabel(left) ?: return false
+        val normalizedRight = normalizeNetworkLabel(right) ?: return false
+        return normalizedLeft != normalizedRight
+    }
+
     private fun normalizeNetworkLabel(value: String?): String? {
         val parts = value.orEmpty()
             .split('+')
             .map { it.trim().lowercase(java.util.Locale.US) }
-            .filter { it.isNotBlank() && it != "vpn" }
+            .filter { it.isNotBlank() && it != "vpn" && it != "unknown" }
         return if (parts.isEmpty()) null else parts.joinToString("+")
     }
 
@@ -3579,7 +3604,9 @@ class MainActivity : Activity() {
             add("Endpoint: ${endpoint.host.shortHost()}:${endpoint.port}")
             endpoint.verifyHost?.takeIf { it.isNotBlank() }?.let { add("Verify host: ${it.shortHost()}") }
         }
+        currentNetworkLabel()?.let { compactNetworkLabel(it) }?.let { add("Current network: $it") }
         profileLatencyDetailLine(profile)?.let { add(it) }
+        profileLatencyMemoryLines(profile).forEach { add(it) }
         if (!compatibility.connectReady) add("Next step: ${runtimeFixHint(compatibility, profile)}")
     }
 
@@ -3882,7 +3909,7 @@ class MainActivity : Activity() {
         return when {
             !compatibility.connectReady -> compatibility.badge
             signal?.success == false -> if (stale) "Fail old" else "Fail"
-            signal?.latencyMs != null -> if (stale) "${signal.latencyMs} old" else "${signal.latencyMs}ms"
+            signal?.latencyMs != null -> if (stale) "${signal.latencyMs}ms old" else "${signal.latencyMs}ms"
             profile.id == selectedProfileId -> "Selected"
             signal?.success == true -> if (stale) "Good old" else signal.label
             profile.favorite -> "Fav"
