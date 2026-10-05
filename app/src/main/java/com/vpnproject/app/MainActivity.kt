@@ -3092,10 +3092,6 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 promptCustomSubscriptionImportLimit(name, url, preview)
             })
-            addView(bottomSheetActionRow("✓", "Test first, healthy only", "Quick-test first $recommended configs before saving; full VPN verification still happens after Connect.") {
-                dialog.dismiss()
-                startFetchedSubscriptionSync(name, url, existingGroup = null, subscriptionText = preview.subscriptionText, requestedLimit = recommended, healthyOnly = true)
-            })
         }
     }
 
@@ -3163,12 +3159,11 @@ class MainActivity : Activity() {
         url: String,
         existingGroup: SubscriptionGroup?,
         subscriptionText: String,
-        requestedLimit: Int,
-        healthyOnly: Boolean = false
+        requestedLimit: Int
     ) {
-        setActionStatus(if (healthyOnly) "Testing then saving healthy configs for ${name.shortUi(28)}..." else "Saving ${requestedLimit} configs for ${name.shortUi(28)}...")
+        setActionStatus("Saving ${requestedLimit} configs for ${name.shortUi(28)}...")
         Thread {
-            val result = runCatching { syncFetchedSubscriptionGroupBlocking(name, url, existingGroup, subscriptionText, requestedLimit, healthyOnly = healthyOnly) }
+            val result = runCatching { syncFetchedSubscriptionGroupBlocking(name, url, existingGroup, subscriptionText, requestedLimit) }
             runOnUiThread {
                 result.fold(
                     onSuccess = { sync -> handleSubscriptionSyncSuccess(sync) },
@@ -3280,8 +3275,7 @@ class MainActivity : Activity() {
         url: String,
         existingGroup: SubscriptionGroup?,
         subscriptionText: String,
-        requestedLimit: Int? = null,
-        healthyOnly: Boolean = false
+        requestedLimit: Int? = null
     ): SubscriptionSyncResult {
         val existingName = existingGroup?.displayName?.cleanProfileLabel()
         val savedName = when {
@@ -3298,8 +3292,7 @@ class MainActivity : Activity() {
             storedGroup = storedGroup,
             subscriptionText = subscriptionText,
             resultVerb = "Synced",
-            profileLimit = candidateCount?.let { profileLimit.coerceAtMost(it) } ?: profileLimit,
-            healthyOnly = healthyOnly
+            profileLimit = candidateCount?.let { profileLimit.coerceAtMost(it) } ?: profileLimit
         )
     }
 
@@ -3308,7 +3301,7 @@ class MainActivity : Activity() {
         subscriptionText: String
     ): SubscriptionSyncResult {
         val storedGroup = profileStore.saveClipboardSubscriptionGroup(name, subscriptionText)
-        return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Imported from clipboard", profileLimit = MAX_SUBSCRIPTION_LINKS, healthyOnly = false)
+        return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Imported from clipboard", profileLimit = MAX_SUBSCRIPTION_LINKS)
     }
 
     private fun subscriptionCandidateTexts(subscriptionText: String): List<String> {
@@ -3324,37 +3317,11 @@ class MainActivity : Activity() {
     private fun clampSubscriptionImportLimit(requested: Int, totalCount: Int): Int =
         requested.coerceIn(1, totalCount.coerceAtMost(MAX_SUBSCRIPTION_TOTAL_PROFILES).coerceAtLeast(1))
 
-    private fun isQuickReachableBeforeImport(config: ImportedConfig): Boolean {
-        return config.endpoints.any { endpoint ->
-            val candidates = when {
-                IpClassifier.isIpv4Literal(endpoint.host) || IpClassifier.isIpv6Literal(endpoint.host) -> listOf(
-                    ResolvedEndpointCandidate(
-                        endpoint = endpoint,
-                        ip = endpoint.host,
-                        provider = null,
-                        ttlSeconds = 0L,
-                        expiresAtEpochMs = 0L
-                    )
-                )
-                else -> {
-                    val discovery = endpointDiscovery.discover(endpoint)
-                    if (discovery.resolved.isNotEmpty()) {
-                        discovery.resolved
-                    } else {
-                        directSystemProbeCandidate(endpoint)?.let { listOf(it) }.orEmpty()
-                    }
-                }
-            }
-            candidates.take(MAX_IPS_PER_ENDPOINT).any { resolved -> endpointHealthChecker.checkBestEffort(resolved).reachable }
-        }
-    }
-
     private fun syncSubscriptionTextIntoGroup(
         storedGroup: SubscriptionGroup,
         subscriptionText: String,
         resultVerb: String,
-        profileLimit: Int,
-        healthyOnly: Boolean
+        profileLimit: Int
     ): SubscriptionSyncResult {
         val candidates = subscriptionCandidateTexts(subscriptionText)
         if (candidates.isEmpty()) {
@@ -3369,9 +3336,6 @@ class MainActivity : Activity() {
         importCandidates.forEachIndexed { index, candidateText ->
             val saved = runCatching {
                 val config = ConfigImporter.parse(candidateText)
-                if (healthyOnly && !isQuickReachableBeforeImport(config)) {
-                    return@runCatching null
-                }
                 val displayName = subscriptionProfileDisplayName(storedGroup, candidateText, config, index)
                 val profileId = profileStore.stableSubscriptionProfileId(storedGroup.id, candidateText)
                 profileStore.saveImportedConfig(config, displayName, stableProfileId = profileId)

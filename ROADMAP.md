@@ -578,9 +578,9 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] اصلاح Clash subscription URL: فایل‌های YAML مثل `clash.yaml` که به‌جای share-link دارای بخش `proxies:` هستند، هنگام refresh به proxyهای جدا تقسیم می‌شوند و تا سقف امن فعلی در subscription group ذخیره می‌شوند.
 - [x] polish بعد از تست گوشی Clash: نام‌های Clash که escape هشت‌رقمی YAML مثل `\U0001F1FA` دارند به emoji/flag واقعی decode می‌شوند، نام subscription از raw GitHub به عنوان قابل‌فهم‌تری مثل `Clash` تبدیل می‌شود، و refresh گروه‌های generic مثل `Raw` هم آن‌ها را rename می‌کند.
 - [x] polish بعد از اسکرین‌شات Clash: flag تکراری از title ردیف/top pill حذف شد و تشخیص flag برای کشورهایی مثل کانادا کامل‌تر شد.
-- [x] مرحله بعدی مدیریت subscription بزرگ: منوی Queue tools برای subscription فعال گزینه `Load more configs` دارد؛ به‌جای import هزاران کانفیگ، هر بار ۸۰ مورد دیگر تا سقف preview امن ۴۰۰ ذخیره می‌شود و refresh همان مقدار load‌شده را حفظ می‌کند.
+- [x] مرحله بعدی مدیریت subscription بزرگ: منوی Queue tools برای subscription فعال گزینه `Load more configs` دارد؛ به‌جای import ناخواسته هزاران کانفیگ، هر بار ۸۰ مورد دیگر تا سقف ایمن ۲۰۰۰ ذخیره می‌شود و refresh همان مقدار load‌شده را حفظ می‌کند.
 - [x] رفع ابهام شمارنده subscription بزرگ: tabهای Locations حالا loaded/total را مثل `80/1448` نشان می‌دهند تا مشخص باشد چند کانفیگ واقعاً در subscription هست و چندتا فعلاً داخل اپ load شده.
-- [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد یک انتخاب خلاصه حداکثر سه‌گزینه‌ای نشان داده می‌شود: `Recommended`، `Custom/All`، و `Test first, healthy only`; import کامل/دلخواه فعلاً سقف ایمن ۲۰۰۰ دارد.
+- [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد انتخاب خلاصه نشان داده می‌شود: `Recommended` یا `Custom/All`; تست قبل از ذخیره حذف شد چون تست‌های سالم/واقعی باید بعد از import و از Queue tools/Connect اجرا شوند.
 - [x] رفع محدودیت نمای Locations: لیست اصلی به‌جای فقط ۴۰ ردیف، همه‌ی کانفیگ‌های load‌شده را نشان می‌دهد؛ تست‌ها همچنان manual/capped می‌مانند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
