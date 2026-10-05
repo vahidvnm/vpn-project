@@ -163,6 +163,7 @@ class MainActivity : Activity() {
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
+    private var selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
     private var locationRenderLimit = INITIAL_PROFILE_RENDER_ROWS
     private var locationRenderKey = ""
     private val profileRowStatusViews = mutableMapOf<String, TextView>()
@@ -1402,7 +1403,8 @@ class MainActivity : Activity() {
         normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
-        val scoped = profilesForLocationFilter(filtered, groups).sortedWith(profileRankingComparator())
+        val grouped = profilesForLocationFilter(filtered, groups)
+        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(profileRankingComparator())
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
@@ -1419,7 +1421,7 @@ class MainActivity : Activity() {
         }
         val candidates = scoped.take(realDelayProfileLimit())
         autoTestInFlight = true
-        setAutoTestStatus("Real delay testing ${candidates.size}/${scoped.size} configs in ${scope.shortUi(24)} with Xray core...")
+        setAutoTestStatus("Real delay testing ${candidates.size}/${scoped.size} configs in ${scope.shortUi(20)} / ${locationRuntimeFilterLabel()} with Xray core...")
         val network = currentNetworkLabel()
         Thread {
             val results = mutableListOf<ProfileProbeResult>()
@@ -4952,8 +4954,9 @@ class MainActivity : Activity() {
         normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val profiles = allProfiles.filter { matchesLocationSearch(it, query) }
-        val scopedProfiles = profilesForLocationFilter(profiles, groups)
-        refreshSubscriptionGroupButtons(groups, allProfiles, profiles)
+        val groupedProfiles = profilesForLocationFilter(profiles, groups)
+        val scopedProfiles = applyLocationRuntimeFilter(groupedProfiles)
+        refreshSubscriptionGroupButtons(groups, allProfiles, profiles, scopedProfiles)
         val currentRenderKey = locationRenderStateKey(groups, allProfiles.size, scopedProfiles.size, query)
         if (currentRenderKey != locationRenderKey) {
             locationRenderKey = currentRenderKey
@@ -4982,6 +4985,7 @@ class MainActivity : Activity() {
         if (allProfiles.isNotEmpty() && scopedProfiles.isEmpty()) {
             profileListContainer.addView(TextView(this).apply {
                 text = when {
+                    selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL -> "No ${locationRuntimeFilterLabel()} configs in ${locationFilterLabel(groups)}. Change Runtime filter in Queue tools."
                     query.isNotBlank() -> "No matching configs in ${locationFilterLabel(groups)}. Try another tab, country, operator, or host."
                     selectedLocationGroupFilter == LOCATION_FILTER_MANUAL -> "No imported configs in this view."
                     selectedLocationGroupFilter != LOCATION_FILTER_ALL -> "This subscription profile has no saved configs yet. Refresh it or paste the subscription again."
@@ -5038,6 +5042,7 @@ class MainActivity : Activity() {
         query: String
     ): String = listOf(
         selectedLocationGroupFilter,
+        selectedLocationRuntimeFilter,
         query.lowercase(java.util.Locale.US),
         allCount.toString(),
         scopedCount.toString(),
@@ -5103,6 +5108,28 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun applyLocationRuntimeFilter(profiles: List<VpnProfile>): List<VpnProfile> = when (selectedLocationRuntimeFilter) {
+        LOCATION_RUNTIME_READY -> profiles.filter { isXrayReadyProfile(it) }
+        LOCATION_RUNTIME_ATTENTION -> profiles.filter { !isXrayReadyProfile(it) }
+        else -> profiles
+    }
+
+    private fun isXrayReadyProfile(profile: VpnProfile): Boolean =
+        profile.kind in setOf(VpnProfileKind.XRAY, VpnProfileKind.SING_BOX, VpnProfileKind.CLASH) &&
+            profileRuntimeCompatibility(profile).connectReady
+
+    private fun locationRuntimeFilterLabel(): String = when (selectedLocationRuntimeFilter) {
+        LOCATION_RUNTIME_READY -> "Xray-ready"
+        LOCATION_RUNTIME_ATTENTION -> "Needs attention"
+        else -> "All runtime"
+    }
+
+    private fun locationRuntimeFilterDescription(): String = when (selectedLocationRuntimeFilter) {
+        LOCATION_RUNTIME_READY -> "Only profiles currently startable or mapped through embedded runtime"
+        LOCATION_RUNTIME_ATTENTION -> "Only profiles with missing keys, mapper/runtime needs, or handoff-only paths"
+        else -> "Showing every config in the selected tab"
+    }
+
     private fun locationFilterLabel(groups: List<SubscriptionGroup>): String = when (selectedLocationGroupFilter) {
         LOCATION_FILTER_ALL -> "All"
         LOCATION_FILTER_MANUAL -> "Imported"
@@ -5121,7 +5148,8 @@ class MainActivity : Activity() {
         normalizeLocationGroupFilter(groups)
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
-        val scoped = profilesForLocationFilter(filtered, groups)
+        val grouped = profilesForLocationFilter(filtered, groups)
+        val scoped = applyLocationRuntimeFilter(grouped)
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
@@ -5129,7 +5157,7 @@ class MainActivity : Activity() {
             return
         }
         val capped = scoped.take(quickCheckProfileLimit()).size
-        setActionStatus("$label for $scope: testing $capped/${scoped.size} configs without connecting. Large queues are never auto-tested.")
+        setActionStatus("$label for $scope / ${locationRuntimeFilterLabel()}: testing $capped/${scoped.size} configs without connecting. Large queues are never auto-tested.")
         rankProfilesAndSelectBest(
             inputProfiles = scoped,
             reason = "queue tools $scope $label",
@@ -5142,7 +5170,8 @@ class MainActivity : Activity() {
     private fun refreshSubscriptionGroupButtons(
         groups: List<SubscriptionGroup>,
         allProfiles: List<VpnProfile>,
-        filteredProfiles: List<VpnProfile>
+        filteredProfiles: List<VpnProfile>,
+        visibleScopedProfiles: List<VpnProfile>
     ) {
         if (!::subscriptionGroupContainer.isInitialized) return
         subscriptionGroupContainer.removeAllViews()
@@ -5170,7 +5199,8 @@ class MainActivity : Activity() {
                 refreshProfileButtons(syncVerified = false)
             })
         }
-        val scoped = profilesForLocationFilter(filteredProfiles, groups)
+        val groupedScoped = profilesForLocationFilter(filteredProfiles, groups)
+        val scoped = visibleScopedProfiles
         val activeGroup = groups.firstOrNull { it.id == selectedLocationGroupFilter }
         val scope = locationFilterLabel(groups)
         subscriptionGroupContainer.addView(LinearLayout(this).apply {
@@ -5192,6 +5222,19 @@ class MainActivity : Activity() {
                 showQueueToolsSheet(groups, scoped, activeGroup, scope)
             })
         })
+        if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL) {
+            subscriptionGroupContainer.addView(TextView(this).apply {
+                text = "Runtime filter: ${locationRuntimeFilterLabel()} • ${scoped.size}/${groupedScoped.size} in ${scope.shortUi(18)}"
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(PearlPalette.TEXT_MUTED)
+                setPadding(dp(8), dp(2), dp(8), dp(2))
+                setOnClickListener {
+                    selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+                    refreshProfileButtons(syncVerified = false)
+                }
+            })
+        }
         if (groups.size > MAX_SUBSCRIPTION_GROUP_BUTTONS) {
             subscriptionGroupContainer.addView(TextView(this).apply {
                 text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
@@ -5230,8 +5273,12 @@ class MainActivity : Activity() {
         val capped = scopedProfiles.take(quickCheckProfileLimit()).size
         showBottomSheet(
             title = "Queue tools",
-            subtitle = "$scope • manual actions only • testing is capped at $capped/${scopedProfiles.size} configs"
+            subtitle = "$scope • ${locationRuntimeFilterLabel()} • testing capped at $capped/${scopedProfiles.size} configs"
         ) { dialog ->
+            addView(bottomSheetActionRow("◎", "Runtime filter", locationRuntimeFilterDescription()) {
+                dialog.dismiss()
+                showLocationRuntimeFilterSheet()
+            })
             addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for up to $capped configs in this queue") {
                 dialog.dismiss()
                 testLocationFilter(selectedLocationGroupFilter, label = "Quick check")
@@ -5263,6 +5310,29 @@ class MainActivity : Activity() {
             addView(bottomSheetActionRow("⌕", "Search", "Filter country, operator, or host") {
                 dialog.dismiss()
                 showLocationSearchSheet()
+            })
+        }
+    }
+
+    private fun showLocationRuntimeFilterSheet() {
+        showBottomSheet(
+            title = "Runtime filter",
+            subtitle = "Filter visible rows only. It does not test or connect the queue."
+        ) { dialog ->
+            addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_ALL) "✓" else "◎", "All configs", "Show every config in the selected tab") {
+                selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_READY) "✓" else "X", "Only Xray-ready", "Show profiles that are startable or mapped through the embedded runtime") {
+                selectedLocationRuntimeFilter = LOCATION_RUNTIME_READY
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_ATTENTION) "✓" else "!", "Needs attention", "Show missing-key, mapper/runtime-needed, or handoff-only profiles") {
+                selectedLocationRuntimeFilter = LOCATION_RUNTIME_ATTENTION
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
             })
         }
     }
@@ -5949,6 +6019,9 @@ class MainActivity : Activity() {
         )
         const val LOCATION_FILTER_ALL = "all"
         const val LOCATION_FILTER_MANUAL = "manual"
+        const val LOCATION_RUNTIME_ALL = "runtime_all"
+        const val LOCATION_RUNTIME_READY = "runtime_ready"
+        const val LOCATION_RUNTIME_ATTENTION = "runtime_attention"
     }
 }
 
