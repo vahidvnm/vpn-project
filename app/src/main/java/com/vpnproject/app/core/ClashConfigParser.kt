@@ -13,11 +13,14 @@ import java.util.Base64
  */
 object ClashConfigParser {
     private val supportedProxyTypes = setOf("vless", "vmess", "trojan", "ss", "shadowsocks")
+    private val runtimeSupportedTransports = setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp")
 
     fun looksLikeClash(text: String): Boolean {
         val normalized = text.replace("\uFEFF", "").trim()
         if (!normalized.contains("proxies:", ignoreCase = true)) return false
-        return parseProxyBlocks(normalized).any { block -> parseProxy(block) != null }
+        return parseProxyBlocks(normalized).any { block ->
+            !block.field("type").isNullOrBlank() || !block.field("server").isNullOrBlank()
+        }
     }
 
     fun firstXrayShareLink(text: String): String? = parseProxyBlocks(text.replace("\uFEFF", ""))
@@ -30,9 +33,10 @@ object ClashConfigParser {
 
     fun parse(text: String, name: String? = null): ImportedConfig {
         val normalized = text.replace("\uFEFF", "")
-        val parsed = parseProxyBlocks(normalized).mapNotNull { block -> parseProxy(block) }
+        val blocks = parseProxyBlocks(normalized)
+        val parsed = blocks.mapNotNull { block -> parseProxy(block) }
         if (parsed.isEmpty()) {
-            throw ConfigParseException("No supported Clash proxies were found. Supported proxy types: vless, vmess, trojan, ss/shadowsocks.")
+            throw ConfigParseException(clashImportFailure(blocks))
         }
 
         val labels = parsed.groupingBy { it.label }.eachCount().entries
@@ -42,8 +46,15 @@ object ClashConfigParser {
         val warnings = buildList {
             add("Clash/Clash.Meta import is experimental: supported vless/vmess/trojan/ss proxies can be mapped to embedded Xray; unsupported Clash features stay saved for grouping, search, and no-VPN diagnostics.")
             add("Detected Clash proxies: $labels. Secrets stay encrypted locally and are not shown in UI labels.")
+            addAll(clashDiagnosticWarnings(blocks))
             parsed.filter { it.unsupportedTransport }.take(4).forEach { proxy ->
-                add("Clash proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} uses transport ${proxy.transport}; endpoint probe can run, but runtime support needs a future mapper.")
+                add("Clash proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} uses transport ${proxy.transport}; endpoint probe can run, but Connect needs a future mapper or provider TCP-like profile.")
+            }
+            parsed.filter { it.missingCredential }.take(3).forEach { proxy ->
+                add("Clash proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} is missing uuid/password, so it can be saved/probed but cannot start through embedded Xray.")
+            }
+            parsed.filter { it.missingRealityPublicKey }.take(3).forEach { proxy ->
+                add("Clash REALITY proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} is missing public-key/pbk; ask the provider for the full REALITY link before Connect.")
             }
         }
 
@@ -166,6 +177,9 @@ object ClashConfigParser {
             hostHeader,
             server.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
         )
+        val credential = firstNonBlank(block.field("uuid"), block.field("password"))
+        val missingCredential = credential.isNullOrBlank()
+        val missingRealityPublicKey = security == "reality" && publicKey.isNullOrBlank()
         val transportMode = when (network) {
             "grpc" -> firstNonBlank(
                 block.field("grpc-mode"),
@@ -190,7 +204,7 @@ object ClashConfigParser {
             type = rawType,
             server = server,
             port = port,
-            credential = firstNonBlank(block.field("uuid"), block.field("password")),
+            credential = credential,
             method = firstNonBlank(block.field("cipher"), block.field("method")),
             alterId = block.intField("alterId") ?: block.intField("alter-id") ?: block.intField("alterId"),
             flow = block.field("flow"),
@@ -217,7 +231,9 @@ object ClashConfigParser {
             name = block.field("name"),
             transport = network,
             label = displayLabel(rawType, network, security),
-            unsupportedTransport = network !in setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp"),
+            unsupportedTransport = network !in runtimeSupportedTransports,
+            missingCredential = missingCredential,
+            missingRealityPublicKey = missingRealityPublicKey,
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -228,6 +244,68 @@ object ClashConfigParser {
             )
         )
     }
+
+    private fun clashImportFailure(blocks: List<ProxyBlock>): String {
+        val details = clashDiagnosticWarnings(blocks)
+        return buildString {
+            append("No Xray-compatible Clash proxies were found. This build is not a full Clash engine; it can map vless/vmess/trojan/ss proxies through embedded Xray when their transport/security fields are complete.")
+            if (details.isNotEmpty()) {
+                append(' ')
+                append(details.joinToString(" "))
+            }
+        }
+    }
+
+    private fun clashDiagnosticWarnings(blocks: List<ProxyBlock>): List<String> = buildList {
+        if (blocks.isEmpty()) {
+            add("No proxy entries were found under proxies:.")
+            return@buildList
+        }
+        val types = blocks.mapNotNull { it.field("type")?.lowercase()?.takeIf { type -> type.isNotBlank() } }
+        val unsupportedTypes = types.filter { it !in supportedProxyTypes }.distinct().sorted()
+        if (unsupportedTypes.isNotEmpty()) {
+            add("Unsupported Clash proxy types: ${unsupportedTypes.joinToString(", ")}. Full engine-only protocols such as hysteria/tuic/wireguard are kept diagnostics-only until a native runtime exists.")
+        }
+        val supportedBlocks = blocks.filter { block -> block.field("type")?.lowercase()?.let { it in supportedProxyTypes } == true }
+        val missingEndpointCount = supportedBlocks.count { block ->
+            block.field("server").isNullOrBlank() || block.intField("port")?.takeIf { it in 1..65535 } == null
+        }
+        if (missingEndpointCount > 0) {
+            add("${missingEndpointCount.formatCount("supported Clash proxy is", "supported Clash proxies are")} missing server/port metadata.")
+        }
+        val missingCredentialCount = supportedBlocks.count { block ->
+            firstNonBlank(block.field("uuid"), block.field("password")).isNullOrBlank()
+        }
+        if (missingCredentialCount > 0) {
+            add("${missingCredentialCount.formatCount("supported Clash proxy is", "supported Clash proxies are")} missing uuid/password; secrets are not shown, but Connect needs a complete user-provided proxy.")
+        }
+        val unsupportedTransports = supportedBlocks.map { block ->
+            normalizeNetwork(block.field("network") ?: block.field("transport") ?: block.field("net") ?: block.inferredTransport())
+        }.filter { it !in runtimeSupportedTransports }.distinct().sorted()
+        if (unsupportedTransports.isNotEmpty()) {
+            add("Unsupported Clash transports for embedded Xray: ${unsupportedTransports.joinToString(", ")}. Try provider profiles using TCP/WebSocket/gRPC/H2/HTTPUpgrade/XHTTP.")
+        }
+        val missingRealityKeys = supportedBlocks.count { block ->
+            val hasReality = block.hasKey("reality-opts") ||
+                block.hasKey("reality_opts") ||
+                block.field("flow")?.contains("xtls-rprx", ignoreCase = true) == true
+            val publicKey = firstNonBlank(
+                block.field("public-key"),
+                block.field("public_key"),
+                block.field("pbk"),
+                block.sectionField("reality-opts", "public-key"),
+                block.sectionField("reality-opts", "public_key"),
+                block.sectionField("reality-opts", "pbk"),
+                block.sectionField("reality_opts", "public-key"),
+                block.sectionField("reality_opts", "public_key"),
+                block.sectionField("reality_opts", "pbk")
+            )
+            hasReality && publicKey.isNullOrBlank()
+        }
+        if (missingRealityKeys > 0) {
+            add("${missingRealityKeys.formatCount("Clash REALITY proxy is", "Clash REALITY proxies are")} missing public-key/pbk; ask the provider for the full REALITY link.")
+        }
+    }.distinct()
 
     private fun buildRuntimeLink(
         type: String,
@@ -565,6 +643,8 @@ object ClashConfigParser {
 
     private fun firstNonBlank(vararg values: String?): String? = values.firstOrNull { !it.isNullOrBlank() }?.trim()
 
+    private fun Int.formatCount(singular: String, plural: String): String = "${this} ${if (this == 1) singular else plural}"
+
     private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
 
     private fun String.toShareAuthorityHost(): String = when {
@@ -593,6 +673,8 @@ object ClashConfigParser {
         val transport: String,
         val label: String,
         val unsupportedTransport: Boolean,
+        val missingCredential: Boolean,
+        val missingRealityPublicKey: Boolean,
         val runtimeLink: String?,
         val endpoint: EndpointCandidate
     )

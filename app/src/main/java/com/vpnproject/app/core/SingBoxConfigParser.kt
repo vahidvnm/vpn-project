@@ -14,16 +14,13 @@ import java.util.Base64
  */
 object SingBoxConfigParser {
     private val supportedOutboundTypes = setOf("vless", "vmess", "trojan", "shadowsocks", "ss")
+    private val runtimeSupportedTransports = setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp")
 
     fun looksLikeSingBox(text: String): Boolean {
         val normalized = text.replace("\uFEFF", "").trim()
         if (!normalized.startsWith("{") && !normalized.startsWith("[")) return false
-        if (!normalized.contains("\"server\"", ignoreCase = true)) return false
-        return outboundObjects(normalized).any { objectText ->
-            topLevelStringField(objectText, "type")?.lowercase() in supportedOutboundTypes &&
-                !topLevelStringField(objectText, "server").isNullOrBlank() &&
-                topLevelPortField(objectText) != null
-        }
+        if (!normalized.contains("\"outbounds\"", ignoreCase = true) && !normalized.contains("\"server\"", ignoreCase = true)) return false
+        return outboundObjects(normalized).isNotEmpty()
     }
 
     fun firstXrayShareLink(text: String): String? = outboundObjects(text.replace("\uFEFF", "").trim())
@@ -32,9 +29,10 @@ object SingBoxConfigParser {
 
     fun parse(text: String, name: String? = null): ImportedConfig {
         val normalized = text.replace("\uFEFF", "").trim()
-        val parsed = outboundObjects(normalized).mapNotNull { objectText -> parseOutbound(objectText) }
+        val objects = outboundObjects(normalized)
+        val parsed = objects.mapNotNull { objectText -> parseOutbound(objectText) }
         if (parsed.isEmpty()) {
-            throw ConfigParseException("No supported sing-box outbounds were found. Supported outbound types: vless, vmess, trojan, shadowsocks.")
+            throw ConfigParseException(singBoxImportFailure(objects))
         }
 
         val endpoints = parsed.map { it.endpoint }.distinct()
@@ -45,9 +43,18 @@ object SingBoxConfigParser {
         val warnings = buildList {
             add("sing-box JSON import is experimental: supported vless/vmess/trojan/ss outbounds can be mapped to embedded Xray; unsupported sing-box features stay saved for grouping, search, and no-VPN diagnostics.")
             add("Detected sing-box outbounds: $labels. Secrets stay encrypted locally and are not shown in UI labels.")
+            addAll(singBoxDiagnosticWarnings(objects))
             parsed.filter { it.unsupportedTransport }.take(4).forEach { outbound ->
                 val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
-                add("sing-box outbound $safeName uses transport ${outbound.transport}; endpoint probe can run, but runtime support needs a future sing-box/Xray mapper.")
+                add("sing-box outbound $safeName uses transport ${outbound.transport}; endpoint probe can run, but Connect needs a future mapper or provider TCP-like profile.")
+            }
+            parsed.filter { it.missingCredential }.take(3).forEach { outbound ->
+                val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
+                add("sing-box outbound $safeName is missing uuid/password, so it can be saved/probed but cannot start through embedded Xray.")
+            }
+            parsed.filter { it.missingRealityPublicKey }.take(3).forEach { outbound ->
+                val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
+                add("sing-box REALITY outbound $safeName is missing public_key/pbk; ask the provider for the full REALITY link before Connect.")
             }
         }
 
@@ -139,15 +146,18 @@ object SingBoxConfigParser {
             tls?.let { topLevelBooleanField(it, "allow_insecure") } == true ||
             tls?.let { topLevelBooleanField(it, "allowInsecure") } == true ||
             tls?.let { topLevelBooleanField(it, "skip_cert_verify") } == true
+        val credential = firstNonBlank(
+            topLevelStringField(objectText, "uuid"),
+            topLevelStringField(objectText, "password"),
+            topLevelStringField(objectText, "id")
+        )
+        val missingCredential = credential.isNullOrBlank()
+        val missingRealityPublicKey = security == "reality" && publicKey.isNullOrBlank()
         val runtimeLink = buildRuntimeLink(
             type = rawType,
             server = server,
             port = port,
-            credential = firstNonBlank(
-                topLevelStringField(objectText, "uuid"),
-                topLevelStringField(objectText, "password"),
-                topLevelStringField(objectText, "id")
-            ),
+            credential = credential,
             method = firstNonBlank(topLevelStringField(objectText, "method"), topLevelStringField(objectText, "security")),
             alterId = topLevelIntField(objectText, "alter_id") ?: topLevelIntField(objectText, "alterId") ?: topLevelIntField(objectText, "alter-id"),
             flow = topLevelStringField(objectText, "flow"),
@@ -174,7 +184,9 @@ object SingBoxConfigParser {
             tag = tag,
             transport = transport,
             label = displayLabel(rawType, transport, security),
-            unsupportedTransport = transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp"),
+            unsupportedTransport = transport !in runtimeSupportedTransports,
+            missingCredential = missingCredential,
+            missingRealityPublicKey = missingRealityPublicKey,
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -185,6 +197,69 @@ object SingBoxConfigParser {
             )
         )
     }
+
+    private fun singBoxImportFailure(objects: List<String>): String {
+        val details = singBoxDiagnosticWarnings(objects)
+        return buildString {
+            append("No Xray-compatible sing-box outbounds were found. This build is not a full sing-box runtime; it can map vless/vmess/trojan/shadowsocks outbounds through embedded Xray when their transport/security fields are complete.")
+            if (details.isNotEmpty()) {
+                append(' ')
+                append(details.joinToString(" "))
+            }
+        }
+    }
+
+    private fun singBoxDiagnosticWarnings(objects: List<String>): List<String> = buildList {
+        if (objects.isEmpty()) {
+            add("No outbound objects with server metadata were found.")
+            return@buildList
+        }
+        val types = objects.mapNotNull { topLevelStringField(it, "type")?.lowercase()?.takeIf { type -> type.isNotBlank() } }
+        val unsupportedTypes = types.filter { it !in supportedOutboundTypes }.distinct().sorted()
+        if (unsupportedTypes.isNotEmpty()) {
+            add("Unsupported sing-box outbound types: ${unsupportedTypes.joinToString(", ")}. Full runtime-only protocols such as hysteria/tuic/wireguard are kept diagnostics-only until a native runtime exists.")
+        }
+        val supportedObjects = objects.filter { topLevelStringField(it, "type")?.lowercase()?.let { type -> type in supportedOutboundTypes } == true }
+        val missingEndpointCount = supportedObjects.count { objectText ->
+            topLevelStringField(objectText, "server").isNullOrBlank() || topLevelPortField(objectText)?.takeIf { it in 1..65535 } == null
+        }
+        if (missingEndpointCount > 0) {
+            add("${missingEndpointCount.formatCount("supported sing-box outbound is", "supported sing-box outbounds are")} missing server/server_port metadata.")
+        }
+        val missingCredentialCount = supportedObjects.count { objectText ->
+            firstNonBlank(
+                topLevelStringField(objectText, "uuid"),
+                topLevelStringField(objectText, "password"),
+                topLevelStringField(objectText, "id")
+            ).isNullOrBlank()
+        }
+        if (missingCredentialCount > 0) {
+            add("${missingCredentialCount.formatCount("supported sing-box outbound is", "supported sing-box outbounds are")} missing uuid/password; secrets are not shown, but Connect needs a complete user-provided outbound.")
+        }
+        val unsupportedTransports = supportedObjects.map { objectText ->
+            normalizeTransport(topLevelObjectField(objectText, "transport")?.let { topLevelStringField(it, "type") })
+        }.filter { it !in runtimeSupportedTransports }.distinct().sorted()
+        if (unsupportedTransports.isNotEmpty()) {
+            add("Unsupported sing-box transports for embedded Xray: ${unsupportedTransports.joinToString(", ")}. Try provider outbounds using TCP/WebSocket/gRPC/H2/HTTPUpgrade/XHTTP.")
+        }
+        val missingRealityKeys = supportedObjects.count { objectText ->
+            val tls = topLevelObjectField(objectText, "tls")
+            val reality = tls?.let { topLevelObjectField(it, "reality") }
+            val realityEnabled = reality != null && topLevelBooleanField(reality, "enabled") != false
+            val publicKey = reality?.let {
+                firstNonBlank(
+                    topLevelStringField(it, "public_key"),
+                    topLevelStringField(it, "publicKey"),
+                    topLevelStringField(it, "public-key"),
+                    topLevelStringField(it, "pbk")
+                )
+            }
+            realityEnabled && publicKey.isNullOrBlank()
+        }
+        if (missingRealityKeys > 0) {
+            add("${missingRealityKeys.formatCount("sing-box REALITY outbound is", "sing-box REALITY outbounds are")} missing public_key/pbk; ask the provider for the full REALITY link.")
+        }
+    }.distinct()
 
     private fun buildRuntimeLink(
         type: String,
@@ -294,8 +369,8 @@ object SingBoxConfigParser {
 
     private fun outboundObjects(text: String): List<String> = extractJsonObjects(text)
         .filter { objectText ->
-            topLevelStringField(objectText, "type")?.lowercase() in supportedOutboundTypes &&
-                !topLevelStringField(objectText, "server").isNullOrBlank()
+            !topLevelStringField(objectText, "type").isNullOrBlank() &&
+                (!topLevelStringField(objectText, "server").isNullOrBlank() || topLevelPortField(objectText) != null)
         }
         .distinct()
 
@@ -485,6 +560,8 @@ object SingBoxConfigParser {
 
     private fun firstNonBlank(vararg values: String?): String? = values.firstOrNull { !it.isNullOrBlank() }?.trim()
 
+    private fun Int.formatCount(singular: String, plural: String): String = "${this} ${if (this == 1) singular else plural}"
+
     private fun String.firstCommaValue(): String? = split(',', ';').firstOrNull { it.isNotBlank() }?.trim()
 
     private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
@@ -548,6 +625,8 @@ object SingBoxConfigParser {
         val transport: String,
         val label: String,
         val unsupportedTransport: Boolean,
+        val missingCredential: Boolean,
+        val missingRealityPublicKey: Boolean,
         val runtimeLink: String?,
         val endpoint: EndpointCandidate
     )

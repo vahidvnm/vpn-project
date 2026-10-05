@@ -1,5 +1,6 @@
 package com.vpnproject.app.engine
 
+import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
@@ -347,6 +348,93 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(runtime.configJson, "\"mode\": \"auto\"")
         assertContains(runtime.configJson, "\"realitySettings\"")
         assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
+    }
+
+    @Test
+    fun unsupportedClashImportExplainsUnsupportedTypeWithoutSecret() {
+        val clash = """
+            proxies:
+              - name: hy2 secret
+                type: hysteria2
+                server: hy.example.net
+                port: 443
+                password: super-secret-password
+        """.trimIndent()
+
+        val error = assertThrows(ConfigParseException::class.java) {
+            ConfigImporter.parse(clash)
+        }
+
+        assertContains(error.message.orEmpty(), "No Xray-compatible Clash proxies were found")
+        assertContains(error.message.orEmpty(), "Unsupported Clash proxy types: hysteria2")
+        assertTrue("Secret leaked in Clash diagnostic: ${error.message}", !error.message.orEmpty().contains("super-secret-password"))
+    }
+
+    @Test
+    fun clashImportWarningsExplainMissingCredentialAndRealityKeyWithoutSecret() {
+        val clash = """
+            proxies:
+              - name: Missing credential
+                type: vless
+                server: edge.example.net
+                port: 443
+                network: ws
+              - name: Missing Reality key
+                type: vless
+                server: reality.example.net
+                port: 443
+                uuid: 11111111-1111-1111-1111-111111111111
+                flow: xtls-rprx-vision
+                reality-opts:
+                  short-id: abc123
+        """.trimIndent()
+
+        val config = ConfigImporter.parse(clash)
+        val warnings = config.warnings.joinToString("\n")
+
+        assertContains(warnings, "missing uuid/password")
+        assertContains(warnings, "missing public-key/pbk")
+        assertTrue("UUID leaked in Clash warning: $warnings", !warnings.contains("11111111-1111-1111-1111-111111111111"))
+    }
+
+    @Test
+    fun unsupportedSingBoxImportExplainsUnsupportedTypeWithoutSecret() {
+        val singBox = """
+            { "outbounds": [{ "type": "tuic", "tag": "tuic secret", "server": "tuic.example.net", "server_port": 443, "password": "super-secret-password" }] }
+        """.trimIndent()
+
+        val error = assertThrows(ConfigParseException::class.java) {
+            ConfigImporter.parse(singBox)
+        }
+
+        assertContains(error.message.orEmpty(), "No Xray-compatible sing-box outbounds were found")
+        assertContains(error.message.orEmpty(), "Unsupported sing-box outbound types: tuic")
+        assertTrue("Secret leaked in sing-box diagnostic: ${error.message}", !error.message.orEmpty().contains("super-secret-password"))
+    }
+
+    @Test
+    fun singBoxImportWarningsExplainUnsupportedTransportAndRealityKeyWithoutSecret() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "vless",
+                "tag": "sing-box quic reality",
+                "server": "edge.example.net",
+                "server_port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "flow": "xtls-rprx-vision",
+                "transport": { "type": "quic" },
+                "tls": { "enabled": true, "reality": { "enabled": true, "short_id": "abc123" } }
+              }]
+            }
+        """.trimIndent()
+
+        val config = ConfigImporter.parse(singBox)
+        val warnings = config.warnings.joinToString("\n")
+
+        assertContains(warnings, "Unsupported sing-box transports for embedded Xray: quic")
+        assertContains(warnings, "missing public_key/pbk")
+        assertTrue("UUID leaked in sing-box warning: $warnings", !warnings.contains("11111111-1111-1111-1111-111111111111"))
     }
 
     @Test
