@@ -1029,7 +1029,8 @@ class MainActivity : Activity() {
                         success = summary.reachable,
                         network = network,
                         latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore
+                        score = summary.bestScore,
+                        testKind = testKindForLabel(testLabel)
                     )
                 }.getOrNull()
             }
@@ -1191,7 +1192,8 @@ class MainActivity : Activity() {
                 success = summary.reachable,
                 network = network,
                 latencyMs = summary.bestLatencyMs,
-                score = summary.bestScore
+                score = summary.bestScore,
+                testKind = TEST_KIND_QUICK
             )
         }.getOrNull() ?: profile
         return ProfileProbeResult(updatedProfile, config, summary)
@@ -1234,7 +1236,8 @@ class MainActivity : Activity() {
                 success = result.summary.reachable,
                 network = result.profile.lastTestNetwork,
                 latencyMs = result.summary.bestLatencyMs,
-                score = result.summary.bestScore
+                score = result.summary.bestScore,
+                testKind = result.profile.lastTestKind ?: TEST_KIND_QUICK
             )
         }.getOrNull() ?: result.profile
         importedConfig = config
@@ -1381,7 +1384,8 @@ class MainActivity : Activity() {
                     success = result.reachable,
                     network = network,
                     latencyMs = result.latencyMs,
-                    score = result.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) }
+                    score = result.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) },
+                    testKind = TEST_KIND_REAL
                 )
             }.getOrNull()
             runOnUiThread {
@@ -1461,7 +1465,8 @@ class MainActivity : Activity() {
                         success = summary.reachable,
                         network = network,
                         latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore
+                        score = summary.bestScore,
+                        testKind = TEST_KIND_REAL
                     )
                 }.getOrNull() ?: profile
                 results += ProfileProbeResult(updatedProfile, config, summary)
@@ -1550,29 +1555,32 @@ class MainActivity : Activity() {
             .thenByDescending { it.profile.favorite }
             .thenByDescending { it.profile.lastVerifiedEpochMs ?: 0L }
 
-    private fun profileRankingComparator(): Comparator<VpnProfile> =
-        compareByDescending<VpnProfile> { it.lastTestSuccess == true }
-            .thenBy { it.lastTestScore ?: Int.MAX_VALUE }
-            .thenBy { it.lastTestLatencyMs ?: Long.MAX_VALUE }
-            .thenByDescending { it.lastVerifiedEpochMs ?: 0L }
+    private fun profileRankingComparator(network: String? = currentNetworkLabel()): Comparator<VpnProfile> =
+        compareBy<VpnProfile> { profileRecommendationBucket(it, network) }
+            .thenBy { profileLatencySortValue(it, network) }
+            .thenBy { profileLatencyState(it, network)?.score ?: it.lastTestScore ?: Int.MAX_VALUE }
             .thenByDescending { it.favorite }
+            .thenByDescending { it.lastVerifiedEpochMs ?: 0L }
             .thenByDescending { it.updatedAtEpochMs }
 
-    private fun locationSortComparator(): Comparator<VpnProfile> = when (selectedLocationSortMode) {
-        LOCATION_SORT_NEWEST -> compareByDescending<VpnProfile> { it.updatedAtEpochMs }
-            .thenByDescending { it.favorite }
-            .thenBy { compactProfileTitle(it).lowercase(java.util.Locale.US) }
-        LOCATION_SORT_LATENCY -> compareBy<VpnProfile> { profileKnownLatency(it) ?: Long.MAX_VALUE }
-            .thenByDescending { it.lastTestSuccess == true || it.lastVerifiedEpochMs != null }
-            .thenByDescending { it.favorite }
-            .thenByDescending { it.updatedAtEpochMs }
-        LOCATION_SORT_RUNTIME_READY -> compareByDescending<VpnProfile> { isXrayReadyProfile(it) }
-            .then(profileRankingComparator())
-        else -> profileRankingComparator()
+    private fun locationSortComparator(): Comparator<VpnProfile> {
+        val network = currentNetworkLabel()
+        return when (selectedLocationSortMode) {
+            LOCATION_SORT_NEWEST -> compareByDescending<VpnProfile> { it.updatedAtEpochMs }
+                .thenByDescending { it.favorite }
+                .thenBy { compactProfileTitle(it).lowercase(java.util.Locale.US) }
+            LOCATION_SORT_LATENCY -> compareBy<VpnProfile> { profileLatencySortBucket(it, network) }
+                .thenBy { profileLatencySortValue(it, network) }
+                .thenByDescending { it.favorite }
+                .thenByDescending { it.updatedAtEpochMs }
+            LOCATION_SORT_RUNTIME_READY -> compareByDescending<VpnProfile> { isXrayReadyProfile(it) }
+                .then(profileRankingComparator(network))
+            else -> profileRankingComparator(network)
+        }
     }
 
     private fun profileKnownLatency(profile: VpnProfile): Long? =
-        profile.lastVerifiedLatencyMs ?: profile.lastTestLatencyMs
+        profileLatencyState(profile)?.latencyMs
 
     private fun locationSortLabel(): String = when (selectedLocationSortMode) {
         LOCATION_SORT_NEWEST -> "Newest"
@@ -1583,9 +1591,9 @@ class MainActivity : Activity() {
 
     private fun locationSortDescription(): String = when (selectedLocationSortMode) {
         LOCATION_SORT_NEWEST -> "Newest saved/refreshed configs first"
-        LOCATION_SORT_LATENCY -> "Lowest saved Quick/Real-delay latency first; unknown latency stays last"
+        LOCATION_SORT_LATENCY -> "Fresh same-network Quick/Real/Verified latency first; old or other-network results are lower"
         LOCATION_SORT_RUNTIME_READY -> "Xray-ready/mapped profiles first, then recommended order"
-        else -> "Best saved test/verified profiles first"
+        else -> "Fresh same-network tested/verified profiles first"
     }
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
@@ -2554,7 +2562,8 @@ class MainActivity : Activity() {
                 success = false,
                 network = network,
                 latencyMs = null,
-                score = null
+                score = null,
+                testKind = TEST_KIND_CONNECT
             )
         }.getOrNull()
         if (updated != null) {
@@ -2824,6 +2833,16 @@ class MainActivity : Activity() {
         val aliases: List<String>
     )
 
+    private data class ProfileLatencyState(
+        val label: String,
+        val latencyMs: Long?,
+        val success: Boolean?,
+        val checkedAtEpochMs: Long?,
+        val network: String?,
+        val kindRank: Int,
+        val score: Int? = null
+    )
+
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
@@ -2852,13 +2871,11 @@ class MainActivity : Activity() {
         val hub = currentHubStatus()
         val liveForProfile = activeConnectionProfileId == profile.id && isLiveState(hub.state)
         val compatibility = profileRuntimeCompatibility(profile)
+        val savedHealth = profileLatencyMiniLabel(profile)
         val health = when {
             !compatibility.connectReady -> compatibility.detail
-            liveForProfile && hub.latencyMs != null -> "Good ${hub.latencyMs}ms"
-            profile.lastVerifiedLatencyMs != null -> "Good ${profile.lastVerifiedLatencyMs}ms"
-            profile.lastTestLatencyMs != null -> "Ping ${profile.lastTestLatencyMs}ms"
-            profile.lastTestSuccess == true -> "Ping OK"
-            profile.lastTestSuccess == false -> "Fail"
+            liveForProfile && hub.latencyMs != null -> "Verified ${hub.latencyMs}ms"
+            savedHealth != null -> savedHealth
             else -> compatibility.detail
         }
         return listOfNotNull(
@@ -2872,10 +2889,10 @@ class MainActivity : Activity() {
     private fun homeProfileMeta(profile: VpnProfile): String {
         val subtitle = compactProfileSubtitle(profile)
         val compatibility = profileRuntimeCompatibility(profile)
-        val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
-            ?: profile.lastTestMiniLabel()
+        val health = profileLatencyMiniLabel(profile)
+        val network = profileLatencyNetworkTag(profile)
         val runtime = if (compatibility.connectReady && health != null) null else compatibility.detail
-        return listOfNotNull(subtitle, runtime, health).joinToString(" • ").ifBlank { "Ready" }.shortUi(30)
+        return listOfNotNull(subtitle, runtime, health, network).joinToString(" • ").ifBlank { "Ready" }.shortUi(34)
     }
 
     private fun compactProfileTitle(profile: VpnProfile?, fallback: String): String =
@@ -3023,11 +3040,182 @@ class MainActivity : Activity() {
         val detail = compactProfileSubtitle(profile)?.shortUi(18)
         val compatibility = profileRuntimeCompatibility(profile)
         val runtime = compatibility.detail.shortUi(18)
-        val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
-            ?: profile.lastTestMiniLabel()
-        val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }
-            ?: profile.lastTestNetwork?.takeIf { it.isNotBlank() }
-        return listOfNotNull(transport, runtime, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
+        val health = profileLatencyMiniLabel(profile)
+        val network = profileLatencyNetworkTag(profile)
+        return listOfNotNull(transport, runtime, detail, health, network?.shortUi(11)).joinToString(" • ").ifBlank { "Saved config" }
+    }
+
+    private fun profileLatencyStates(profile: VpnProfile): List<ProfileLatencyState> = buildList {
+        profile.lastVerifiedEpochMs?.let { verifiedAt ->
+            add(ProfileLatencyState(
+                label = "Verified",
+                latencyMs = profile.lastVerifiedLatencyMs,
+                success = true,
+                checkedAtEpochMs = verifiedAt,
+                network = profile.lastVerifiedNetwork,
+                kindRank = 0
+            ))
+        }
+        if (profile.lastTestedEpochMs != null || profile.lastTestSuccess != null) {
+            val kind = profileTestKindLabel(profile.lastTestKind)
+            add(ProfileLatencyState(
+                label = kind,
+                latencyMs = profile.lastTestLatencyMs,
+                success = profile.lastTestSuccess,
+                checkedAtEpochMs = profile.lastTestedEpochMs,
+                network = profile.lastTestNetwork,
+                kindRank = profileTestKindRank(profile.lastTestKind),
+                score = profile.lastTestScore
+            ))
+        }
+        profile.testNetworkHistory?.let { addAll(profileLatencyHistoryStates(it)) }
+    }
+
+    private fun profileLatencyHistoryStates(history: String): List<ProfileLatencyState> = history
+        .split(';')
+        .mapNotNull { entry ->
+            val parts = entry.split('|')
+            if (parts.size < 6) return@mapNotNull null
+            val kind = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+            val success = when (parts.getOrNull(2)) {
+                "1" -> true
+                "0" -> false
+                else -> null
+            }
+            ProfileLatencyState(
+                label = profileTestKindLabel(kind),
+                latencyMs = parts.getOrNull(3)?.toLongOrNull()?.takeIf { it >= 0L },
+                success = success,
+                checkedAtEpochMs = parts.getOrNull(5)?.toLongOrNull(),
+                network = parts.getOrNull(0)?.takeIf { it.isNotBlank() },
+                kindRank = profileTestKindRank(kind),
+                score = parts.getOrNull(4)?.toIntOrNull()
+            )
+        }
+
+    private fun profileLatencyState(
+        profile: VpnProfile,
+        currentNetwork: String? = currentNetworkLabel()
+    ): ProfileLatencyState? = profileLatencyStates(profile).minWithOrNull(
+        compareBy<ProfileLatencyState> { profileLatencyStateBucket(it, currentNetwork) }
+            .thenBy { it.kindRank }
+            .thenBy { it.latencyMs ?: Long.MAX_VALUE }
+            .thenByDescending { it.checkedAtEpochMs ?: 0L }
+    )
+
+    private fun profileRecommendationBucket(profile: VpnProfile, currentNetwork: String?): Int {
+        val state = profileLatencyState(profile, currentNetwork) ?: return 50
+        return if (state.success == true) profileLatencyStateBucket(state, currentNetwork) else 70
+    }
+
+    private fun profileLatencySortBucket(profile: VpnProfile, currentNetwork: String?): Int {
+        val state = profileLatencyState(profile, currentNetwork) ?: return 80
+        return if (state.success == true && state.latencyMs != null) profileLatencyStateBucket(state, currentNetwork) else 90
+    }
+
+    private fun profileLatencySortValue(profile: VpnProfile, currentNetwork: String?): Long =
+        profileLatencyState(profile, currentNetwork)?.takeIf { it.success == true }?.latencyMs ?: Long.MAX_VALUE
+
+    private fun profileLatencyStateBucket(state: ProfileLatencyState, currentNetwork: String?): Int {
+        val fresh = isLatencyFresh(state.checkedAtEpochMs)
+        val sameNetwork = isSameNetworkLabel(state.network, currentNetwork)
+        val hasLatency = state.latencyMs != null
+        return when {
+            state.success == false && fresh && sameNetwork && state.label == "Connect" -> -1
+            state.success == true && hasLatency && fresh && sameNetwork -> state.kindRank
+            state.success == true && hasLatency && fresh -> 10 + state.kindRank
+            state.success == false && fresh && sameNetwork -> 18
+            state.success == true && hasLatency && sameNetwork -> 20 + state.kindRank
+            state.success == true && hasLatency -> 30 + state.kindRank
+            state.success == true && fresh && sameNetwork -> 40 + state.kindRank
+            state.success == true -> 45 + state.kindRank
+            state.success == false && fresh -> 60
+            state.success == false -> 70
+            else -> 80
+        }
+    }
+
+    private fun profileHasGoodLatencySignal(profile: VpnProfile): Boolean =
+        profileLatencyState(profile)?.success == true
+
+    private fun profileLatencyMiniLabel(profile: VpnProfile): String? {
+        val currentNetwork = currentNetworkLabel()
+        val state = profileLatencyState(profile, currentNetwork) ?: return null
+        val status = if (state.success == true) {
+            state.latencyMs?.let { "${state.label} ${it}ms" } ?: "${state.label} OK"
+        } else {
+            "${state.label} failed"
+        }
+        val suffixes = mutableListOf<String>()
+        if (!isLatencyFresh(state.checkedAtEpochMs)) suffixes += "old"
+        if (!isSameNetworkLabel(state.network, currentNetwork) && !state.network.isNullOrBlank() && !currentNetwork.isNullOrBlank()) {
+            suffixes += "other net"
+        }
+        return (listOf(status) + suffixes).joinToString(" ").shortUi(24)
+    }
+
+    private fun profileLatencyNetworkTag(profile: VpnProfile): String? =
+        profileLatencyState(profile)?.network?.let { compactNetworkLabel(it) }
+
+    private fun profileLatencyDetailLine(profile: VpnProfile): String? {
+        val currentNetwork = currentNetworkLabel()
+        val state = profileLatencyState(profile, currentNetwork) ?: return null
+        val result = if (state.success == true) {
+            state.latencyMs?.let { "${it}ms" } ?: "OK"
+        } else {
+            "failed"
+        }
+        val age = if (isLatencyFresh(state.checkedAtEpochMs)) "fresh" else "old"
+        val network = compactNetworkLabel(state.network.orEmpty())?.let { " • $it" }.orEmpty()
+        val mismatch = if (!isSameNetworkLabel(state.network, currentNetwork) && !state.network.isNullOrBlank() && !currentNetwork.isNullOrBlank()) {
+            " • other network"
+        } else ""
+        return "Last ${state.label}: $result • $age$network$mismatch"
+    }
+
+    private fun testKindForLabel(label: String): String =
+        if (label.contains("real", ignoreCase = true)) TEST_KIND_REAL else TEST_KIND_QUICK
+
+    private fun profileTestKindLabel(kind: String?): String = when (kind) {
+        TEST_KIND_VERIFIED -> "Verified"
+        TEST_KIND_REAL -> "Real"
+        TEST_KIND_CONNECT -> "Connect"
+        TEST_KIND_QUICK -> "Quick"
+        else -> "Test"
+    }
+
+    private fun profileTestKindRank(kind: String?): Int = when (kind) {
+        TEST_KIND_VERIFIED -> 0
+        TEST_KIND_REAL -> 1
+        TEST_KIND_QUICK -> 2
+        TEST_KIND_CONNECT -> 3
+        else -> 4
+    }
+
+    private fun isLatencyFresh(epochMs: Long?): Boolean =
+        epochMs != null && System.currentTimeMillis() - epochMs <= PROFILE_TEST_FRESH_MS
+
+    private fun isSameNetworkLabel(left: String?, right: String?): Boolean {
+        val normalizedLeft = normalizeNetworkLabel(left)
+        val normalizedRight = normalizeNetworkLabel(right)
+        return normalizedLeft != null && normalizedLeft == normalizedRight
+    }
+
+    private fun normalizeNetworkLabel(value: String?): String? {
+        val parts = value.orEmpty()
+            .split('+')
+            .map { it.trim().lowercase(java.util.Locale.US) }
+            .filter { it.isNotBlank() && it != "vpn" }
+        return if (parts.isEmpty()) null else parts.joinToString("+")
+    }
+
+    private fun compactNetworkLabel(value: String): String? = normalizeNetworkLabel(value)?.let { normalized ->
+        when (normalized) {
+            "wifi" -> "Wi‑Fi"
+            "cellular" -> "cell"
+            "ethernet" -> "ethernet"
+            else -> normalized.shortUi(10)
+        }
     }
 
     private fun profileRuntimeLabel(profile: VpnProfile): String? = profileRuntimeCompatibility(profile).detail.shortUi(18)
@@ -3277,7 +3465,7 @@ class MainActivity : Activity() {
         }
 
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
-        addSheetSection("Recommended", profiles.filter { it.lastTestSuccess == true }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
+        addSheetSection("Recommended", profiles.filter { profileHasGoodLatencySignal(it) }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
         if (groups.isNotEmpty()) {
             container.addView(createLocationSectionLabel("Subscription profiles", groups.size))
             groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
@@ -3391,8 +3579,7 @@ class MainActivity : Activity() {
             add("Endpoint: ${endpoint.host.shortHost()}:${endpoint.port}")
             endpoint.verifyHost?.takeIf { it.isNotBlank() }?.let { add("Verify host: ${it.shortHost()}") }
         }
-        profile.lastVerifiedLatencyMs?.let { add("Last verified: ${it}ms") }
-            ?: profile.lastTestLatencyMs?.let { add("Last test: ${it}ms") }
+        profileLatencyDetailLine(profile)?.let { add(it) }
         if (!compatibility.connectReady) add("Next step: ${runtimeFixHint(compatibility, profile)}")
     }
 
@@ -3690,62 +3877,62 @@ class MainActivity : Activity() {
 
     private fun profileStatusLabel(profile: VpnProfile): String {
         val compatibility = profileRuntimeCompatibility(profile)
+        val signal = profileLatencyState(profile)
+        val stale = signal != null && !isLatencyFresh(signal.checkedAtEpochMs)
         return when {
             !compatibility.connectReady -> compatibility.badge
-            profile.lastTestSuccess == false -> "Fail"
-            profile.lastVerifiedLatencyMs != null -> "${profile.lastVerifiedLatencyMs}ms"
-            profile.lastTestLatencyMs != null -> "${profile.lastTestLatencyMs}ms"
+            signal?.success == false -> if (stale) "Fail old" else "Fail"
+            signal?.latencyMs != null -> if (stale) "${signal.latencyMs} old" else "${signal.latencyMs}ms"
             profile.id == selectedProfileId -> "Selected"
-            profile.lastVerifiedEpochMs != null -> "Good"
-            profile.lastTestSuccess == true -> "Ping"
+            signal?.success == true -> if (stale) "Good old" else signal.label
             profile.favorite -> "Fav"
             compatibility.badge.isNotBlank() -> compatibility.badge
             else -> "New"
-        }
+        }.shortUi(10)
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int {
         val compatibility = profileRuntimeCompatibility(profile)
+        val signal = profileLatencyState(profile)
         return when {
             compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR_SOFT
             compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE_SOFT
-            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+            profile.id == selectedProfileId && signal?.success == false -> PearlPalette.ERROR_SOFT
             profile.id == selectedProfileId -> PearlPalette.CHAMPAGNE_SOFT
-            profile.lastVerifiedEpochMs != null -> PearlPalette.CHAMPAGNE_SOFT
-            profile.lastTestSuccess == true -> PearlPalette.CHAMPAGNE_SOFT
+            signal?.success == true -> PearlPalette.CHAMPAGNE_SOFT
             profile.favorite -> PearlPalette.CHAMPAGNE_SOFT
-            profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+            signal?.success == false -> PearlPalette.ERROR_SOFT
             else -> PearlPalette.PEARL_MID
         }
     }
 
     private fun profileStatusStrokeColor(profile: VpnProfile): Int {
         val compatibility = profileRuntimeCompatibility(profile)
+        val signal = profileLatencyState(profile)
         return when {
             compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR_STROKE
             compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE
-            compatibility.tone == ProfileRuntimeTone.READY && profile.lastVerifiedEpochMs == null && profile.lastTestSuccess != true -> PearlPalette.HAIRLINE
-            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+            compatibility.tone == ProfileRuntimeTone.READY && signal?.success != true -> PearlPalette.HAIRLINE
+            profile.id == selectedProfileId && signal?.success == false -> PearlPalette.ERROR_STROKE
             profile.id == selectedProfileId -> PearlPalette.BORDER
-            profile.lastVerifiedEpochMs != null -> PearlPalette.SHELL_DARK
-            profile.lastTestSuccess == true -> PearlPalette.SHELL_DARK
+            signal?.success == true -> PearlPalette.SHELL_DARK
             profile.favorite -> PearlPalette.CHAMPAGNE
-            profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+            signal?.success == false -> PearlPalette.ERROR_STROKE
             else -> PearlPalette.HAIRLINE
         }
     }
 
     private fun profileStatusTextColor(profile: VpnProfile): Int {
         val compatibility = profileRuntimeCompatibility(profile)
+        val signal = profileLatencyState(profile)
         return when {
             compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR
             compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE_DARK
-            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR
+            profile.id == selectedProfileId && signal?.success == false -> PearlPalette.ERROR
             profile.id == selectedProfileId -> PearlPalette.INK
-            profile.lastVerifiedEpochMs != null -> PearlPalette.INK
-            profile.lastTestSuccess == true -> PearlPalette.BORDER
+            signal?.success == true -> PearlPalette.BORDER
             profile.favorite -> PearlPalette.CHAMPAGNE_DARK
-            profile.lastTestSuccess == false -> PearlPalette.ERROR
+            signal?.success == false -> PearlPalette.ERROR
             else -> PearlPalette.TEXT_MUTED
         }
     }
@@ -5154,7 +5341,7 @@ class MainActivity : Activity() {
         when (selectedLocationGroupFilter) {
             LOCATION_FILTER_ALL -> {
                 if (query.isBlank()) {
-                    addUniqueSection("Recommended", rankedScoped.filter { it.lastTestSuccess == true }.take(MAX_RECOMMENDED_PROFILES))
+                    addUniqueSection("Recommended", rankedScoped.filter { profileHasGoodLatencySignal(it) }.take(MAX_RECOMMENDED_PROFILES))
                     addUniqueSection("All configs", rankedScoped)
                 } else {
                     addUniqueSection("Search results", rankedScoped)
@@ -5810,7 +5997,8 @@ class MainActivity : Activity() {
                         success = summary.reachable,
                         network = network,
                         latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore
+                        score = summary.bestScore,
+                        testKind = TEST_KIND_QUICK
                     )
                 }.getOrNull()
             }
@@ -5996,31 +6184,34 @@ class MainActivity : Activity() {
     }
 
     private fun VpnProfile.lastVerifiedLabel(): String? {
-        if (lastVerifiedEpochMs == null) return null
-        val latency = lastVerifiedLatencyMs?.let { "${it}ms" } ?: "verified"
-        val network = lastVerifiedNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
-        return "Last good: $latency$network"
+        val verifiedAt = lastVerifiedEpochMs ?: return null
+        val state = ProfileLatencyState(
+            label = "Verified",
+            latencyMs = lastVerifiedLatencyMs,
+            success = true,
+            checkedAtEpochMs = verifiedAt,
+            network = lastVerifiedNetwork,
+            kindRank = 0
+        )
+        val result = state.latencyMs?.let { "${it}ms" } ?: "verified"
+        val age = if (isLatencyFresh(state.checkedAtEpochMs)) "fresh" else "old"
+        val network = state.network?.takeIf { it.isNotBlank() }?.let { " • ${compactNetworkLabel(it) ?: it}" }.orEmpty()
+        return "Last good: $result • $age$network"
     }
 
-    private fun VpnProfile.lastTestMiniLabel(): String? {
-        if (lastTestedEpochMs == null) return null
-        return if (lastTestSuccess == true) {
-            lastTestLatencyMs?.let { "Test ${it}ms" } ?: "Test OK"
-        } else {
-            "Test failed"
-        }
-    }
+    private fun VpnProfile.lastTestMiniLabel(): String? = profileLatencyMiniLabel(this)
 
     private fun VpnProfile.lastTestLabel(): String? {
-        if (lastTestedEpochMs == null) return null
-        val result = if (lastTestSuccess == true) {
-            lastTestLatencyMs?.let { "OK ${it}ms" } ?: "OK"
+        val state = profileLatencyState(this) ?: return null
+        val result = if (state.success == true) {
+            state.latencyMs?.let { "OK ${it}ms" } ?: "OK"
         } else {
             "failed"
         }
-        val score = lastTestScore?.let { " • score $it" }.orEmpty()
-        val network = lastTestNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
-        return "Last test: $result$score$network"
+        val score = state.score?.let { " • score $it" }.orEmpty()
+        val age = if (isLatencyFresh(state.checkedAtEpochMs)) " • fresh" else " • old"
+        val network = state.network?.takeIf { it.isNotBlank() }?.let { " • ${compactNetworkLabel(it) ?: it}" }.orEmpty()
+        return "Last ${state.label}: $result$score$age$network"
     }
 
     private fun String.withoutFlagEmojis(): String {
@@ -6227,6 +6418,11 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
+        const val PROFILE_TEST_FRESH_MS = 6 * 60 * 60 * 1000L
+        const val TEST_KIND_QUICK = "quick"
+        const val TEST_KIND_REAL = "real"
+        const val TEST_KIND_CONNECT = "connect"
+        const val TEST_KIND_VERIFIED = "verified"
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
         const val KEY_SMART_FALLBACK_ENABLED = "smart_fallback_enabled"

@@ -44,10 +44,12 @@ class SecureProfileStore(context: Context) {
                 lastVerifiedNetwork = existing?.lastVerifiedNetwork,
                 lastVerifiedLatencyMs = existing?.lastVerifiedLatencyMs,
                 lastTestedEpochMs = existing?.lastTestedEpochMs,
+                lastTestKind = existing?.lastTestKind,
                 lastTestSuccess = existing?.lastTestSuccess,
                 lastTestLatencyMs = existing?.lastTestLatencyMs,
                 lastTestScore = existing?.lastTestScore,
                 lastTestNetwork = existing?.lastTestNetwork,
+                testNetworkHistory = existing?.testNetworkHistory,
                 favorite = existing?.favorite ?: generated.favorite
             )
         }
@@ -66,6 +68,8 @@ class SecureProfileStore(context: Context) {
                 ?: remove(key(profile.id, FIELD_LAST_VERIFIED_LATENCY))
             profile.lastTestedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_TESTED), it) }
                 ?: remove(key(profile.id, FIELD_LAST_TESTED))
+            profile.lastTestKind?.takeIf { it.isNotBlank() }?.let { putString(key(profile.id, FIELD_LAST_TEST_KIND), it) }
+                ?: remove(key(profile.id, FIELD_LAST_TEST_KIND))
             profile.lastTestSuccess?.let { putBoolean(key(profile.id, FIELD_LAST_TEST_SUCCESS), it) }
                 ?: remove(key(profile.id, FIELD_LAST_TEST_SUCCESS))
             profile.lastTestLatencyMs?.let { putLong(key(profile.id, FIELD_LAST_TEST_LATENCY), it) }
@@ -74,6 +78,8 @@ class SecureProfileStore(context: Context) {
                 ?: remove(key(profile.id, FIELD_LAST_TEST_SCORE))
             profile.lastTestNetwork?.let { putString(key(profile.id, FIELD_LAST_TEST_NETWORK), it) }
                 ?: remove(key(profile.id, FIELD_LAST_TEST_NETWORK))
+            profile.testNetworkHistory?.takeIf { it.isNotBlank() }?.let { putString(key(profile.id, FIELD_TEST_NETWORK_HISTORY), it) }
+                ?: remove(key(profile.id, FIELD_TEST_NETWORK_HISTORY))
             putString(key(profile.id, FIELD_RAW_CONFIG), crypto.encrypt(config.originalText))
             putString(KEY_PROFILE_IDS, mergeProfileIds(profile.id))
             putString(KEY_LAST_PROFILE_ID, profile.id)
@@ -188,12 +194,23 @@ class SecureProfileStore(context: Context) {
         network: String? = null,
         latencyMs: Long? = null
     ): VpnProfile? {
+        val updatedHistory = updatedTestNetworkHistory(
+            profileId = profileId,
+            network = network,
+            kind = HISTORY_KIND_VERIFIED,
+            success = true,
+            latencyMs = latencyMs,
+            score = null,
+            checkedAtEpochMs = verifiedAtEpochMs
+        )
         prefs.edit().apply {
             putLong(key(profileId, FIELD_LAST_VERIFIED), verifiedAtEpochMs)
             network?.takeIf { it.isNotBlank() }?.let { putString(key(profileId, FIELD_LAST_VERIFIED_NETWORK), it) }
                 ?: remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
             if (latencyMs != null && latencyMs >= 0L) putLong(key(profileId, FIELD_LAST_VERIFIED_LATENCY), latencyMs)
             else remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
+            updatedHistory?.let { putString(key(profileId, FIELD_TEST_NETWORK_HISTORY), it) }
+                ?: remove(key(profileId, FIELD_TEST_NETWORK_HISTORY))
             putLong(key(profileId, FIELD_UPDATED), verifiedAtEpochMs)
             putString(KEY_LAST_PROFILE_ID, profileId)
         }.apply()
@@ -206,10 +223,23 @@ class SecureProfileStore(context: Context) {
         success: Boolean,
         network: String? = null,
         latencyMs: Long? = null,
-        score: Int? = null
+        score: Int? = null,
+        testKind: String? = null
     ): VpnProfile? {
+        val normalizedKind = testKind?.takeIf { it.isNotBlank() }?.take(24)
+        val updatedHistory = updatedTestNetworkHistory(
+            profileId = profileId,
+            network = network,
+            kind = normalizedKind ?: HISTORY_KIND_TEST,
+            success = success,
+            latencyMs = latencyMs,
+            score = score,
+            checkedAtEpochMs = testedAtEpochMs
+        )
         prefs.edit().apply {
             putLong(key(profileId, FIELD_LAST_TESTED), testedAtEpochMs)
+            normalizedKind?.let { putString(key(profileId, FIELD_LAST_TEST_KIND), it) }
+                ?: remove(key(profileId, FIELD_LAST_TEST_KIND))
             putBoolean(key(profileId, FIELD_LAST_TEST_SUCCESS), success)
             network?.takeIf { it.isNotBlank() }?.let { putString(key(profileId, FIELD_LAST_TEST_NETWORK), it) }
                 ?: remove(key(profileId, FIELD_LAST_TEST_NETWORK))
@@ -217,6 +247,8 @@ class SecureProfileStore(context: Context) {
             else remove(key(profileId, FIELD_LAST_TEST_LATENCY))
             if (score != null && score >= 0) putInt(key(profileId, FIELD_LAST_TEST_SCORE), score)
             else remove(key(profileId, FIELD_LAST_TEST_SCORE))
+            updatedHistory?.let { putString(key(profileId, FIELD_TEST_NETWORK_HISTORY), it) }
+                ?: remove(key(profileId, FIELD_TEST_NETWORK_HISTORY))
             putLong(key(profileId, FIELD_UPDATED), testedAtEpochMs)
             putString(KEY_LAST_PROFILE_ID, profileId)
         }.apply()
@@ -236,10 +268,12 @@ class SecureProfileStore(context: Context) {
             remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
             remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
             remove(key(profileId, FIELD_LAST_TESTED))
+            remove(key(profileId, FIELD_LAST_TEST_KIND))
             remove(key(profileId, FIELD_LAST_TEST_SUCCESS))
             remove(key(profileId, FIELD_LAST_TEST_LATENCY))
             remove(key(profileId, FIELD_LAST_TEST_SCORE))
             remove(key(profileId, FIELD_LAST_TEST_NETWORK))
+            remove(key(profileId, FIELD_TEST_NETWORK_HISTORY))
             remove(key(profileId, FIELD_RAW_CONFIG))
             putString(KEY_PROFILE_IDS, remaining.joinToString(ID_SEPARATOR))
             if (prefs.getString(KEY_LAST_PROFILE_ID, null) == profileId) {
@@ -271,10 +305,12 @@ class SecureProfileStore(context: Context) {
             lastVerifiedNetwork = prefs.getString(key(id, FIELD_LAST_VERIFIED_NETWORK), null),
             lastVerifiedLatencyMs = lastVerifiedLatency,
             lastTestedEpochMs = lastTested,
+            lastTestKind = prefs.getString(key(id, FIELD_LAST_TEST_KIND), null),
             lastTestSuccess = if (hasLastTestSuccess) prefs.getBoolean(key(id, FIELD_LAST_TEST_SUCCESS), false) else null,
             lastTestLatencyMs = lastTestLatency,
             lastTestScore = lastTestScore,
             lastTestNetwork = prefs.getString(key(id, FIELD_LAST_TEST_NETWORK), null),
+            testNetworkHistory = prefs.getString(key(id, FIELD_TEST_NETWORK_HISTORY), null),
             favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false)
         )
     }
@@ -317,6 +353,51 @@ class SecureProfileStore(context: Context) {
         ?.map { it.trim() }
         ?.filter { it.isNotBlank() }
         .orEmpty()
+
+    private fun updatedTestNetworkHistory(
+        profileId: String,
+        network: String?,
+        kind: String,
+        success: Boolean,
+        latencyMs: Long?,
+        score: Int?,
+        checkedAtEpochMs: Long
+    ): String? {
+        val networkToken = historyToken(network, fallback = "unknown", maxLength = 32)
+        val kindToken = historyToken(kind, fallback = HISTORY_KIND_TEST, maxLength = 24)
+        val latencyToken = latencyMs?.takeIf { it >= 0L }?.toString().orEmpty()
+        val scoreToken = score?.takeIf { it >= 0 }?.toString().orEmpty()
+        val entry = listOf(
+            networkToken,
+            kindToken,
+            if (success) "1" else "0",
+            latencyToken,
+            scoreToken,
+            checkedAtEpochMs.coerceAtLeast(0L).toString()
+        ).joinToString(HISTORY_FIELD_SEPARATOR)
+        val existing = prefs.getString(key(profileId, FIELD_TEST_NETWORK_HISTORY), null).orEmpty()
+        val retained = existing
+            .split(HISTORY_ENTRY_SEPARATOR)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filterNot { historyEntryMatches(it, networkToken, kindToken) }
+        return (listOf(entry) + retained)
+            .take(MAX_TEST_NETWORK_HISTORY_ENTRIES)
+            .joinToString(HISTORY_ENTRY_SEPARATOR)
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun historyEntryMatches(entry: String, networkToken: String, kindToken: String): Boolean {
+        val parts = entry.split(HISTORY_FIELD_SEPARATOR)
+        return parts.getOrNull(0) == networkToken && parts.getOrNull(1) == kindToken
+    }
+
+    private fun historyToken(value: String?, fallback: String, maxLength: Int): String = value.orEmpty()
+        .trim()
+        .lowercase(Locale.US)
+        .replace(Regex("[^a-z0-9+_.-]"), "-")
+        .take(maxLength)
+        .ifBlank { fallback }
 
     private fun encodeEndpoints(endpoints: List<VpnProfileEndpoint>): String = endpoints.joinToString(ENDPOINT_SEPARATOR) { endpoint ->
         listOf(
@@ -381,10 +462,12 @@ class SecureProfileStore(context: Context) {
         const val FIELD_LAST_VERIFIED_NETWORK = "last_verified_network"
         const val FIELD_LAST_VERIFIED_LATENCY = "last_verified_latency_ms"
         const val FIELD_LAST_TESTED = "last_tested_at"
+        const val FIELD_LAST_TEST_KIND = "last_test_kind"
         const val FIELD_LAST_TEST_SUCCESS = "last_test_success"
         const val FIELD_LAST_TEST_LATENCY = "last_test_latency_ms"
         const val FIELD_LAST_TEST_SCORE = "last_test_score"
         const val FIELD_LAST_TEST_NETWORK = "last_test_network"
+        const val FIELD_TEST_NETWORK_HISTORY = "test_network_history"
         const val FIELD_RAW_CONFIG = "raw_config"
         const val FIELD_URL = "url"
         const val FIELD_LAST_SYNC = "last_sync_at"
@@ -393,6 +476,11 @@ class SecureProfileStore(context: Context) {
         const val ID_SEPARATOR = ","
         const val ENDPOINT_SEPARATOR = ";"
         const val FIELD_SEPARATOR = ":"
+        const val HISTORY_ENTRY_SEPARATOR = ";"
+        const val HISTORY_FIELD_SEPARATOR = "|"
+        const val HISTORY_KIND_VERIFIED = "verified"
+        const val HISTORY_KIND_TEST = "test"
+        const val MAX_TEST_NETWORK_HISTORY_ENTRIES = 8
     }
 }
 
