@@ -168,6 +168,7 @@ class MainActivity : Activity() {
     private val profileRowStatusViews = mutableMapOf<String, TextView>()
     private val profileRowSubtitleViews = mutableMapOf<String, TextView>()
     private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
+    private val profileRuntimeCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
     private lateinit var navHomeButton: TextView
     private lateinit var navProfilesButton: TextView
     private lateinit var navToolsButton: TextView
@@ -2754,6 +2755,20 @@ class MainActivity : Activity() {
         com.vpnproject.app.engine.EngineKind.OPENVPN_UNAVAILABLE -> "OpenVPN handoff"
     }
 
+    private enum class ProfileRuntimeTone {
+        READY,
+        INFO,
+        WARNING,
+        BLOCKED
+    }
+
+    private data class ProfileRuntimeCompatibility(
+        val badge: String,
+        val detail: String,
+        val connectReady: Boolean,
+        val tone: ProfileRuntimeTone
+    )
+
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
@@ -2781,13 +2796,15 @@ class MainActivity : Activity() {
     private fun topProfileSummary(profile: VpnProfile): String {
         val hub = currentHubStatus()
         val liveForProfile = activeConnectionProfileId == profile.id && isLiveState(hub.state)
+        val compatibility = profileRuntimeCompatibility(profile)
         val health = when {
+            !compatibility.connectReady -> compatibility.detail
             liveForProfile && hub.latencyMs != null -> "Good ${hub.latencyMs}ms"
             profile.lastVerifiedLatencyMs != null -> "Good ${profile.lastVerifiedLatencyMs}ms"
             profile.lastTestLatencyMs != null -> "Ping ${profile.lastTestLatencyMs}ms"
             profile.lastTestSuccess == true -> "Ping OK"
             profile.lastTestSuccess == false -> "Fail"
-            else -> "Ready"
+            else -> compatibility.detail
         }
         return listOfNotNull(
             profileFlagOrIcon(profile),
@@ -2799,9 +2816,11 @@ class MainActivity : Activity() {
 
     private fun homeProfileMeta(profile: VpnProfile): String {
         val subtitle = compactProfileSubtitle(profile)
+        val compatibility = profileRuntimeCompatibility(profile)
         val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
             ?: profile.lastTestMiniLabel()
-        return listOfNotNull(subtitle, health).joinToString(" • ").ifBlank { "Ready" }.shortUi(30)
+        val runtime = if (compatibility.connectReady && health != null) null else compatibility.detail
+        return listOfNotNull(subtitle, runtime, health).joinToString(" • ").ifBlank { "Ready" }.shortUi(30)
     }
 
     private fun compactProfileTitle(profile: VpnProfile?, fallback: String): String =
@@ -2862,7 +2881,8 @@ class MainActivity : Activity() {
     private fun profileRowSubtitle(profile: VpnProfile): String {
         val transport = profileTransportLabel(profile)
         val detail = compactProfileSubtitle(profile)?.shortUi(18)
-        val runtime = profileRuntimeLabel(profile)
+        val compatibility = profileRuntimeCompatibility(profile)
+        val runtime = compatibility.detail.shortUi(18)
         val health = profile.lastVerifiedLatencyMs?.let { "${it}ms verified" }
             ?: profile.lastTestMiniLabel()
         val network = profile.lastVerifiedNetwork?.takeIf { it.isNotBlank() }
@@ -2870,10 +2890,7 @@ class MainActivity : Activity() {
         return listOfNotNull(transport, runtime, detail, health, network?.shortUi(9)).joinToString(" • ").ifBlank { "Saved config" }
     }
 
-    private fun profileRuntimeLabel(profile: VpnProfile): String? = profileXrayDescriptor(profile)
-        ?.takeIf { !it.runtimeSupported }
-        ?.runtimeIssue
-        ?.shortUi(18)
+    private fun profileRuntimeLabel(profile: VpnProfile): String? = profileRuntimeCompatibility(profile).detail.shortUi(18)
 
     private fun profileTransportLabel(profile: VpnProfile): String? = when (profile.kind) {
         VpnProfileKind.XRAY -> profileXrayDescriptor(profile)?.shortLabel
@@ -2907,6 +2924,97 @@ class MainActivity : Activity() {
             ?.let { raw -> V2RayLinkInspector.inspect(raw) }
         xrayDescriptorCache[profile.id] = profile.updatedAtEpochMs to descriptor
         return descriptor
+    }
+
+    private fun profileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility {
+        val cached = profileRuntimeCompatibilityCache[profile.id]
+        if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
+        val compatibility = buildProfileRuntimeCompatibility(profile)
+        profileRuntimeCompatibilityCache[profile.id] = profile.updatedAtEpochMs to compatibility
+        return compatibility
+    }
+
+    private fun buildProfileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility = when (profile.kind) {
+        VpnProfileKind.XRAY,
+        VpnProfileKind.SING_BOX,
+        VpnProfileKind.CLASH -> buildXrayMappedCompatibility(profile)
+        VpnProfileKind.WIREGUARD -> ProfileRuntimeCompatibility(
+            badge = "WG",
+            detail = "Advanced fallback",
+            connectReady = true,
+            tone = ProfileRuntimeTone.INFO
+        )
+        VpnProfileKind.OPENVPN -> ProfileRuntimeCompatibility(
+            badge = "Handoff",
+            detail = "OpenVPN handoff",
+            connectReady = false,
+            tone = ProfileRuntimeTone.INFO
+        )
+        VpnProfileKind.UNKNOWN -> ProfileRuntimeCompatibility(
+            badge = "Issue",
+            detail = "Unknown runtime",
+            connectReady = false,
+            tone = ProfileRuntimeTone.WARNING
+        )
+    }
+
+    private fun buildXrayMappedCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility {
+        val raw = runCatching { profileStore.loadRawConfig(profile.id) }.getOrNull()
+            ?: return ProfileRuntimeCompatibility("Issue", "Missing raw config", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+        val imported = runCatching { ConfigImporter.parse(raw, profile.name) }
+            .getOrElse { error ->
+                return compatibilityFromIssue(
+                    profile = profile,
+                    messages = listOf(error.message ?: error.javaClass.simpleName)
+                )
+            }
+        val runtime = runCatching { V2RayRuntimeConfigBuilder.buildDelayProbe(imported) }
+        return runtime.fold(
+            onSuccess = {
+                ProfileRuntimeCompatibility(
+                    badge = "Xray",
+                    detail = if (profile.kind == VpnProfileKind.XRAY) "Xray ready" else "Xray mapped",
+                    connectReady = true,
+                    tone = ProfileRuntimeTone.READY
+                )
+            },
+            onFailure = { error ->
+                compatibilityFromIssue(
+                    profile = profile,
+                    messages = imported.warnings + (error.message ?: error.javaClass.simpleName)
+                )
+            }
+        )
+    }
+
+    private fun compatibilityFromIssue(profile: VpnProfile, messages: List<String>): ProfileRuntimeCompatibility {
+        val joined = messages.joinToString(" ").lowercase(java.util.Locale.US)
+        return when {
+            joined.contains("missing public") || joined.contains("public_key/pbk") || joined.contains("public-key/pbk") || joined.contains("pbk/publickey") ->
+                ProfileRuntimeCompatibility("Key", "Missing Reality key", connectReady = false, tone = ProfileRuntimeTone.BLOCKED)
+            joined.contains("missing uuid/password") || joined.contains("missing login") || joined.contains("missing credential") ->
+                ProfileRuntimeCompatibility("Key", "Missing login", connectReady = false, tone = ProfileRuntimeTone.BLOCKED)
+            joined.contains("unsupported clash proxy types") ->
+                ProfileRuntimeCompatibility("Engine", "Needs Clash engine", connectReady = false, tone = ProfileRuntimeTone.INFO)
+            joined.contains("unsupported sing-box outbound types") ->
+                ProfileRuntimeCompatibility("Engine", "Needs sing-box engine", connectReady = false, tone = ProfileRuntimeTone.INFO)
+            joined.contains("unsupported") && joined.contains("transport") && listOf("quic", "kcp", "mkcp", "http3", "h3").any { joined.contains(it) } ->
+                ProfileRuntimeCompatibility("UDP", "UDP transport", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            joined.contains("unsupported") && joined.contains("transport") ->
+                ProfileRuntimeCompatibility("Map", "Transport mapper", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            joined.contains("unsupported") && joined.contains("security") ->
+                ProfileRuntimeCompatibility("Sec", "Unsupported security", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            joined.contains("no xray-compatible") || joined.contains("no supported") ->
+                ProfileRuntimeCompatibility("Map", fallbackMapperDetail(profile), connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            else -> ProfileRuntimeCompatibility("Issue", "Runtime issue", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+        }
+    }
+
+    private fun fallbackMapperDetail(profile: VpnProfile): String = when (profile.kind) {
+        VpnProfileKind.CLASH -> "Needs Clash mapper"
+        VpnProfileKind.SING_BOX -> "Needs sing-box mapper"
+        VpnProfileKind.XRAY -> "Needs Xray support"
+        else -> "Needs mapper"
     }
 
     private fun primaryProfileNameSegment(name: String): String {
@@ -3308,53 +3416,70 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun profileStatusLabel(profile: VpnProfile): String = when {
-        profile.lastTestSuccess == false -> "Fail"
-        profileNeedsXrayMapper(profile) -> "Map"
-        profile.lastVerifiedLatencyMs != null -> "${profile.lastVerifiedLatencyMs}ms"
-        profile.lastTestLatencyMs != null -> "${profile.lastTestLatencyMs}ms"
-        profile.id == selectedProfileId -> "Selected"
-        profile.lastVerifiedEpochMs != null -> "Good"
-        profile.lastTestSuccess == true -> "Ping"
-        profile.favorite -> "Fav"
-        else -> "New"
+    private fun profileStatusLabel(profile: VpnProfile): String {
+        val compatibility = profileRuntimeCompatibility(profile)
+        return when {
+            !compatibility.connectReady -> compatibility.badge
+            profile.lastTestSuccess == false -> "Fail"
+            profile.lastVerifiedLatencyMs != null -> "${profile.lastVerifiedLatencyMs}ms"
+            profile.lastTestLatencyMs != null -> "${profile.lastTestLatencyMs}ms"
+            profile.id == selectedProfileId -> "Selected"
+            profile.lastVerifiedEpochMs != null -> "Good"
+            profile.lastTestSuccess == true -> "Ping"
+            profile.favorite -> "Fav"
+            compatibility.badge.isNotBlank() -> compatibility.badge
+            else -> "New"
+        }
     }
 
-    private fun profileStatusFillColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
-        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE_SOFT
-        profile.id == selectedProfileId -> PearlPalette.CHAMPAGNE_SOFT
-        profile.lastVerifiedEpochMs != null -> PearlPalette.CHAMPAGNE_SOFT
-        profile.lastTestSuccess == true -> PearlPalette.CHAMPAGNE_SOFT
-        profile.favorite -> PearlPalette.CHAMPAGNE_SOFT
-        profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
-        else -> PearlPalette.PEARL_MID
+    private fun profileStatusFillColor(profile: VpnProfile): Int {
+        val compatibility = profileRuntimeCompatibility(profile)
+        return when {
+            compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR_SOFT
+            compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE_SOFT
+            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+            profile.id == selectedProfileId -> PearlPalette.CHAMPAGNE_SOFT
+            profile.lastVerifiedEpochMs != null -> PearlPalette.CHAMPAGNE_SOFT
+            profile.lastTestSuccess == true -> PearlPalette.CHAMPAGNE_SOFT
+            profile.favorite -> PearlPalette.CHAMPAGNE_SOFT
+            profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+            else -> PearlPalette.PEARL_MID
+        }
     }
 
-    private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
-        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE
-        profile.id == selectedProfileId -> PearlPalette.BORDER
-        profile.lastVerifiedEpochMs != null -> PearlPalette.SHELL_DARK
-        profile.lastTestSuccess == true -> PearlPalette.SHELL_DARK
-        profile.favorite -> PearlPalette.CHAMPAGNE
-        profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
-        else -> PearlPalette.HAIRLINE
+    private fun profileStatusStrokeColor(profile: VpnProfile): Int {
+        val compatibility = profileRuntimeCompatibility(profile)
+        return when {
+            compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR_STROKE
+            compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE
+            compatibility.tone == ProfileRuntimeTone.READY && profile.lastVerifiedEpochMs == null && profile.lastTestSuccess != true -> PearlPalette.HAIRLINE
+            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+            profile.id == selectedProfileId -> PearlPalette.BORDER
+            profile.lastVerifiedEpochMs != null -> PearlPalette.SHELL_DARK
+            profile.lastTestSuccess == true -> PearlPalette.SHELL_DARK
+            profile.favorite -> PearlPalette.CHAMPAGNE
+            profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+            else -> PearlPalette.HAIRLINE
+        }
     }
 
-    private fun profileStatusTextColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR
-        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE_DARK
-        profile.id == selectedProfileId -> PearlPalette.INK
-        profile.lastVerifiedEpochMs != null -> PearlPalette.INK
-        profile.lastTestSuccess == true -> PearlPalette.BORDER
-        profile.favorite -> PearlPalette.CHAMPAGNE_DARK
-        profile.lastTestSuccess == false -> PearlPalette.ERROR
-        else -> PearlPalette.TEXT_MUTED
+    private fun profileStatusTextColor(profile: VpnProfile): Int {
+        val compatibility = profileRuntimeCompatibility(profile)
+        return when {
+            compatibility.tone == ProfileRuntimeTone.BLOCKED -> PearlPalette.ERROR
+            compatibility.tone == ProfileRuntimeTone.WARNING -> PearlPalette.CHAMPAGNE_DARK
+            profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR
+            profile.id == selectedProfileId -> PearlPalette.INK
+            profile.lastVerifiedEpochMs != null -> PearlPalette.INK
+            profile.lastTestSuccess == true -> PearlPalette.BORDER
+            profile.favorite -> PearlPalette.CHAMPAGNE_DARK
+            profile.lastTestSuccess == false -> PearlPalette.ERROR
+            else -> PearlPalette.TEXT_MUTED
+        }
     }
 
     private fun profileNeedsXrayMapper(profile: VpnProfile): Boolean =
-        profileXrayDescriptor(profile)?.runtimeSupported == false
+        !profileRuntimeCompatibility(profile).connectReady && profileRuntimeCompatibility(profile).tone == ProfileRuntimeTone.WARNING
 
     private fun matchesLocationSearch(profile: VpnProfile, query: String): Boolean {
         val terms = query.replace(Regex("\\s+"), " ").trim().lowercase(java.util.Locale.US)
