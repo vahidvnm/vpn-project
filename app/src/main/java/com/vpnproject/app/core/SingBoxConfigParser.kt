@@ -68,11 +68,8 @@ object SingBoxConfigParser {
         val port = topLevelPortField(objectText)?.takeIf { it in 1..65535 } ?: return null
         val tag = topLevelStringField(objectText, "tag")
         val transportObject = topLevelObjectField(objectText, "transport")
-        val transport = transportObject
-            ?.let { topLevelStringField(it, "type") }
-            ?.lowercase()
-            ?.takeIf { it.isNotBlank() }
-            ?: "tcp"
+        val transport = normalizeTransport(transportObject
+            ?.let { topLevelStringField(it, "type") })
         val tls = topLevelObjectField(objectText, "tls")
         val reality = tls?.let { topLevelObjectField(it, "reality") }
         val realityEnabled = reality != null && topLevelBooleanField(reality, "enabled") != false
@@ -136,7 +133,7 @@ object SingBoxConfigParser {
             tag = tag,
             transport = transport,
             label = displayLabel(rawType, transport, security),
-            unsupportedTransport = transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade"),
+            unsupportedTransport = transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp"),
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -232,12 +229,23 @@ object SingBoxConfigParser {
     private fun displayLabel(type: String, transport: String, security: String): String = when {
         security == "reality" -> "Reality"
         transport == "httpupgrade" -> "HTTPUpgrade"
+        transport == "xhttp" -> if (security == "reality") "XHTTP/Reality" else "XHTTP"
         transport == "grpc" -> if (security == "tls") "gRPC/TLS" else "gRPC"
         transport == "ws" -> if (security == "tls") "WS/TLS" else "WebSocket"
         transport == "http" -> if (security == "tls") "H2/TLS" else "H2"
         security == "tls" -> "TLS"
         type == "shadowsocks" || type == "ss" -> "SS"
         else -> type.uppercase()
+    }
+
+    private fun normalizeTransport(raw: String?): String = when (raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() }) {
+        null, "tcp", "raw", "none" -> "tcp"
+        "ws", "websocket" -> "ws"
+        "grpc", "gun" -> "grpc"
+        "http", "h2" -> "http"
+        "httpupgrade", "http-upgrade", "http_upgrade" -> "httpupgrade"
+        "xhttp", "splithttp", "split-http", "split_http" -> "xhttp"
+        else -> raw.trim().lowercase()
     }
 
     private fun outboundObjects(text: String): List<String> = extractJsonObjects(text)

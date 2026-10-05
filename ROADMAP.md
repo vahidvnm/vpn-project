@@ -292,8 +292,8 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] پشتیبانی runtime و تست موفق VLESS `httpupgrade/none` با status `VERIFIED` روی شبکه موبایل ایران.
   - [x] verification اولیه Xray با delay check و traffic stats از core.
   - [x] re-verification اولیه Xray روی تغییر شبکه با debounce و refresh کردن underlying network.
-  - [ ] test matrix گوشی برای transportهای بیشتر: `ws/tls`, `tcp/none`, `tcp` با HTTP header, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
-  - [ ] تشخیص credential/transport/server failure با پیام‌های قابل فهم‌تر برای کاربر.
+  - [ ] test matrix گوشی برای transportهای بیشتر: `ws/tls`, `tcp/none`, `tcp` با HTTP header, `grpc/tls`, `reality`, `xhttp`, `vmess`, `trojan`, `ss`.
+  - [x] تشخیص اولیه transport failure با پیام‌های قابل فهم‌تر برای UDP/KCP/QUIC و security unsupported؛ credential/server failure دقیق‌تر هنوز نیازمند طبقه‌بندی runtime logs است.
   - [ ] review کامل license/LGPL و noticeهای production.
   - [x] verification قوی‌تر Xray با public egress IP و DNS-route check از مسیر loopback proxy داخلی؛ DNS leak test کامل‌تر هنوز به endpoint اختصاصی/قابل‌اعتماد نیاز دارد.
 
@@ -567,7 +567,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish اسکرین‌شات بعدی: حذف کامل فاصله‌ی Queue tools/Player configs/section label بین tabها و ردیف‌های کانفیگ، تا لیست مستقیم بعد از tabها شروع شود؛ به‌روزرسانی bottom nav با selected pill گرادیانی و elevation بیشتر.
 - [x] اصلاح تست latency: گزینه Real latency در Queue tools دیگر VPN را وصل نمی‌کند و به صفحه اصلی نمی‌برد؛ کل صف انتخاب‌شده را به‌صورت سریع/no-VPN و capped تست می‌کند، و عدد ms روی pill جلوی هر کانفیگ نمایش داده می‌شود.
 - [x] اصلاح تکمیلی: Auto latency هم دیگر full VPN connect نمی‌کند؛ برای جلوگیری از رفتن ناخواسته به Home/اتصال، تست خودکار selected config به quick no-VPN latency تغییر کرد.
-- [x] شروع پنج مرحله بهبود Xray: hardening runtime builder برای REALITY، gRPC، WebSocket/TLS، TCP HTTP header و HTTPUpgrade با parsing مقاوم‌تر پارامترها، path/host normalization، allowInsecure اختیاری، gRPC authority/multiMode، و unit test برای هر پنج transport.
+- [x] شروع پنج مرحله بهبود Xray: hardening runtime builder برای REALITY، gRPC، WebSocket/TLS، TCP HTTP header، HTTPUpgrade و XHTTP/SplitHTTP alias با parsing مقاوم‌تر پارامترها، path/host normalization، allowInsecure اختیاری، gRPC authority/multiMode، و unit test برای transport matrix.
 - [x] polish subscriptionهای فعلی: چون subscription تست‌شده فعلاً HTTPUpgrade و Reality دارد، برچسب transport غیرمحرمانه روی ردیف‌های Locations/top pill/search و خلاصه import/refresh اضافه شد تا کاربر ببیند هر کانفیگ از Reality یا HTTPUpgrade است بدون نمایش secret/raw link.
 - [x] diagnostics مرحله Xray: قبل از start اگر transport/security هنوز map نشده باشد یا REALITY بدون public key باشد، خطای واضح و امن نشان داده می‌شود به‌جای fail مبهم Xray.
 - [x] مرحله دوم/سوم Xray polish: نام‌های subscription profile کوتاه‌تر و امن‌تر شدند، labelها از fragment/ps بدون raw secret ساخته می‌شوند، subscriptionهای JSON/YAML-style که داخلشان share-link است بهتر استخراج می‌شوند، و diagnostics حالا warningهای runtime support را نشان می‌دهد.
@@ -593,8 +593,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله Smart fallback امن: گزینه Settings با پیش‌فرض OFF اضافه شد؛ اگر کاربر روشن کند و Connect شکست بخورد، اپ فقط تا ۳ کانفیگ نزدیک/هم‌گروه را با backoff کوتاه امتحان می‌کند و queue-wide test یا اسکن هزاران کانفیگ انجام نمی‌دهد.
 - [x] polish Settings بعد از اسکرین‌شات: متن بالای Settings کوتاه‌تر شد، ردیف‌های تکراری Add configs/Kill switch حذف شدند، diagnostics حجیم از Advanced panel حذف شد، و ابزارهای کمیاب VPN permission/OpenVPN/bootstrap پشت یک bottom sheet فشرده رفتند تا صفحه اصلی Settings خلوت بماند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
-- [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
-- [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
+- [x] hardening runtime config generator مرحله ۱: XHTTP/SplitHTTP alias، پیام خطای امن‌تر برای UDP/KCP/QUIC، و unit-test matrix برای `tcp/none`, `ws/tls`, `grpc/tls`, `reality`, `httpupgrade`, `xhttp`, `vmess`, `trojan`, `ss` اضافه شد.
+- [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `xhttp`, `vmess`, `trojan`, `ss`.
 - [ ] DNS leak test کامل‌تر با سرویس authoritative/اختصاصی یا endpoint قابل‌اعتماد، فراتر از check فعلی DoH-through-Xray.
 - [ ] reconnect کامل production-grade با restart/backoff سرویس، معیارهای شکست دقیق‌تر، و انتخاب لینک/route بعدی در background؛ نسخه امن UI-driven Smart fallback فعلاً انجام شده است.
 - [ ] review نهایی license/notice برای Xray/V2Ray داخلی.

@@ -166,6 +166,35 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsFromClashVlessXhttpRealityProxy() {
+        val clash = """
+            proxies:
+              - name: XHTTP Reality
+                type: vless
+                server: cdn.example.net
+                port: 443
+                uuid: 11111111-1111-1111-1111-111111111111
+                network: xhttp
+                flow: xtls-rprx-vision
+                servername: www.microsoft.com
+                client-fingerprint: chrome
+                path: /xhttp
+                host: front.example.net
+                reality-opts:
+                  public-key: PUBLICKEY
+                  short-id: abc123
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.CLASH, clash)
+
+        assertContains(runtime.note, "Prepared Clash VLESS cdn.example.net:443")
+        assertContains(runtime.configJson, "\"network\": \"xhttp\"")
+        assertContains(runtime.configJson, "\"xhttpSettings\"")
+        assertContains(runtime.configJson, "\"path\": \"/xhttp\"")
+        assertContains(runtime.configJson, "\"realitySettings\"")
+        assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
+    }
+
+    @Test
     fun unsupportedSingBoxMapperFailsClearlyWithoutSecret() {
         val singBox = """
             { "outbounds": [{ "type": "vless", "server": "edge.example.com", "server_port": 443, "uuid": "11111111-1111-1111-1111-111111111111", "transport": { "type": "quic" } }] }
@@ -247,6 +276,43 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsXhttpRealitySettingsFromVlessLink() {
+        val json = buildJson(
+            "vless://11111111-1111-1111-1111-111111111111@xhttp.example:443" +
+                "?type=xhttp&security=reality&host=front.example&path=%2Fxhttp&mode=auto&sni=www.microsoft.com&fp=chrome&pbk=PUBLICKEY&sid=abc123#XHTTP"
+        )
+
+        assertContains(json, "\"network\": \"xhttp\"")
+        assertContains(json, "\"xhttpSettings\"")
+        assertContains(json, "\"path\": \"/xhttp\"")
+        assertContains(json, "\"host\": \"front.example\"")
+        assertContains(json, "\"mode\": \"auto\"")
+        assertContains(json, "\"realitySettings\"")
+        assertContains(json, "\"publicKey\": \"PUBLICKEY\"")
+    }
+
+    @Test
+    fun supportedXrayTransportMatrixBuildsRuntimeJson() {
+        val cases = listOf(
+            "tcp-none" to ("vless://11111111-1111-1111-1111-111111111111@tcp.example:80?type=tcp&security=none#Tcp" to "\"network\": \"tcp\""),
+            "ws-tls" to ("vless://11111111-1111-1111-1111-111111111111@ws.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Ws" to "\"wsSettings\""),
+            "grpc-tls" to ("trojan://pass@grpc.example:443?type=grpc&security=tls&serviceName=svc&sni=front.example#Grpc" to "\"grpcSettings\""),
+            "reality" to ("vless://11111111-1111-1111-1111-111111111111@reality.example:443?type=tcp&security=reality&sni=www.microsoft.com&pbk=PUBLICKEY#Reality" to "\"realitySettings\""),
+            "httpupgrade" to ("vless://11111111-1111-1111-1111-111111111111@upgrade.example:443?type=httpupgrade&security=tls&path=%2Fup&sni=front.example#HU" to "\"httpupgradeSettings\""),
+            "xhttp" to ("vless://11111111-1111-1111-1111-111111111111@xhttp.example:443?type=splithttp&security=tls&path=%2Fxhttp&sni=front.example#XHTTP" to "\"xhttpSettings\""),
+            "vmess" to (vmessLink(net = "ws", tls = "tls") to "\"protocol\": \"vmess\""),
+            "shadowsocks" to ("ss://YWVzLTEyOC1nY206cGFzcw@example.com:8388#SS" to "\"protocol\": \"shadowsocks\"")
+        )
+
+        cases.forEach { (label, pair) ->
+            val json = buildJson(pair.first)
+            assertContains(json, pair.second)
+            assertContains(json, "\"tag\": \"proxy\"")
+            assertTrue("Runtime JSON for $label should not be empty", json.length > 300)
+        }
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(
@@ -256,6 +322,8 @@ class V2RayRuntimeConfigBuilderTest {
         }
 
         assertContains(error.message.orEmpty(), "Unsupported V2Ray/Xray transport kcp")
+        assertContains(error.message.orEmpty(), "UDP-based")
+        assertTrue("Secret UUID leaked in error: ${error.message}", !error.message.orEmpty().contains("11111111-1111-1111-1111-111111111111"))
     }
 
     @Test
@@ -271,6 +339,27 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     private fun buildJson(link: String): String = buildRuntime(ConfigKind.V2RAY, link).configJson
+
+    private fun vmessLink(net: String, tls: String): String {
+        val vmess = """
+            {
+              "v": "2",
+              "ps": "matrix-vmess",
+              "add": "vmess.example",
+              "port": "443",
+              "id": "11111111-1111-1111-1111-111111111111",
+              "aid": "0",
+              "scy": "auto",
+              "net": "$net",
+              "type": "none",
+              "host": "front.example",
+              "path": "/ws",
+              "tls": "$tls",
+              "sni": "front.example"
+            }
+        """.trimIndent()
+        return "vmess://${Base64.getEncoder().encodeToString(vmess.toByteArray(StandardCharsets.UTF_8))}"
+    }
 
     private fun buildRuntime(kind: ConfigKind, text: String): V2RayRuntimeConfig = V2RayRuntimeConfigBuilder.build(
         ImportedConfig(

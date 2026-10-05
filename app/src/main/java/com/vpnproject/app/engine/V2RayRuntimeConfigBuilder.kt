@@ -133,6 +133,7 @@ object V2RayRuntimeConfigBuilder {
             authority = params.param("authority") ?: params.param("host")?.firstHostHeader(),
             allowInsecure = params.boolParam("allowInsecure", "allowinsecure", "insecure", "skip-cert-verify"),
             grpcMultiMode = params.boolParam("multiMode", "multimode") || params.param("mode")?.equals("multi", ignoreCase = true) == true,
+            xhttpMode = params.param("mode", "xhttpMode", "xhttp_mode")?.takeIf { network == "xhttp" },
             name = fragment.urlDecodeOrSelf().takeIf { it.isNotBlank() }
         )
     }
@@ -170,6 +171,7 @@ object V2RayRuntimeConfigBuilder {
             authority = jsonStringField(json, "host")?.firstHostHeader(),
             allowInsecure = jsonBooleanLikeField(json, "allowInsecure") || jsonBooleanLikeField(json, "skip-cert-verify"),
             grpcMultiMode = jsonStringField(json, "mode")?.equals("multi", ignoreCase = true) == true,
+            xhttpMode = jsonStringField(json, "mode")?.takeIf { network == "xhttp" },
             name = jsonStringField(json, "ps")
         )
     }
@@ -203,24 +205,30 @@ object V2RayRuntimeConfigBuilder {
     }
 
     private fun validateRuntimeSupport(profile: V2RayProfile) {
-        val supportedNetworks = setOf("tcp", "ws", "grpc", "http", "httpupgrade")
-        if (profile.network !in supportedNetworks) {
-            throw ConfigParseException(
-                "Unsupported V2Ray/Xray transport ${profile.network}. Embedded Xray start currently supports TCP, WebSocket, gRPC, H2, HTTPUpgrade, TLS, and REALITY. Import stays saved, but connect needs a mapper update for this transport."
-            )
+        if (profile.network !in SUPPORTED_NETWORKS) {
+            throw ConfigParseException(unsupportedTransportMessage(profile.network))
         }
 
-        val supportedSecurity = setOf("", "tls", "reality")
-        if (profile.security !in supportedSecurity) {
-            throw ConfigParseException(
-                "Unsupported V2Ray/Xray security ${profile.security}. Embedded Xray start currently supports none, TLS, and REALITY."
-            )
+        if (profile.security !in SUPPORTED_SECURITY) {
+            throw ConfigParseException(unsupportedSecurityMessage(profile.security))
         }
 
         if (profile.security == "reality" && profile.publicKey.isNullOrBlank()) {
-            throw ConfigParseException("REALITY link is missing public key (pbk/publicKey), so embedded Xray cannot start it safely.")
+            throw ConfigParseException("REALITY link is missing public key (pbk/publicKey), so embedded Xray cannot start it safely. Ask your provider for the full REALITY link; UUIDs/passwords are not shown here.")
         }
     }
+
+    private fun unsupportedTransportMessage(network: String): String = when (network) {
+        "kcp", "mkcp", "quic" ->
+            "Unsupported V2Ray/Xray transport $network. It is UDP-based and unreliable on many Iran networks; this build starts TCP/WebSocket/gRPC/H2/HTTPUpgrade/XHTTP through embedded Xray. Import stays saved for no-VPN diagnostics."
+        "http3", "h3" ->
+            "Unsupported V2Ray/Xray transport $network. HTTP/3 is QUIC/UDP-based; use an Xray TCP, WS, gRPC, H2, HTTPUpgrade, or XHTTP profile for Connect."
+        else ->
+            "Unsupported V2Ray/Xray transport $network. Embedded Xray start currently supports TCP, WebSocket, gRPC, H2, HTTPUpgrade, XHTTP, TLS, and REALITY. Import stays saved, but Connect needs a mapper update for this transport."
+    }
+
+    private fun unsupportedSecurityMessage(security: String): String =
+        "Unsupported V2Ray/Xray security $security. Embedded Xray start currently supports none, TLS, and REALITY; unsupported security fields are kept encrypted and not logged."
 
     private fun buildXrayConfig(
         profile: V2RayProfile,
@@ -409,8 +417,20 @@ object V2RayRuntimeConfigBuilder {
             "\"httpSettings\": { \"host\": [${hosts.joinToString(",") { it.json() }}], \"path\": ${normalizedPath(profile.path).json()} }"
         }
         "httpupgrade" -> httpUpgradeSettings(profile)
+        "xhttp" -> xhttpSettings(profile)
         "tcp" -> tcpSettings(profile)
         else -> null
+    }
+
+    private fun xhttpSettings(profile: V2RayProfile): String {
+        val fields = mutableListOf("\"path\": ${normalizedPath(profile.path).json()}")
+        firstNonBlank(profile.hostHeader?.firstHostHeader(), profile.authority, profile.sni)?.let { host ->
+            fields += "\"host\": ${host.json()}"
+        }
+        profile.xhttpMode?.trim()?.takeIf { it.isNotBlank() }?.let { mode ->
+            fields += "\"mode\": ${mode.json()}"
+        }
+        return "\"xhttpSettings\": { ${fields.joinToString(", ")} }"
     }
 
     private fun httpUpgradeSettings(profile: V2RayProfile): String {
@@ -494,6 +514,8 @@ object V2RayRuntimeConfigBuilder {
         "grpc", "gun" -> "grpc"
         "http", "h2" -> "http"
         "httpupgrade", "http-upgrade", "http_upgrade" -> "httpupgrade"
+        "xhttp", "splithttp", "split-http", "split_http" -> "xhttp"
+        "mkcp" -> "kcp"
         else -> raw.trim().lowercase(java.util.Locale.US)
     }
 
@@ -608,6 +630,8 @@ object V2RayRuntimeConfigBuilder {
     }
 
     private const val DEFAULT_LOG_LEVEL = "warning"
+    private val SUPPORTED_NETWORKS = setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp")
+    private val SUPPORTED_SECURITY = setOf("", "tls", "reality")
     private const val DEFAULT_MUX_CONCURRENCY = 8
     private const val MIN_MUX_CONCURRENCY = 1
     private const val MAX_MUX_CONCURRENCY = 32
@@ -651,5 +675,6 @@ private data class V2RayProfile(
     val authority: String? = null,
     val allowInsecure: Boolean = false,
     val grpcMultiMode: Boolean = false,
+    val xhttpMode: String? = null,
     val name: String? = null
 )

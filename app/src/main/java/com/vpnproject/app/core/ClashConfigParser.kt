@@ -111,7 +111,7 @@ object ClashConfigParser {
             name = block.field("name"),
             transport = network,
             label = displayLabel(rawType, network, security),
-            unsupportedTransport = network !in setOf("tcp", "ws", "grpc", "http", "httpupgrade"),
+            unsupportedTransport = network !in setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp"),
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -207,6 +207,7 @@ object ClashConfigParser {
     private fun displayLabel(type: String, transport: String, security: String): String = when {
         security == "reality" -> "Reality"
         transport == "httpupgrade" -> "HTTPUpgrade"
+        transport == "xhttp" -> if (security == "reality") "XHTTP/Reality" else "XHTTP"
         transport == "grpc" -> if (security == "tls") "gRPC/TLS" else "gRPC"
         transport == "ws" -> if (security == "tls") "WS/TLS" else "WebSocket"
         transport == "http" -> if (security == "tls") "H2/TLS" else "H2"
@@ -221,6 +222,7 @@ object ClashConfigParser {
         "grpc", "gun" -> "grpc"
         "http", "h2" -> "http"
         "httpupgrade", "http-upgrade", "http_upgrade" -> "httpupgrade"
+        "xhttp", "splithttp", "split-http", "split_http" -> "xhttp"
         else -> raw.trim().lowercase()
     }
 

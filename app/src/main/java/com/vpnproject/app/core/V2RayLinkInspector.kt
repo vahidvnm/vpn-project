@@ -158,7 +158,7 @@ object V2RayLinkInspector {
     }
 
     private fun runtimeIssue(transport: String, security: String, hasRealityPublicKey: Boolean): String? {
-        if (transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade")) {
+        if (transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp")) {
             return "Unsupported transport $transport"
         }
         if (security !in setOf("", "none", "tls", "reality")) {
@@ -178,8 +178,7 @@ object V2RayLinkInspector {
             "grpc", "gun" -> "grpc"
             "http", "h2" -> "http"
             "httpupgrade", "http-upgrade", "http_upgrade" -> "httpupgrade"
-            "xhttp" -> "xhttp"
-            "splithttp", "split-http", "split_http" -> "splithttp"
+            "xhttp", "splithttp", "split-http", "split_http" -> "xhttp"
             else -> normalized
         }
     }
