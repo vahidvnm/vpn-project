@@ -164,6 +164,7 @@ class MainActivity : Activity() {
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
     private var selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+    private var selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
     private var locationRenderLimit = INITIAL_PROFILE_RENDER_ROWS
     private var locationRenderKey = ""
     private val profileRowStatusViews = mutableMapOf<String, TextView>()
@@ -1404,7 +1405,7 @@ class MainActivity : Activity() {
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
         val grouped = profilesForLocationFilter(filtered, groups)
-        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(profileRankingComparator())
+        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(locationSortComparator())
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
@@ -1553,6 +1554,36 @@ class MainActivity : Activity() {
             .thenByDescending { it.lastVerifiedEpochMs ?: 0L }
             .thenByDescending { it.favorite }
             .thenByDescending { it.updatedAtEpochMs }
+
+    private fun locationSortComparator(): Comparator<VpnProfile> = when (selectedLocationSortMode) {
+        LOCATION_SORT_NEWEST -> compareByDescending<VpnProfile> { it.updatedAtEpochMs }
+            .thenByDescending { it.favorite }
+            .thenBy { compactProfileTitle(it).lowercase(java.util.Locale.US) }
+        LOCATION_SORT_LATENCY -> compareBy<VpnProfile> { profileKnownLatency(it) ?: Long.MAX_VALUE }
+            .thenByDescending { it.lastTestSuccess == true || it.lastVerifiedEpochMs != null }
+            .thenByDescending { it.favorite }
+            .thenByDescending { it.updatedAtEpochMs }
+        LOCATION_SORT_RUNTIME_READY -> compareByDescending<VpnProfile> { isXrayReadyProfile(it) }
+            .then(profileRankingComparator())
+        else -> profileRankingComparator()
+    }
+
+    private fun profileKnownLatency(profile: VpnProfile): Long? =
+        profile.lastVerifiedLatencyMs ?: profile.lastTestLatencyMs
+
+    private fun locationSortLabel(): String = when (selectedLocationSortMode) {
+        LOCATION_SORT_NEWEST -> "Newest"
+        LOCATION_SORT_LATENCY -> "Latency"
+        LOCATION_SORT_RUNTIME_READY -> "Runtime-ready first"
+        else -> "Recommended"
+    }
+
+    private fun locationSortDescription(): String = when (selectedLocationSortMode) {
+        LOCATION_SORT_NEWEST -> "Newest saved/refreshed configs first"
+        LOCATION_SORT_LATENCY -> "Lowest saved Quick/Real-delay latency first; unknown latency stays last"
+        LOCATION_SORT_RUNTIME_READY -> "Xray-ready/mapped profiles first, then recommended order"
+        else -> "Best saved test/verified profiles first"
+    }
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -5009,7 +5040,7 @@ class MainActivity : Activity() {
             shown += addLocationSection(profileListContainer, title, limited, effectiveProfileButtonLimit - shown)
         }
 
-        val rankedScoped = scopedProfiles.sortedWith(profileRankingComparator())
+        val rankedScoped = scopedProfiles.sortedWith(locationSortComparator())
         when (selectedLocationGroupFilter) {
             LOCATION_FILTER_ALL -> {
                 if (query.isBlank()) {
@@ -5043,6 +5074,7 @@ class MainActivity : Activity() {
     ): String = listOf(
         selectedLocationGroupFilter,
         selectedLocationRuntimeFilter,
+        selectedLocationSortMode,
         query.lowercase(java.util.Locale.US),
         allCount.toString(),
         scopedCount.toString(),
@@ -5149,7 +5181,7 @@ class MainActivity : Activity() {
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
         val grouped = profilesForLocationFilter(filtered, groups)
-        val scoped = applyLocationRuntimeFilter(grouped)
+        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(locationSortComparator())
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
@@ -5222,15 +5254,16 @@ class MainActivity : Activity() {
                 showQueueToolsSheet(groups, scoped, activeGroup, scope)
             })
         })
-        if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL) {
+        if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL || selectedLocationSortMode != LOCATION_SORT_RECOMMENDED) {
             subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "Runtime filter: ${locationRuntimeFilterLabel()} • ${scoped.size}/${groupedScoped.size} in ${scope.shortUi(18)}"
+                text = "Runtime: ${locationRuntimeFilterLabel()} • Sort: ${locationSortLabel()} • ${scoped.size}/${groupedScoped.size} in ${scope.shortUi(18)} • tap reset"
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(2), dp(8), dp(2))
                 setOnClickListener {
                     selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+                    selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
                     refreshProfileButtons(syncVerified = false)
                 }
             })
@@ -5273,11 +5306,15 @@ class MainActivity : Activity() {
         val capped = scopedProfiles.take(quickCheckProfileLimit()).size
         showBottomSheet(
             title = "Queue tools",
-            subtitle = "$scope • ${locationRuntimeFilterLabel()} • testing capped at $capped/${scopedProfiles.size} configs"
+            subtitle = "$scope • ${locationRuntimeFilterLabel()} • sort ${locationSortLabel()} • testing capped at $capped/${scopedProfiles.size}"
         ) { dialog ->
             addView(bottomSheetActionRow("◎", "Runtime filter", locationRuntimeFilterDescription()) {
                 dialog.dismiss()
                 showLocationRuntimeFilterSheet()
+            })
+            addView(bottomSheetActionRow("↕", "Sort", locationSortDescription()) {
+                dialog.dismiss()
+                showLocationSortSheet()
             })
             addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for up to $capped configs in this queue") {
                 dialog.dismiss()
@@ -5331,6 +5368,34 @@ class MainActivity : Activity() {
             })
             addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_ATTENTION) "✓" else "!", "Needs attention", "Show missing-key, mapper/runtime-needed, or handoff-only profiles") {
                 selectedLocationRuntimeFilter = LOCATION_RUNTIME_ATTENTION
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+        }
+    }
+
+    private fun showLocationSortSheet() {
+        showBottomSheet(
+            title = "Sort locations",
+            subtitle = "Sorting only reorders visible rows; it does not test or connect the queue."
+        ) { dialog ->
+            addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_RECOMMENDED) "✓" else "★", "Recommended", "Saved successful/verified and favorites first") {
+                selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_NEWEST) "✓" else "↻", "Newest", "Newest saved/refreshed configs first") {
+                selectedLocationSortMode = LOCATION_SORT_NEWEST
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_LATENCY) "✓" else "◷", "Latency", "Lowest saved Quick/Real-delay latency first") {
+                selectedLocationSortMode = LOCATION_SORT_LATENCY
+                dialog.dismiss()
+                refreshProfileButtons(syncVerified = false)
+            })
+            addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_RUNTIME_READY) "✓" else "X", "Runtime-ready first", "Xray-ready/mapped profiles first without running tests") {
+                selectedLocationSortMode = LOCATION_SORT_RUNTIME_READY
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
@@ -6022,6 +6087,10 @@ class MainActivity : Activity() {
         const val LOCATION_RUNTIME_ALL = "runtime_all"
         const val LOCATION_RUNTIME_READY = "runtime_ready"
         const val LOCATION_RUNTIME_ATTENTION = "runtime_attention"
+        const val LOCATION_SORT_RECOMMENDED = "sort_recommended"
+        const val LOCATION_SORT_NEWEST = "sort_newest"
+        const val LOCATION_SORT_LATENCY = "sort_latency"
+        const val LOCATION_SORT_RUNTIME_READY = "sort_runtime_ready"
     }
 }
 
