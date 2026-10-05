@@ -580,7 +580,8 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish بعد از اسکرین‌شات Clash: flag تکراری از title ردیف/top pill حذف شد و تشخیص flag برای کشورهایی مثل کانادا کامل‌تر شد.
 - [x] مرحله بعدی مدیریت subscription بزرگ: منوی Queue tools برای subscription فعال گزینه `Load more configs` دارد؛ به‌جای import هزاران کانفیگ، هر بار ۸۰ مورد دیگر تا سقف preview امن ۴۰۰ ذخیره می‌شود و refresh همان مقدار load‌شده را حفظ می‌کند.
 - [x] رفع ابهام شمارنده subscription بزرگ: tabهای Locations حالا loaded/total را مثل `80/1448` نشان می‌دهند تا مشخص باشد چند کانفیگ واقعاً در subscription هست و چندتا فعلاً داخل اپ load شده.
-- [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد قبل از ذخیره سؤال می‌شود `Recommended 80`، `100`، `200`، `Quarter`، `Half`، `All` یا مقدار دلخواه import شود؛ import کامل فعلاً سقف ایمن ۲۰۰۰ دارد.
+- [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد یک انتخاب خلاصه حداکثر سه‌گزینه‌ای نشان داده می‌شود: `Recommended`، `Custom/All`، و `Test first, healthy only`; import کامل/دلخواه فعلاً سقف ایمن ۲۰۰۰ دارد.
+- [x] رفع محدودیت نمای Locations: لیست اصلی به‌جای فقط ۴۰ ردیف، همه‌ی کانفیگ‌های load‌شده را نشان می‌دهد؛ تست‌ها همچنان manual/capped می‌مانند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
