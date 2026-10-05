@@ -87,39 +87,39 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private object PearlPalette {
     val TRANSPARENT = 0x00000000
-    val INK = 0xFF111111.toInt()
-    val INK_SOFT = 0xFF2A2926.toInt()
-    val TEXT_MUTED = 0xFF6A6760.toInt()
-    val TEXT_FAINT = 0xFF9A958B.toInt()
-    val PEARL_WHITE = 0xFFFFFEFA.toInt()
-    val PEARL_TOP = 0xFFFBFAF6.toInt()
-    val PEARL_GHOST = 0xFFFCFAF5.toInt()
-    val PEARL_MID = 0xFFF4F0E7.toInt()
-    val PEARL_DEEP = 0xFFE7E1D5.toInt()
-    val SHELL = 0xFFEFE9DD.toInt()
-    val SHELL_DARK = 0xFFD8D0C0.toInt()
-    val HAIRLINE = 0x33000000
-    val HAIRLINE_STRONG = 0x66000000
-    val BORDER = 0xFF151515.toInt()
-    val CHAMPAGNE = 0xFFC7B27C.toInt()
-    val CHAMPAGNE_DARK = 0xFF806C3A.toInt()
-    val CHAMPAGNE_SOFT = 0xFFF4ECD8.toInt()
-    val CHAMPAGNE_GLOW = 0x22C7B27C
-    val CHAMPAGNE_RING = 0x88C7B27C.toInt()
-    val CHAMPAGNE_RING_STRONG = 0x99C7B27C.toInt()
-    val ERROR = 0xFF6B2222.toInt()
-    val ERROR_SOFT = 0xFFF4ECE8.toInt()
-    val ERROR_STROKE = 0xFFBFA09B.toInt()
-    val GLASS = 0xF7FFFEFA.toInt()
-    val GLASS_LIGHT = 0xF8FFFEFA.toInt()
-    val GLASS_HEAVY = 0xEFFFFEFA.toInt()
-    val GLASS_SOFT = 0xDFFFFEFA.toInt()
-    val GLASS_MEDIUM = 0xBFFFFEFA.toInt()
+    val INK = 0xFF101014.toInt()
+    val INK_SOFT = 0xFF2B2B31.toInt()
+    val TEXT_MUTED = 0xFF575963.toInt()
+    val TEXT_FAINT = 0xFF8D909A.toInt()
+    val PEARL_WHITE = 0xFFFEFEFF.toInt()
+    val PEARL_TOP = 0xFFF9F9FD.toInt()
+    val PEARL_GHOST = 0xFFF5F5FA.toInt()
+    val PEARL_MID = 0xFFEFEFF6.toInt()
+    val PEARL_DEEP = 0xFFE5E6EE.toInt()
+    val SHELL = 0xFFEEEFF5.toInt()
+    val SHELL_DARK = 0xFFD3D5DF.toInt()
+    val HAIRLINE = 0x1F000000
+    val HAIRLINE_STRONG = 0x33000000
+    val BORDER = 0xFF17171C.toInt()
+    val CHAMPAGNE = 0xFFD9DEEF.toInt()
+    val CHAMPAGNE_DARK = 0xFF56627D.toInt()
+    val CHAMPAGNE_SOFT = 0xFFE9ECFF.toInt()
+    val CHAMPAGNE_GLOW = 0x22A8B7FF
+    val CHAMPAGNE_RING = 0x55A8B0C8
+    val CHAMPAGNE_RING_STRONG = 0x778D96B4
+    val ERROR = 0xFF672626.toInt()
+    val ERROR_SOFT = 0xFFF6EEEE.toInt()
+    val ERROR_STROKE = 0xFFD9BCBC.toInt()
+    val GLASS = 0xF9FEFEFF.toInt()
+    val GLASS_LIGHT = 0xFAFEFEFF.toInt()
+    val GLASS_HEAVY = 0xF1FEFEFF.toInt()
+    val GLASS_SOFT = 0xE8FEFEFF.toInt()
+    val GLASS_MEDIUM = 0xC8FEFEFF.toInt()
     val SHINE = 0x99FFFFFF.toInt()
     val SHINE_MEDIUM = 0x77FFFFFF
     val SHINE_SOFT = 0x66FFFFFF
     val SHINE_FAINT = 0x22FFFFFF
-    val PEARL_WASH = 0xCCEDE8DE.toInt()
+    val PEARL_WASH = 0xCCEEEFF6.toInt()
 }
 
 class MainActivity : Activity() {
@@ -197,7 +197,7 @@ class MainActivity : Activity() {
 
         autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, false)
 
-        window.statusBarColor = PearlPalette.PEARL_MID
+        window.statusBarColor = PearlPalette.PEARL_TOP
         window.navigationBarColor = PearlPalette.PEARL_WHITE
 
         val appRoot = LinearLayout(this).apply {
@@ -205,7 +205,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(0, statusBarTopPadding(), 0, 0)
-            background = verticalGradient(PearlPalette.PEARL_MID, PearlPalette.PEARL_TOP, PearlPalette.PEARL_WHITE)
+            background = verticalGradient(PearlPalette.PEARL_TOP, PearlPalette.PEARL_GHOST, PearlPalette.PEARL_WHITE)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -405,7 +405,7 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
         topProfileSummaryText = TextView(this@MainActivity).apply {
-            text = "🌐  No config • tap +"
+            text = "◎  No config • tap +"
             textSize = 12.5f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER_VERTICAL
@@ -758,11 +758,11 @@ class MainActivity : Activity() {
             background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 20)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58))
             homeProfileIconText = TextView(this@MainActivity).apply {
-                text = "🌐"
+                text = "◎"
                 textSize = 18f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                background = roundedBackground(PearlPalette.PEARL_MID, PearlPalette.HAIRLINE, radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                     setMargins(0, 0, dp(8), 0)
                 }
@@ -2066,7 +2066,7 @@ class MainActivity : Activity() {
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
-            "🌐  No config • tap +"
+            "◎  No config • tap +"
         } else {
             topProfileSummary(profile)
         }
@@ -2081,7 +2081,7 @@ class MainActivity : Activity() {
             }
         }
         if (::homeProfileNameText.isInitialized) {
-            if (::homeProfileIconText.isInitialized) homeProfileIconText.text = profile?.let { profileFlagOrIcon(it) } ?: "🌐"
+            if (::homeProfileIconText.isInitialized) homeProfileIconText.text = profile?.let { profileFlagOrIcon(it) } ?: "◎"
             homeProfileNameText.text = profile?.let { compactProfileTitle(it).shortUi(24) } ?: "Choose location"
             homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap to pick"
         }
@@ -2164,7 +2164,7 @@ class MainActivity : Activity() {
                 VpnProfileKind.CLASH -> "◆"
                 VpnProfileKind.WIREGUARD -> "◎"
                 VpnProfileKind.OPENVPN -> "◉"
-                VpnProfileKind.UNKNOWN -> "🌐"
+                VpnProfileKind.UNKNOWN -> "◎"
             }
     }
 
@@ -2523,7 +2523,7 @@ class MainActivity : Activity() {
                 textSize = if (compact) 18f else 20f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                background = roundedBackground(PearlPalette.PEARL_MID, PearlPalette.HAIRLINE, radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
                     setMargins(0, 0, dp(10), 0)
                 }
@@ -4227,7 +4227,7 @@ class MainActivity : Activity() {
         ellipsize = TextUtils.TruncateAt.END
         setTextColor(if (selected) PearlPalette.PEARL_WHITE else PearlPalette.INK)
         background = roundedBackground(
-            fillColor = if (selected) PearlPalette.INK else PearlPalette.PEARL_GHOST,
+            fillColor = if (selected) PearlPalette.INK else PearlPalette.PEARL_WHITE,
             strokeColor = if (selected) PearlPalette.BORDER else PearlPalette.HAIRLINE,
             radiusDp = 18
         )
@@ -4883,22 +4883,22 @@ private class PowerRingButton(context: Context) : View(context) {
 
         paint.style = Paint.Style.FILL
         paint.shader = RadialGradient(cx, cy, radius * 1.35f, intArrayOf(PearlPalette.SHINE_SOFT, PearlPalette.SHINE_FAINT, PearlPalette.TRANSPARENT), null, Shader.TileMode.CLAMP)
-        canvas.drawCircle(cx, cy, radius * 1.22f, paint)
+        canvas.drawCircle(cx, cy, radius * 1.20f, paint)
         paint.shader = null
 
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeWidth = size * 0.075f
-        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(PearlPalette.INK, PearlPalette.CHAMPAGNE, PearlPalette.CHAMPAGNE), null, Shader.TileMode.CLAMP)
+        paint.strokeWidth = size * 0.060f
+        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(PearlPalette.BORDER, PearlPalette.TEXT_FAINT, PearlPalette.SHELL_DARK), null, Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, radius, paint)
         paint.shader = null
 
-        paint.strokeWidth = size * 0.018f
-        paint.color = if (active) PearlPalette.CHAMPAGNE_RING_STRONG else PearlPalette.CHAMPAGNE_RING
-        canvas.drawCircle(cx, cy, radius * 1.12f, paint)
+        paint.strokeWidth = size * 0.014f
+        paint.color = if (active) PearlPalette.BORDER else PearlPalette.SHELL_DARK
+        canvas.drawCircle(cx, cy, radius * 1.11f, paint)
 
         paint.style = Paint.Style.FILL
-        paint.color = PearlPalette.GLASS_HEAVY
+        paint.color = PearlPalette.PEARL_WHITE
         canvas.drawCircle(cx, cy, radius * 0.74f, paint)
 
         paint.style = Paint.Style.STROKE
@@ -4929,7 +4929,7 @@ private class MiniChartView(context: Context) : View(context) {
             cubicTo(w * 0.55f, h * 0.22f, w * 0.60f, h * 0.82f, w * 0.72f, h * 0.56f)
             cubicTo(w * 0.82f, h * 0.35f, w * 0.88f, h * 0.18f, w * 0.96f, h * 0.36f)
         }
-        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(PearlPalette.CHAMPAGNE, PearlPalette.INK, PearlPalette.CHAMPAGNE), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(PearlPalette.TEXT_FAINT, PearlPalette.INK, PearlPalette.CHAMPAGNE_DARK), null, Shader.TileMode.CLAMP)
         canvas.drawPath(path, paint)
         paint.shader = null
     }
@@ -4950,29 +4950,20 @@ private class ScenicBackgroundView(context: Context) : View(context) {
         canvas.clipPath(clipPath)
 
         paint.style = Paint.Style.FILL
-        paint.shader = LinearGradient(0f, 0f, 0f, h, intArrayOf(PearlPalette.PEARL_MID, PearlPalette.PEARL_TOP, PearlPalette.PEARL_MID), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, 0f, h, intArrayOf(PearlPalette.PEARL_GHOST, PearlPalette.PEARL_TOP, PearlPalette.PEARL_WHITE), null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, w, h, paint)
         paint.shader = null
 
-        paint.shader = RadialGradient(w * 0.58f, h * 0.42f, w * 0.34f, intArrayOf(PearlPalette.SHINE_MEDIUM, PearlPalette.CHAMPAGNE_GLOW, PearlPalette.TRANSPARENT), null, Shader.TileMode.CLAMP)
-        canvas.drawCircle(w * 0.58f, h * 0.42f, w * 0.36f, paint)
+        paint.shader = RadialGradient(w * 0.50f, h * 0.28f, w * 0.34f, intArrayOf(PearlPalette.SHINE, PearlPalette.CHAMPAGNE_GLOW, PearlPalette.TRANSPARENT), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(w * 0.50f, h * 0.28f, w * 0.36f, paint)
         paint.shader = null
 
-        drawMountain(canvas, w, h, PearlPalette.PEARL_DEEP, 0.42f, 0.78f)
-        drawMountain(canvas, w, h, PearlPalette.SHELL_DARK, 0.52f, 0.84f)
-        drawMountain(canvas, w, h, PearlPalette.TEXT_MUTED, 0.62f, 0.90f)
-
-        paint.shader = LinearGradient(0f, h * 0.68f, 0f, h, intArrayOf(PearlPalette.PEARL_WASH, PearlPalette.PEARL_MID, PearlPalette.PEARL_WHITE), null, Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, h * 0.64f, w, h, paint)
-        paint.shader = null
-
-        paint.color = PearlPalette.HAIRLINE_STRONG
-        paint.strokeWidth = 2f
         paint.style = Paint.Style.STROKE
-        for (i in 0..5) {
-            val y = h * (0.72f + i * 0.045f)
-            canvas.drawLine(w * 0.05f, y, w * 0.95f, y + (i % 2) * 3f, paint)
-        }
+        paint.strokeWidth = 1.2f
+        paint.color = PearlPalette.HAIRLINE
+        canvas.drawLine(w * 0.12f, h * 0.78f, w * 0.88f, h * 0.78f, paint)
+        paint.color = PearlPalette.CHAMPAGNE_RING
+        canvas.drawLine(w * 0.24f, h * 0.84f, w * 0.76f, h * 0.84f, paint)
         canvas.restore()
     }
 
