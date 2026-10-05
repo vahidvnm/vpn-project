@@ -24,6 +24,10 @@ object ClashConfigParser {
         .mapNotNull { block -> parseProxy(block)?.runtimeLink }
         .firstOrNull()
 
+    fun splitProxyTexts(text: String): List<String> = parseProxyBlocks(text.replace("\uFEFF", ""))
+        .filter { block -> parseProxy(block) != null }
+        .map { block -> block.toSingleProxyYaml() }
+
     fun parse(text: String, name: String? = null): ImportedConfig {
         val normalized = text.replace("\uFEFF", "")
         val parsed = parseProxyBlocks(normalized).mapNotNull { block -> parseProxy(block) }
@@ -298,6 +302,21 @@ object ClashConfigParser {
 
         fun hasKey(name: String): Boolean = inlineFields.containsKey(name.lowercase()) || lines.any { line ->
             line.trim().removePrefix("-").trim().startsWith("$name:", ignoreCase = true)
+        }
+
+        fun toSingleProxyYaml(): String = buildString {
+            append("proxies:\n")
+            val first = lines.firstOrNull()?.trim().orEmpty()
+            append("- ").append(first).append('\n')
+            lines.drop(1).forEach { line ->
+                val normalized = line.trimEnd()
+                if (normalized.isBlank()) return@forEach
+                if (normalized.startsWith(" ")) {
+                    append(normalized).append('\n')
+                } else {
+                    append("  ").append(normalized.trimStart()).append('\n')
+                }
+            }
         }
 
         private fun parseInlineMap(value: String): Map<String, String> {

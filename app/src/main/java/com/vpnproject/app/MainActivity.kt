@@ -41,6 +41,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.vpnproject.app.core.ClashConfigParser
 import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
@@ -3105,38 +3106,44 @@ class MainActivity : Activity() {
         resultVerb: String
     ): SubscriptionSyncResult {
         val links = V2RaySubscriptionParser.extractLinks(subscriptionText)
-        if (links.isEmpty()) {
-            throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links.")
+        val clashProxyTexts = if (links.isEmpty()) ClashConfigParser.splitProxyTexts(subscriptionText) else emptyList()
+        val candidates = if (links.isNotEmpty()) links else clashProxyTexts
+        if (candidates.isEmpty()) {
+            throw ConfigParseException("Subscription contains no supported vless/vmess/trojan/ss links or Clash YAML proxies.")
         }
 
-        val transportSummary = summarizeTransportLabels(links)
+        val transportSummary = if (links.isNotEmpty()) {
+            summarizeTransportLabels(links)
+        } else {
+            summarizeClashProxyTexts(clashProxyTexts)
+        }
         val savedProfiles = mutableListOf<VpnProfile>()
         var skipped = 0
-        links.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, link ->
+        candidates.take(MAX_SUBSCRIPTION_LINKS).forEachIndexed { index, candidateText ->
             val saved = runCatching {
-                val config = ConfigImporter.parse(link)
-                val displayName = subscriptionProfileDisplayName(storedGroup, link, config, index)
-                val profileId = profileStore.stableSubscriptionProfileId(storedGroup.id, link)
+                val config = ConfigImporter.parse(candidateText)
+                val displayName = subscriptionProfileDisplayName(storedGroup, candidateText, config, index)
+                val profileId = profileStore.stableSubscriptionProfileId(storedGroup.id, candidateText)
                 profileStore.saveImportedConfig(config, displayName, stableProfileId = profileId)
             }.getOrNull()
             if (saved == null) skipped++ else savedProfiles += saved
         }
-        skipped += (links.size - links.take(MAX_SUBSCRIPTION_LINKS).size).coerceAtLeast(0)
+        skipped += (candidates.size - candidates.take(MAX_SUBSCRIPTION_LINKS).size).coerceAtLeast(0)
         if (savedProfiles.isEmpty()) {
-            throw ConfigParseException("Subscription was read, but none of its links could be imported.")
+            throw ConfigParseException("Subscription was read, but none of its profiles could be imported.")
         }
 
         val savedProfileIds = savedProfiles.map { it.id }
         val savedProfileIdSet = savedProfileIds.toSet()
         val staleProfileIds = storedGroup.profileIds.filterNot { it in savedProfileIdSet }
         staleProfileIds.forEach { staleId -> runCatching { profileStore.deleteProfile(staleId) } }
-        val resultText = "$resultVerb ${savedProfiles.size}/${links.size} profiles" + transportSummary.statusSuffix()
+        val resultText = "$resultVerb ${savedProfiles.size}/${candidates.size} profiles" + transportSummary.statusSuffix()
         val updatedGroup = profileStore.markSubscriptionSynced(
             groupId = storedGroup.id,
             profileIds = savedProfileIds,
             result = resultText
         ) ?: storedGroup
-        return SubscriptionSyncResult(updatedGroup, savedProfiles, links.size, skipped, transportSummary)
+        return SubscriptionSyncResult(updatedGroup, savedProfiles, candidates.size, skipped, transportSummary)
     }
 
     private fun subscriptionProfileDisplayName(
@@ -3165,6 +3172,23 @@ class MainActivity : Activity() {
             .take(4)
         if (counts.isEmpty()) return null
         val hidden = (links.size - counts.sumOf { it.value }).coerceAtLeast(0)
+        return counts.joinToString(", ") { (label, count) -> "$label $count" } +
+            if (hidden > 0) ", +$hidden other" else ""
+    }
+
+    private fun summarizeClashProxyTexts(proxyTexts: List<String>): String? {
+        val counts = proxyTexts.take(MAX_SUBSCRIPTION_LINKS).asSequence()
+            .mapNotNull { text -> runCatching { ConfigImporter.parse(text).warnings }.getOrNull() }
+            .mapNotNull { warnings -> warnings.firstOrNull { it.startsWith("Detected Clash proxies:") } }
+            .mapNotNull { warning -> warning.substringAfter("Detected Clash proxies:", "").substringBefore(". Secrets").trim().takeIf { it.isNotBlank() } }
+            .map { label -> Regex("\\s+\\d+$").replace(label, "") }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(4)
+        if (counts.isEmpty()) return "Clash ${proxyTexts.size}"
+        val hidden = (proxyTexts.size - counts.sumOf { it.value }).coerceAtLeast(0)
         return counts.joinToString(", ") { (label, count) -> "$label $count" } +
             if (hidden > 0) ", +$hidden other" else ""
     }
@@ -3270,8 +3294,13 @@ class MainActivity : Activity() {
 
     private fun normalizedSubscriptionUrl(text: String): String? {
         val candidate = text.trim()
-        if (candidate.isBlank() || candidate.contains(Regex("\\s"))) return null
+        if (candidate.isBlank()) return null
         if (candidate.isHttpUrl()) return candidate
+        val directLinkSchemes = listOf("vless://", "vmess://", "trojan://", "ss://")
+        if (directLinkSchemes.none { candidate.startsWith(it, ignoreCase = true) }) {
+            firstHttpUrlInText(candidate)?.let { return it }
+        }
+        if (candidate.contains(Regex("\\s"))) return null
 
         val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase(java.util.Locale.US) ?: return null

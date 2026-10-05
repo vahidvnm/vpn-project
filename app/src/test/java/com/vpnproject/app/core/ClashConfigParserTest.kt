@@ -88,6 +88,39 @@ class ClashConfigParserTest {
     }
 
     @Test
+    fun splitsTopLevelClashSubscriptionIntoSingleProxyConfigs() {
+        val yaml = """
+            port: 7890
+            proxies:
+            - name: US SS
+              server: 66.23.204.210
+              port: 16995
+              type: ss
+              cipher: aes-128-gcm
+              password: secret-one
+              udp: true
+            - name: US Node Two
+              server: 167.88.62.124
+              port: 22324
+              type: vmess
+              uuid: 04621bae-ab36-11ec-b909-0242ac120002
+              alterId: 0
+              cipher: auto
+              tls: false
+              network: tcp
+            proxy-groups: []
+        """.trimIndent()
+
+        val proxyTexts = ClashConfigParser.splitProxyTexts(yaml)
+
+        assertEquals(2, proxyTexts.size)
+        assertTrue(proxyTexts[0].startsWith("proxies:\n- name: US SS"))
+        assertTrue(proxyTexts[1].contains("type: vmess"))
+        assertEquals("US SS", ClashConfigParser.parse(proxyTexts[0]).name)
+        assertEquals("US Node Two", ClashConfigParser.parse(proxyTexts[1]).name)
+    }
+
+    @Test
     fun ignoresNonClashYaml() {
         assertFalse(ClashConfigParser.looksLikeClash("port: 7890\nproxy-groups: []"))
     }
