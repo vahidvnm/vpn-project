@@ -174,7 +174,6 @@ class MainActivity : Activity() {
     private lateinit var homeSection: LinearLayout
     private lateinit var profilesSection: LinearLayout
     private lateinit var toolsSection: LinearLayout
-    private lateinit var advancedToggleButton: Button
     private lateinit var advancedPanel: LinearLayout
     private lateinit var advancedDiagnostics: TextView
     private lateinit var settingsConnectionSummaryText: TextView
@@ -286,7 +285,7 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Manual, capped tests. Auto options stay OFF until you enable them."
+            text = "Use top + to add configs. Tests and fallbacks stay capped and OFF until enabled."
             textSize = 13.5f
             gravity = Gravity.CENTER
             setTextColor(PearlPalette.TEXT_MUTED)
@@ -316,12 +315,9 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default. If Connect fails, try a few nearby configs only", settingsSmartFallbackValueText) { toggleSmartFallback() })
         settingsCard.addView(settingsRow("◷", "Test settings", "Real delay URL, queue limits, and live row updates") { showTestSettingsSheet() })
         settingsCard.addView(settingsRow("▦", "Subscriptions", "Groups, refresh all, load more, and search") { showSubscriptionSettingsSheet() })
-        settingsCard.addView(settingsRow("⇄", "Routing & DNS", "Kill switch, VPN permission, and advanced routing plan") { showRoutingSettingsSheet() })
+        settingsCard.addView(settingsRow("⇄", "Routing & DNS", "DNS, per-app bypass, kill switch, and Xray controls") { showRoutingSettingsSheet() })
         settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status, safe report, and full technical log") { showDiagnosticsHubSheet() })
-        settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
-        settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
-        advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
-        settingsCard.addView(advancedToggleButton)
+        settingsCard.addView(settingsRow("⋯", "Advanced tools", "Technical tools and full diagnostics, hidden by default") { toggleAdvancedPanel() })
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -2434,11 +2430,6 @@ class MainActivity : Activity() {
         if (!::advancedPanel.isInitialized) return
         advancedVisible = visible
         advancedPanel.visibility = if (visible) View.VISIBLE else View.GONE
-        advancedToggleButton.text = if (visible) {
-            "Hide advanced tools"
-        } else {
-            "Show advanced tools"
-        }
     }
 
     private fun startLiveDashboardRefresh() {

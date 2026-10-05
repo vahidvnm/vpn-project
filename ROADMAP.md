@@ -591,7 +591,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله verification تکمیلی Xray: هنگام Connect یک HTTP proxy لوکال فقط روی `127.0.0.1` داخل runtime ساخته می‌شود تا بعد از بالا آمدن VPN، public egress IP و مسیر DNS/DoH به‌صورت best-effort از مسیر Xray چک شود؛ جزئیات leak همچنان امن/غیرمحرمانه گزارش می‌شود.
 - [x] مرحله lifecycle/reconnect اولیه Xray: سرویس Xray تغییر شبکه Wi‑Fi/mobile/VPN capability را با `ConnectivityManager` می‌گیرد، underlying network را refresh می‌کند، foreground notification را زنده نگه می‌دارد و verification را با debounce دوباره اجرا می‌کند.
 - [x] مرحله Smart fallback امن: گزینه Settings با پیش‌فرض OFF اضافه شد؛ اگر کاربر روشن کند و Connect شکست بخورد، اپ فقط تا ۳ کانفیگ نزدیک/هم‌گروه را با backoff کوتاه امتحان می‌کند و queue-wide test یا اسکن هزاران کانفیگ انجام نمی‌دهد.
-- [x] polish Settings بعد از اسکرین‌شات: متن بالای Settings کوتاه‌تر شد، diagnostics حجیم از Advanced panel حذف شد، و ابزارهای کمیاب VPN permission/OpenVPN/bootstrap پشت یک bottom sheet فشرده رفتند تا صفحه اصلی Settings خلوت بماند.
+- [x] polish Settings بعد از اسکرین‌شات: متن بالای Settings کوتاه‌تر شد، ردیف‌های تکراری Add configs/Kill switch حذف شدند، diagnostics حجیم از Advanced panel حذف شد، و ابزارهای کمیاب VPN permission/OpenVPN/bootstrap پشت یک bottom sheet فشرده رفتند تا صفحه اصلی Settings خلوت بماند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
