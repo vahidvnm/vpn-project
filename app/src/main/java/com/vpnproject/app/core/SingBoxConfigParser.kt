@@ -81,35 +81,75 @@ object SingBoxConfigParser {
         }
         val transportHeaders = transportObject?.let { topLevelObjectField(it, "headers") }
         val hostHeader = firstNonBlank(
-            transportHeaders?.let { topLevelStringField(it, "Host") },
-            transportHeaders?.let { topLevelStringField(it, "host") },
-            transportObject?.let { topLevelStringField(it, "host") }
+            transportHeaders?.let { topLevelStringOrArrayField(it, "Host") },
+            transportHeaders?.let { topLevelStringOrArrayField(it, "host") },
+            transportObject?.let { topLevelStringOrArrayField(it, "host") },
+            transportObject?.let { topLevelStringOrArrayField(it, "server_name") }
         )
-        val path = transportObject?.let { topLevelStringField(it, "path") }
+        val path = transportObject?.let { topLevelStringOrFirstArrayField(it, "path") }
         val serviceName = firstNonBlank(
             transportObject?.let { topLevelStringField(it, "service_name") },
-            transportObject?.let { topLevelStringField(it, "serviceName") }
+            transportObject?.let { topLevelStringField(it, "serviceName") },
+            transportObject?.let { topLevelStringField(it, "service-name") }
         )
+        val transportMode = when (transport) {
+            "grpc" -> if (transportObject?.let { grpcMultiMode(it) } == true) "multi" else null
+            "xhttp" -> transportObject?.let {
+                firstNonBlank(
+                    topLevelStringField(it, "mode"),
+                    topLevelStringField(it, "xhttp_mode"),
+                    topLevelStringField(it, "xhttpMode")
+                )
+            }
+            else -> null
+        }
         val fingerprint = firstNonBlank(
             tls?.let { topLevelObjectField(it, "utls") }?.let { topLevelStringField(it, "fingerprint") },
-            tls?.let { topLevelStringField(it, "fingerprint") }
+            tls?.let { topLevelStringField(it, "fingerprint") },
+            tls?.let { topLevelStringField(it, "client_fingerprint") },
+            tls?.let { topLevelStringField(it, "clientFingerprint") }
         )
         val verifyHost = firstNonBlank(
             tls?.let { topLevelStringField(it, "server_name") },
+            tls?.let { topLevelStringField(it, "serverName") },
+            tls?.let { topLevelStringField(it, "sni") },
             topLevelStringField(objectText, "server_name"),
-            hostHeader,
+            topLevelStringField(objectText, "serverName"),
+            topLevelStringField(objectText, "sni"),
+            hostHeader?.firstCommaValue(),
             server.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
         )
-        val publicKey = reality?.let { topLevelStringField(it, "public_key") }
-        val shortId = reality?.let { topLevelStringField(it, "short_id") }
-        val allowInsecure = tls?.let { topLevelBooleanField(it, "insecure") } == true
+        val publicKey = reality?.let {
+            firstNonBlank(
+                topLevelStringField(it, "public_key"),
+                topLevelStringField(it, "publicKey"),
+                topLevelStringField(it, "public-key"),
+                topLevelStringField(it, "pbk")
+            )
+        }
+        val shortId = reality?.let {
+            firstNonBlank(
+                topLevelStringField(it, "short_id"),
+                topLevelStringField(it, "shortId"),
+                topLevelStringField(it, "short-id"),
+                topLevelStringField(it, "sid")
+            )
+        }
+        val allowInsecure = tls?.let { topLevelBooleanField(it, "insecure") } == true ||
+            tls?.let { topLevelBooleanField(it, "allow_insecure") } == true ||
+            tls?.let { topLevelBooleanField(it, "allowInsecure") } == true ||
+            tls?.let { topLevelBooleanField(it, "skip_cert_verify") } == true
         val runtimeLink = buildRuntimeLink(
             type = rawType,
             server = server,
             port = port,
-            credential = firstNonBlank(topLevelStringField(objectText, "uuid"), topLevelStringField(objectText, "password")),
-            method = topLevelStringField(objectText, "method"),
-            alterId = topLevelIntField(objectText, "alter_id") ?: topLevelIntField(objectText, "alterId"),
+            credential = firstNonBlank(
+                topLevelStringField(objectText, "uuid"),
+                topLevelStringField(objectText, "password"),
+                topLevelStringField(objectText, "id")
+            ),
+            method = firstNonBlank(topLevelStringField(objectText, "method"), topLevelStringField(objectText, "security")),
+            alterId = topLevelIntField(objectText, "alter_id") ?: topLevelIntField(objectText, "alterId") ?: topLevelIntField(objectText, "alter-id"),
             flow = topLevelStringField(objectText, "flow"),
             security = security,
             transport = transport,
@@ -120,6 +160,7 @@ object SingBoxConfigParser {
             publicKey = publicKey,
             shortId = shortId,
             serviceName = serviceName,
+            transportMode = transportMode,
             allowInsecure = allowInsecure,
             name = tag
         )
@@ -162,13 +203,14 @@ object SingBoxConfigParser {
         publicKey: String?,
         shortId: String?,
         serviceName: String?,
+        transportMode: String?,
         allowInsecure: Boolean,
         name: String?
     ): String? {
         val secret = credential?.takeIf { it.isNotBlank() } ?: return null
         val safeName = V2RayLinkInspector.safeDisplayName(name)
         val shareHost = server.toShareAuthorityHost()
-        val query = buildQuery(security, transport, hostHeader, path, sni, fingerprint, publicKey, shortId, serviceName, allowInsecure, flow)
+        val query = buildQuery(security, transport, hostHeader, path, sni, fingerprint, publicKey, shortId, serviceName, transportMode, allowInsecure, flow)
         val fragment = safeName?.takeIf { it.isNotBlank() }?.let { "#${it.urlEncode()}" }.orEmpty()
         return when (type) {
             "vless" -> "vless://${secret.urlEncode()}@$shareHost:$port?$query$fragment"
@@ -210,6 +252,7 @@ object SingBoxConfigParser {
         publicKey: String?,
         shortId: String?,
         serviceName: String?,
+        transportMode: String?,
         allowInsecure: Boolean,
         flow: String?
     ): String = buildList {
@@ -222,6 +265,7 @@ object SingBoxConfigParser {
         publicKey?.takeIf { it.isNotBlank() }?.let { add("pbk=${it.urlEncode()}") }
         shortId?.takeIf { it.isNotBlank() }?.let { add("sid=${it.urlEncode()}") }
         serviceName?.takeIf { it.isNotBlank() }?.let { add("serviceName=${it.urlEncode()}") }
+        transportMode?.takeIf { it.isNotBlank() }?.let { add("mode=${it.urlEncode()}") }
         if (allowInsecure) add("allowInsecure=1")
         flow?.takeIf { it.isNotBlank() }?.let { add("flow=${it.urlEncode()}") }
     }.joinToString("&")
@@ -288,7 +332,12 @@ object SingBoxConfigParser {
     }
 
     private fun topLevelPortField(json: String): Int? =
-        topLevelIntField(json, "server_port") ?: topLevelStringField(json, "server_port")?.toIntOrNull()
+        topLevelIntField(json, "server_port")
+            ?: topLevelStringField(json, "server_port")?.toIntOrNull()
+            ?: topLevelIntField(json, "serverPort")
+            ?: topLevelStringField(json, "serverPort")?.toIntOrNull()
+            ?: topLevelIntField(json, "port")
+            ?: topLevelStringField(json, "port")?.toIntOrNull()
 
     private fun topLevelIntField(json: String, fieldName: String): Int? {
         val regex = Regex(
@@ -324,6 +373,58 @@ object SingBoxConfigParser {
         val objectEnd = matchingBraceEnd(json, objectStart) ?: return null
         return json.substring(objectStart, objectEnd + 1)
     }
+    private fun topLevelStringOrArrayField(json: String, fieldName: String): String? =
+        topLevelStringField(json, fieldName)
+            ?: topLevelStringArrayField(json, fieldName)?.joinToString(",")
+
+    private fun topLevelStringOrFirstArrayField(json: String, fieldName: String): String? =
+        topLevelStringField(json, fieldName)
+            ?: topLevelStringArrayField(json, fieldName)?.firstOrNull()
+
+    private fun topLevelStringArrayField(json: String, fieldName: String): List<String>? {
+        val regex = Regex(
+            "\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*\\[",
+            RegexOption.IGNORE_CASE
+        )
+        val match = regex.findAll(json).firstOrNull { isTopLevelField(json, it.range.first) } ?: return null
+        val arrayStart = json.indexOf('[', startIndex = match.range.first).takeIf { it >= 0 } ?: return null
+        val arrayEnd = matchingBracketEnd(json, arrayStart) ?: return null
+        return parseJsonStringArray(json.substring(arrayStart + 1, arrayEnd))
+            .filter { it.isNotBlank() }
+            .takeIf { it.isNotEmpty() }
+    }
+
+    private fun parseJsonStringArray(body: String): List<String> {
+        val values = mutableListOf<String>()
+        var inString = false
+        var escape = false
+        val current = StringBuilder()
+        for (char in body) {
+            when {
+                escape -> {
+                    if (inString) current.append('\\').append(char)
+                    escape = false
+                }
+                char == '\\' && inString -> escape = true
+                char == '"' && inString -> {
+                    values += current.toString().unescapeJsonString()
+                    current.setLength(0)
+                    inString = false
+                }
+                char == '"' -> inString = true
+                inString -> current.append(char)
+            }
+        }
+        return values
+    }
+
+    private fun grpcMultiMode(transportJson: String): Boolean =
+        topLevelBooleanField(transportJson, "multi_mode") == true ||
+            topLevelBooleanField(transportJson, "multiMode") == true ||
+            topLevelStringField(transportJson, "mode")?.equals("multi", ignoreCase = true) == true ||
+            topLevelStringField(transportJson, "grpc_mode")?.equals("multi", ignoreCase = true) == true ||
+            topLevelStringField(transportJson, "grpcMode")?.equals("multi", ignoreCase = true) == true
+
 
     private fun matchingBraceEnd(text: String, objectStart: Int): Int? {
         var depth = 0
@@ -344,6 +445,26 @@ object SingBoxConfigParser {
         }
         return null
     }
+    private fun matchingBracketEnd(text: String, arrayStart: Int): Int? {
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (index in arrayStart until text.length) {
+            val char = text[index]
+            when {
+                escape -> escape = false
+                char == '\\' && inString -> escape = true
+                char == '"' -> inString = !inString
+                !inString && char == '[' -> depth++
+                !inString && char == ']' -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+        }
+        return null
+    }
+
 
     private fun isTopLevelField(json: String, index: Int): Boolean {
         var depth = 0
@@ -363,6 +484,8 @@ object SingBoxConfigParser {
     }
 
     private fun firstNonBlank(vararg values: String?): String? = values.firstOrNull { !it.isNullOrBlank() }?.trim()
+
+    private fun String.firstCommaValue(): String? = split(',', ';').firstOrNull { it.isNotBlank() }?.trim()
 
     private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
 
@@ -387,9 +510,38 @@ object SingBoxConfigParser {
         append('\"')
     }
 
-    private fun String.unescapeJsonString(): String = replace("\\/", "/")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    private fun String.unescapeJsonString(): String = buildString {
+        var index = 0
+        while (index < this@unescapeJsonString.length) {
+            val ch = this@unescapeJsonString[index]
+            if (ch != '\\' || index + 1 >= this@unescapeJsonString.length) {
+                append(ch)
+                index++
+                continue
+            }
+            when (val escaped = this@unescapeJsonString[index + 1]) {
+                '"' -> append('"')
+                '\\' -> append('\\')
+                '/' -> append('/')
+                'b' -> append('\b')
+                'f' -> append('\u000C')
+                'n' -> append('\n')
+                'r' -> append('\r')
+                't' -> append('\t')
+                'u' -> {
+                    val hex = this@unescapeJsonString.substring(index + 2, (index + 6).coerceAtMost(this@unescapeJsonString.length))
+                    if (hex.length == 4 && hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                        append(hex.toInt(16).toChar())
+                        index += 4
+                    } else {
+                        append('\\').append(escaped)
+                    }
+                }
+                else -> append(escaped)
+            }
+            index += 2
+        }
+    }
 
     private data class ParsedSingBoxOutbound(
         val tag: String?,

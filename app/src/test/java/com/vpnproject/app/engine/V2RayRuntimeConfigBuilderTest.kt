@@ -140,6 +140,114 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsFromSingBoxWebSocketHeadersArray() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "vless",
+                "tag": "sing-box ws",
+                "server": "edge.example.com",
+                "server_port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "transport": {
+                  "type": "ws",
+                  "path": "/ws",
+                  "headers": { "Host": ["front.example.net", "backup.example.net"] }
+                },
+                "tls": { "enabled": true, "serverName": "front.example.net" }
+              }]
+            }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.SING_BOX, singBox)
+
+        assertContains(runtime.configJson, "\"network\": \"ws\"")
+        assertContains(runtime.configJson, "\"wsSettings\"")
+        assertContains(runtime.configJson, "\"path\": \"/ws\"")
+        assertContains(runtime.configJson, "\"Host\": \"front.example.net\"")
+        assertContains(runtime.configJson, "\"serverName\": \"front.example.net\"")
+    }
+
+    @Test
+    fun buildsFromSingBoxGrpcMultiMode() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "trojan",
+                "tag": "sing-box grpc",
+                "server": "grpc.example.com",
+                "server_port": "443",
+                "password": "secret",
+                "transport": { "type": "grpc", "service_name": "myGrpcService", "multi_mode": true },
+                "tls": { "enabled": true, "server_name": "front.example.net", "utls": { "fingerprint": "chrome" } }
+              }]
+            }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.SING_BOX, singBox)
+
+        assertContains(runtime.configJson, "\"network\": \"grpc\"")
+        assertContains(runtime.configJson, "\"grpcSettings\"")
+        assertContains(runtime.configJson, "\"serviceName\": \"myGrpcService\"")
+        assertContains(runtime.configJson, "\"multiMode\": true")
+        assertContains(runtime.configJson, "\"fingerprint\": \"chrome\"")
+    }
+
+    @Test
+    fun buildsFromSingBoxXhttpRealityCamelCaseOptions() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "vless",
+                "tag": "sing-box xhttp",
+                "server": "cdn.example.net",
+                "port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "flow": "xtls-rprx-vision",
+                "transport": { "type": "split-http", "path": "/xhttp", "host": ["front.example.net"], "mode": "auto" },
+                "tls": {
+                  "enabled": true,
+                  "sni": "www.microsoft.com",
+                  "clientFingerprint": "chrome",
+                  "reality": { "enabled": true, "publicKey": "PUBLICKEY", "shortId": "abc123" }
+                }
+              }]
+            }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.SING_BOX, singBox)
+
+        assertContains(runtime.configJson, "\"network\": \"xhttp\"")
+        assertContains(runtime.configJson, "\"xhttpSettings\"")
+        assertContains(runtime.configJson, "\"path\": \"/xhttp\"")
+        assertContains(runtime.configJson, "\"host\": \"front.example.net\"")
+        assertContains(runtime.configJson, "\"mode\": \"auto\"")
+        assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
+        assertContains(runtime.configJson, "\"shortId\": \"abc123\"")
+    }
+
+    @Test
+    fun buildsFromSingBoxHttpHostArray() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "vmess",
+                "tag": "sing-box h2",
+                "server": "h2.example.com",
+                "serverPort": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "security": "auto",
+                "transport": { "type": "http", "host": ["front1.example.net", "front2.example.net"], "path": "/h2" },
+                "tls": { "enabled": true, "server_name": "front1.example.net" }
+              }]
+            }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.SING_BOX, singBox)
+
+        assertContains(runtime.configJson, "\"network\": \"http\"")
+        assertContains(runtime.configJson, "\"httpSettings\"")
+        assertContains(runtime.configJson, "\"host\": [\"front1.example.net\",\"front2.example.net\"]")
+        assertContains(runtime.configJson, "\"path\": \"/h2\"")
+    }
+
+    @Test
     fun buildsFromClashTrojanWebSocketTlsProxy() {
         val clash = """
             proxies:
