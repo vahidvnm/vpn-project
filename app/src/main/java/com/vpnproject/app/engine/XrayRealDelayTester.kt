@@ -21,8 +21,10 @@ import java.util.concurrent.TimeUnit
  * only by XrayVpnService after Connect.
  */
 class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
-    fun measure(config: ImportedConfig): XrayRealDelayResult {
+    fun measure(config: ImportedConfig, verifyUrls: List<String> = DEFAULT_VERIFY_URLS): XrayRealDelayResult {
         val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(config)
+        val urls = verifyUrls.filter { it.startsWith("http://") || it.startsWith("https://") }
+            .ifEmpty { DEFAULT_VERIFY_URLS }
         Seq.setContext(context.applicationContext)
         Libv2ray.initCoreEnv(context.filesDir.absolutePath, xudpBaseKey())
         val controller = Libv2ray.newCoreController(this)
@@ -30,7 +32,7 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             controller.startLoop(runtime.configJson, NO_TUN_FD)
             Thread.sleep(START_DELAY_MS)
             val attempts = mutableListOf<String>()
-            for (url in VERIFY_URLS) {
+            for (url in urls) {
                 val result = measureDelayWithTimeout(controller, url, VERIFY_URL_TIMEOUT_MS)
                 if (result.delayMs != null && result.delayMs >= 0L) {
                     return XrayRealDelayResult(
@@ -103,7 +105,7 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
         const val NO_TUN_FD = -1
         const val START_DELAY_MS = 350L
         const val VERIFY_URL_TIMEOUT_MS = 12_000L
-        val VERIFY_URLS = listOf(
+        val DEFAULT_VERIFY_URLS = listOf(
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",
             "https://cp.cloudflare.com/generate_204"

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -301,6 +302,10 @@ class MainActivity : Activity() {
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
         settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run quick no-VPN latency after import/select", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("◷", "Test settings", "Real delay URL, queue limits, and live row updates") { showTestSettingsSheet() })
+        settingsCard.addView(settingsRow("▦", "Subscriptions", "Groups, refresh all, load more, and search") { showSubscriptionSettingsSheet() })
+        settingsCard.addView(settingsRow("⇄", "Routing & DNS", "Kill switch, VPN permission, and advanced routing plan") { showRoutingSettingsSheet() })
+        settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status, safe report, and full technical log") { showDiagnosticsHubSheet() })
         settingsCard.addView(settingsRow("+", "Add configs", "Clipboard, file, or subscription URL") { showAddConfigMenu() })
         settingsCard.addView(settingsRow("🛡", "Kill switch", "Use Android Always-on VPN for stricter blocking") { showKillSwitchInfoSheet() })
         advancedToggleButton = createActionButton("Show advanced tools") { toggleAdvancedPanel() }
@@ -1046,7 +1051,7 @@ class MainActivity : Activity() {
             setAutoTestStatus("$testLabel: add configs first")
             return
         }
-        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator()).take(MAX_AUTO_RANK_PROFILES)
+        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator()).take(quickCheckProfileLimit())
         autoTestInFlight = true
         setAutoTestStatus("$testLabel testing ${rankedInput.size} ${scopeLabel.shortUi(32)} without connecting...")
         val network = currentNetworkLabel()
@@ -1283,7 +1288,7 @@ class MainActivity : Activity() {
                 })
             }
             if (uniqueCandidates.size > 1) {
-                val count = uniqueCandidates.take(MAX_AUTO_RANK_PROFILES).size
+                val count = uniqueCandidates.take(quickCheckProfileLimit()).size
                 addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-test $count configs and select the fastest reachable one") {
                     dialog.dismiss()
                     rankProfilesAndSelectBest(
@@ -1331,7 +1336,7 @@ class MainActivity : Activity() {
         setAutoTestStatus("Real delay running for ${compactProfileTitle(profile)} with Xray core...")
         val network = currentNetworkLabel()
         Thread {
-            val result = xrayRealDelayTester.measure(config)
+            val result = xrayRealDelayTester.measure(config, realDelayVerifyUrls())
             val updated = runCatching {
                 profileStore.markTested(
                     profileId = profile.id,
@@ -1379,7 +1384,7 @@ class MainActivity : Activity() {
             setAutoTestStatus("A test is already running")
             return
         }
-        val candidates = scoped.take(MAX_REAL_DELAY_PROFILES)
+        val candidates = scoped.take(realDelayProfileLimit())
         autoTestInFlight = true
         setAutoTestStatus("Real delay testing ${candidates.size}/${scoped.size} configs in ${scope.shortUi(24)} with Xray core...")
         val network = currentNetworkLabel()
@@ -1394,7 +1399,7 @@ class MainActivity : Activity() {
                     }
                 }
                 val config = loadProfileConfigQuiet(profile)
-                val delayResult = if (config != null) xrayRealDelayTester.measure(config) else null
+                val delayResult = if (config != null) xrayRealDelayTester.measure(config, realDelayVerifyUrls()) else null
                 val summary = ConfigProbeSummary(
                     report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
                     okCount = if (delayResult?.reachable == true) 1 else 0,
@@ -1777,6 +1782,271 @@ class MainActivity : Activity() {
         isClickable = true
         isFocusable = true
         setOnClickListener { onClick() }
+    }
+
+    private fun showTestSettingsSheet() {
+        showBottomSheet(
+            title = "Test settings",
+            subtitle = "v2rayNG-style test knobs, kept safe for big subscriptions."
+        ) { dialog ->
+            addView(settingsHintText(
+                "Quick check is a no-VPN endpoint probe. Real delay starts temporary Xray core, but final VPN/TUN verification still happens only after Connect."
+            ))
+            addView(bottomSheetActionRow("◷", "Quick check batch", "${quickCheckProfileLimit()} configs • $MAX_PARALLEL_PING_TESTS parallel workers") {
+                dialog.dismiss()
+                promptIntegerSetting(
+                    title = "Quick check batch",
+                    subtitle = "How many configs Queue tools can quick-test at once. Keep this modest for 1000+ subscriptions.",
+                    currentValue = quickCheckProfileLimit(),
+                    minValue = 1,
+                    maxValue = MAX_QUICK_CHECK_SETTING_LIMIT,
+                    onSave = { value ->
+                        appSettings.edit().putInt(KEY_QUICK_CHECK_LIMIT, value).apply()
+                        setActionStatus("Quick check batch set to $value configs.")
+                    }
+                )
+            })
+            addView(bottomSheetActionRow("✓", "Real delay batch", "${realDelayProfileLimit()} configs • temporary Xray core") {
+                dialog.dismiss()
+                promptIntegerSetting(
+                    title = "Real delay batch",
+                    subtitle = "Real delay is heavier than Quick check. Use small values on older phones.",
+                    currentValue = realDelayProfileLimit(),
+                    minValue = 1,
+                    maxValue = MAX_REAL_DELAY_SETTING_LIMIT,
+                    onSave = { value ->
+                        appSettings.edit().putInt(KEY_REAL_DELAY_LIMIT, value).apply()
+                        setActionStatus("Real delay batch set to $value configs.")
+                    }
+                )
+            })
+            addView(bottomSheetActionRow("URL", "Real delay URL", realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }.shortUi(62)) {
+                dialog.dismiss()
+                promptRealDelayUrls()
+            })
+            addView(bottomSheetActionRow("↺", "Reset test defaults", "Quick 36, Real delay 8, generate_204 URLs") {
+                dialog.dismiss()
+                appSettings.edit()
+                    .remove(KEY_QUICK_CHECK_LIMIT)
+                    .remove(KEY_REAL_DELAY_LIMIT)
+                    .remove(KEY_REAL_DELAY_URLS)
+                    .apply()
+                setActionStatus("Test settings reset to safe defaults.")
+            })
+        }
+    }
+
+    private fun showSubscriptionSettingsSheet() {
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val subscriptionIds = groups.flatMap { it.profileIds }.toSet()
+        showBottomSheet(
+            title = "Subscriptions",
+            subtitle = "${groups.size} group${if (groups.size == 1) "" else "s"} • ${subscriptionIds.size} saved subscription configs"
+        ) { dialog ->
+            addView(settingsHintText("Subscriptions are user/provider-provided and stored encrypted. Large lists are rendered progressively so the phone does not lock up."))
+            addView(bottomSheetActionRow("+", "Add subscription URL", "Use the main + flow and compact import picker") {
+                dialog.dismiss()
+                promptAddSubscriptionGroup()
+            })
+            addView(bottomSheetActionRow("↻", "Refresh all subscriptions", "Update every saved refreshable URL") {
+                dialog.dismiss()
+                refreshAllSubscriptionGroups()
+            })
+            addView(bottomSheetActionRow("▦", "Open Locations", "Manage tabs, Queue tools, Load more, and search") {
+                dialog.dismiss()
+                showSection(AppSection.PROFILES)
+            })
+            addView(bottomSheetActionRow("⌕", "Search configs", "Filter country, operator, transport, or host") {
+                dialog.dismiss()
+                showSection(AppSection.PROFILES)
+                showLocationSearchSheet()
+            })
+            if (groups.isEmpty() && storedProfiles.isEmpty()) {
+                addView(settingsHintText("No configs yet. Add a subscription URL, paste configs, or import a file from +."))
+            }
+        }
+    }
+
+    private fun showRoutingSettingsSheet() {
+        showBottomSheet(
+            title = "Routing & DNS",
+            subtitle = "Keep normal UI simple; advanced routing stays here."
+        ) { dialog ->
+            addView(settingsHintText("Next priorities: per-app VPN, bypass LAN, DNS controls, and Xray advanced toggles. Root/LAN sharing will stay advanced/off by default."))
+            addView(bottomSheetActionRow("🛡", "Kill switch", "Use Android Always-on VPN and lockdown for stricter blocking") {
+                dialog.dismiss()
+                showKillSwitchInfoSheet()
+            })
+            addView(bottomSheetActionRow("▣", "VPN permission", "Prepare Android system VPN approval") {
+                dialog.dismiss()
+                requestVpnPermission(PendingVpnAction.NONE)
+            })
+            addView(bottomSheetActionRow("DNS", "DNS settings", "Planned: VPN DNS, direct DNS fallback, FakeDNS advanced") {
+                setActionStatus("DNS settings are planned for the next advanced pass.")
+            })
+            addView(bottomSheetActionRow("APP", "Per-app routing", "Planned: include/exclude apps from the VPN tunnel") {
+                setActionStatus("Per-app routing is planned after the current Xray/subscription polish.")
+            })
+        }
+    }
+
+    private fun showDiagnosticsHubSheet() {
+        val hub = currentHubStatus()
+        showBottomSheet(
+            title = "Diagnostics / logs",
+            subtitle = "Safe summaries only; secrets are not copied."
+        ) { dialog ->
+            addView(settingsHintText("${hub.title}: ${hub.detail.shortUi(90)}"))
+            addView(bottomSheetActionRow("↻", "Refresh status", "Update VPN state, traffic, and verification") {
+                dialog.dismiss()
+                showEngineStatus()
+            })
+            addView(bottomSheetActionRow("▤", "Open diagnostics log", "Full technical output in a scrollable sheet") {
+                dialog.dismiss()
+                showDiagnosticsLogSheet()
+            })
+            addView(bottomSheetActionRow("⧉", "Copy safe report", "Counts, selected profile, status, and engine diagnostics") {
+                dialog.dismiss()
+                copySafeDiagnosticsReport()
+            })
+            addView(bottomSheetActionRow("☰", "Saved profiles report", "Human-readable local profile summary") {
+                dialog.dismiss()
+                showSavedProfiles()
+            })
+        }
+    }
+
+    private fun promptIntegerSetting(
+        title: String,
+        subtitle: String,
+        currentValue: Int,
+        minValue: Int,
+        maxValue: Int,
+        onSave: (Int) -> Unit
+    ) {
+        showBottomSheet(title = title, subtitle = subtitle) { dialog ->
+            val input = EditText(this@MainActivity).apply {
+                setText(currentValue.toString())
+                textSize = 16f
+                inputType = InputType.TYPE_CLASS_NUMBER
+                setSingleLine(true)
+                setPadding(dp(14), 0, dp(14), 0)
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(54)
+                ).apply { setMargins(0, dp(10), 0, dp(8)) }
+            }
+            addView(input)
+            addView(settingsHintText("Allowed range: $minValue–$maxValue. Lower numbers keep 1000+ config subscriptions responsive."))
+            addView(bottomSheetActionRow("✓", "Save", "Apply this limit to future Queue tools tests") {
+                val value = input.text?.toString().orEmpty().trim().toIntOrNull()
+                if (value == null || value !in minValue..maxValue) {
+                    setActionStatus("$title must be between $minValue and $maxValue.")
+                    return@bottomSheetActionRow
+                }
+                dialog.dismiss()
+                onSave(value)
+            })
+            addView(bottomSheetActionRow("×", "Cancel", "Keep current value") { dialog.dismiss() })
+        }
+    }
+
+    private fun promptRealDelayUrls() {
+        showBottomSheet(
+            title = "Real delay URL",
+            subtitle = "One or more HTTP/HTTPS URLs. First successful generate_204-style URL wins."
+        ) { dialog ->
+            val input = EditText(this@MainActivity).apply {
+                setText(realDelayVerifyUrls().joinToString("\n"))
+                textSize = 13.5f
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                minLines = 3
+                maxLines = 5
+                setSingleLine(false)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(10), 0, dp(8)) }
+            }
+            addView(input)
+            addView(settingsHintText("Use URLs like https://www.gstatic.com/generate_204. Put each URL on a new line."))
+            addView(bottomSheetActionRow("✓", "Save URLs", "Use these URLs for pre-connect Real delay") {
+                val urls = parseRealDelayUrls(input.text?.toString().orEmpty())
+                if (urls.isEmpty()) {
+                    setActionStatus("Add at least one http:// or https:// URL.")
+                    return@bottomSheetActionRow
+                }
+                dialog.dismiss()
+                appSettings.edit().putString(KEY_REAL_DELAY_URLS, urls.joinToString("\n")).apply()
+                setActionStatus("Real delay URL list saved: ${urls.joinToString(", ") { it.hostLabel() }}")
+            })
+            addView(bottomSheetActionRow("↺", "Use defaults", "gstatic, Google generate_204, Cloudflare cp") {
+                dialog.dismiss()
+                appSettings.edit().remove(KEY_REAL_DELAY_URLS).apply()
+                setActionStatus("Real delay URLs reset to defaults.")
+            })
+        }
+    }
+
+    private fun settingsHintText(message: String): TextView = TextView(this).apply {
+        text = message
+        textSize = 12f
+        setTextColor(PearlPalette.TEXT_MUTED)
+        setPadding(dp(6), dp(8), dp(6), dp(4))
+    }
+
+    private fun quickCheckProfileLimit(): Int = appSettings
+        .getInt(KEY_QUICK_CHECK_LIMIT, MAX_AUTO_RANK_PROFILES)
+        .coerceIn(1, MAX_QUICK_CHECK_SETTING_LIMIT)
+
+    private fun realDelayProfileLimit(): Int = appSettings
+        .getInt(KEY_REAL_DELAY_LIMIT, MAX_REAL_DELAY_PROFILES)
+        .coerceIn(1, MAX_REAL_DELAY_SETTING_LIMIT)
+
+    private fun realDelayVerifyUrls(): List<String> = parseRealDelayUrls(
+        appSettings.getString(KEY_REAL_DELAY_URLS, null).orEmpty()
+    ).ifEmpty { DEFAULT_REAL_DELAY_URLS }
+
+    private fun parseRealDelayUrls(raw: String): List<String> = raw
+        .lineSequence()
+        .flatMap { it.split(',', ';', ' ').asSequence() }
+        .map { it.trim() }
+        .filter { it.startsWith("https://") || it.startsWith("http://") }
+        .distinct()
+        .take(MAX_REAL_DELAY_URLS)
+        .toList()
+
+    private fun String.hostLabel(): String = removePrefix("https://")
+        .removePrefix("http://")
+        .substringBefore('/')
+
+    private fun copySafeDiagnosticsReport() {
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val hub = currentHubStatus()
+        val report = buildString {
+            appendLine("VPN Hub safe diagnostics")
+            appendLine("Status: ${hub.title}")
+            appendLine("Detail: ${hub.detail}")
+            appendLine("Verified: ${hub.verified}")
+            appendLine("Engine: ${hub.activeEngine?.let { engineLabel(it) } ?: "none"}")
+            appendLine("Latency: ${hub.latencyMs?.let { "${it}ms" } ?: "n/a"}")
+            appendLine("Selected: ${selectedProfile?.displayName?.cleanProfileLabel()?.shortUi(48) ?: "none"}")
+            appendLine("Profiles: ${storedProfiles.size}")
+            appendLine("Subscription groups: ${groups.size}")
+            appendLine("Quick check limit: ${quickCheckProfileLimit()}")
+            appendLine("Real delay limit: ${realDelayProfileLimit()}")
+            appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
+            appendLine()
+            appendLine(engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus))
+        }
+        (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("VPN Hub safe diagnostics", report))
+        setActionStatus("Safe diagnostics copied. Secrets/raw configs were not included.")
     }
 
     private fun verticalGradient(
@@ -4177,7 +4447,7 @@ class MainActivity : Activity() {
             setActionStatus("No configs in $scope to test.")
             return
         }
-        val capped = scoped.take(MAX_AUTO_RANK_PROFILES).size
+        val capped = scoped.take(quickCheckProfileLimit()).size
         setActionStatus("$label for $scope: testing $capped/${scoped.size} configs without connecting. Large queues are never auto-tested.")
         rankProfilesAndSelectBest(
             inputProfiles = scoped,
@@ -4276,7 +4546,7 @@ class MainActivity : Activity() {
         activeGroup: SubscriptionGroup?,
         scope: String
     ) {
-        val capped = scopedProfiles.take(MAX_AUTO_RANK_PROFILES).size
+        val capped = scopedProfiles.take(quickCheckProfileLimit()).size
         showBottomSheet(
             title = "Queue tools",
             subtitle = "$scope • manual actions only • testing is capped at $capped/${scopedProfiles.size} configs"
@@ -4285,7 +4555,7 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 testLocationFilter(selectedLocationGroupFilter, label = "Quick check")
             })
-            val realDelayCap = scopedProfiles.take(MAX_REAL_DELAY_PROFILES).size
+            val realDelayCap = scopedProfiles.take(realDelayProfileLimit()).size
             addView(bottomSheetActionRow("✓", "Real delay", "Xray-core proxy delay for up to $realDelayCap configs before VPN connect") {
                 dialog.dismiss()
                 runRealDelayForLocationFilter(selectedLocationGroupFilter)
@@ -4954,6 +5224,9 @@ class MainActivity : Activity() {
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 36
         const val MAX_REAL_DELAY_PROFILES = 8
+        const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
+        const val MAX_REAL_DELAY_SETTING_LIMIT = 32
+        const val MAX_REAL_DELAY_URLS = 4
         const val MAX_PARALLEL_PING_TESTS = 6
         const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80
@@ -4965,6 +5238,14 @@ class MainActivity : Activity() {
         const val LIVE_REFRESH_IDLE_MS = 6_000L
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
+        const val KEY_QUICK_CHECK_LIMIT = "quick_check_limit"
+        const val KEY_REAL_DELAY_LIMIT = "real_delay_limit"
+        const val KEY_REAL_DELAY_URLS = "real_delay_urls"
+        val DEFAULT_REAL_DELAY_URLS = listOf(
+            "https://www.gstatic.com/generate_204",
+            "https://www.google.com/generate_204",
+            "https://cp.cloudflare.com/generate_204"
+        )
         const val LOCATION_FILTER_ALL = "all"
         const val LOCATION_FILTER_MANUAL = "manual"
     }

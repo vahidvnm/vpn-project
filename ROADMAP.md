@@ -584,6 +584,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] بازتعریف تست‌ها: Queue tools حالا دو تست قبل اتصال دارد: `Quick check` برای TCP/TLS endpoint reachability و `Real delay` برای اجرای موقت Xray core بدون Android VPN/TUN؛ تست نهایی `Connect & Verify` همچنان هنگام اتصال فقط روی کانفیگ انتخاب‌شده انجام می‌شود.
 - [x] رفع کندی Locations برای subscription بزرگ: به‌جای ساختن ۱۳۰۰+ row یک‌باره، ردیف‌ها progressive render می‌شوند (اول ۱۶۰، سپس Show more/long-press all)، درحالی‌که شمارنده loaded/total و Search/Queue tools همچنان کل صف load‌شده را می‌بینند.
 - [x] polish رنگ/تم مرحله ۳: مثل reference فقط در هر صفحه یک accent کوچک اضافه شد؛ حلقه دور دکمه power گرادیان خیلی ملایم گرفت، Locations tab/menu accent آبی-یاسی کم‌رنگ دارد، و Settings فقط روی icon chipها رنگ ظریف نشان می‌دهد.
+- [x] شروع Settings شبیه v2rayNG ولی ساده‌تر: ردیف‌های Test settings، Subscriptions، Routing & DNS و Diagnostics اضافه شدند؛ Quick check/Real delay limit و Real delay URL قابل تنظیم شدند و safe diagnostics قابل کپی است.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
