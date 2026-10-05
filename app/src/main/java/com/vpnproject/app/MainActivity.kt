@@ -1976,9 +1976,11 @@ class MainActivity : Activity() {
             .replace("✨", "")
             .replace("✦", "")
             .replace("✅", "")
+            .withoutFlagEmojis()
             .trim(' ', '•', '-', '·')
             .trim()
         return (inspectedName ?: title)
+            .withoutFlagEmojis()
             .ifBlank { profile.endpoints.firstOrNull()?.host?.shortHost() ?: profile.kind.displayName }
             .shortUi(24)
     }
@@ -2003,8 +2005,10 @@ class MainActivity : Activity() {
             profile.displayName.cleanProfileLabel(),
             profileXrayDescriptor(profile)?.displayName
         ).joinToString(" ")
-        return listOf("🇮🇷", "🇳🇱", "🇺🇸", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺", "🇸🇬")
-            .firstOrNull { label.contains(it) }
+        return listOf(
+            "🇮🇷", "🇳🇱", "🇺🇸", "🇨🇦", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺",
+            "🇸🇬", "🇯🇵", "🇰🇷", "🇭🇰", "🇮🇳", "🇧🇷", "🇦🇺", "🇮🇹", "🇪🇸", "🇵🇱"
+        ).firstOrNull { label.contains(it) }
             ?: when (profile.kind) {
                 VpnProfileKind.XRAY -> "✦"
                 VpnProfileKind.SING_BOX -> "◇"
@@ -4275,6 +4279,19 @@ class MainActivity : Activity() {
         val score = lastTestScore?.let { " • score $it" }.orEmpty()
         val network = lastTestNetwork?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
         return "Last test: $result$score$network"
+    }
+
+    private fun String.withoutFlagEmojis(): String {
+        val cleaned = StringBuilder(length)
+        var index = 0
+        while (index < length) {
+            val codePoint = codePointAt(index)
+            if (codePoint !in 0x1F1E6..0x1F1FF) {
+                cleaned.appendCodePoint(codePoint)
+            }
+            index += Character.charCount(codePoint)
+        }
+        return cleaned.toString().collapseLabelWhitespace()
     }
 
     private fun String.cleanProfileLabel(): String {
