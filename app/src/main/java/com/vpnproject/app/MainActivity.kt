@@ -286,11 +286,11 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Queue tests are manual and capped. Auto latency only verifies the selected config and is OFF by default."
-            textSize = 14f
+            text = "Manual, capped tests. Auto options stay OFF until you enable them."
+            textSize = 13.5f
             gravity = Gravity.CENTER
             setTextColor(PearlPalette.TEXT_MUTED)
-            setPadding(dp(8), 0, dp(8), dp(10))
+            setPadding(dp(8), 0, dp(8), dp(8))
         })
         settingsConnectionSummaryText = TextView(this).apply {
             text = "Status: tap Refresh status"
@@ -330,6 +330,7 @@ class MainActivity : Activity() {
         }
         advancedVisible = false
         advancedPanel.addView(sectionLabel("Advanced"))
+        advancedPanel.addView(settingsHintText("Rare tools are grouped here so Settings stays clean. Diagnostics and routing have their own rows above."))
         advancedDiagnostics = TextView(this).apply {
             text = "Advanced diagnostics will appear here after refresh/probe."
             textSize = 12.5f
@@ -342,21 +343,9 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener { showDiagnosticsLogSheet() }
             background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 0, 0, dp(10))
-            }
         }
-        advancedPanel.addView(advancedDiagnostics)
-        advancedPanel.addView(settingsRow("▤", "Open diagnostics log", "Full technical output in a scrollable sheet") { showDiagnosticsLogSheet() })
-        advancedPanel.addView(settingsRow("▣", "VPN permission", "Prepare Android system VPN approval") { requestVpnPermission(PendingVpnAction.NONE) })
-        advancedPanel.addView(settingsRow("◷", "Load latest profile", "Select the newest encrypted local config") { loadLatestProfile() })
-        advancedPanel.addView(settingsRow("☰", "Saved profiles report", "Text report for troubleshooting only") { showSavedProfiles() })
-        advancedPanel.addView(settingsRow("◉", "OpenVPN TCP handoff", "Save a pinned .ovpn for external clients") { prepareAndSaveOpenVpnConfig() })
-        advancedPanel.addView(settingsRow("▶", "Start bootstrap VPN", "Technical TUN bootstrap check") { requestVpnPermission(PendingVpnAction.BOOTSTRAP) })
-        advancedPanel.addView(settingsRow("■", "Stop bootstrap VPN", "Stop only the technical bootstrap tunnel") { stopBootstrapVpn() })
+        advancedPanel.addView(settingsRow("▣", "Technical tools", "VPN permission, OpenVPN handoff, and bootstrap lab checks") { showTechnicalToolsSheet() })
+        advancedPanel.addView(settingsRow("▤", "Full diagnostics log", "Open the current technical log in a scrollable sheet") { showDiagnosticsLogSheet() })
         settingsCard.addView(advancedPanel)
         toolsSection.addView(settingsCard)
         content.addView(View(this).apply {
@@ -2122,6 +2111,35 @@ class MainActivity : Activity() {
             addView(bottomSheetActionRow("☰", "Saved profiles report", "Human-readable local profile summary") {
                 dialog.dismiss()
                 showSavedProfiles()
+            })
+        }
+    }
+
+    private fun showTechnicalToolsSheet() {
+        showBottomSheet(
+            title = "Technical tools",
+            subtitle = "Rare actions kept away from the main Settings list."
+        ) { dialog ->
+            addView(settingsHintText("Use these only for setup, troubleshooting, or fallback handoff. They do not auto-test big queues."))
+            addView(bottomSheetActionRow("▣", "VPN permission", "Prepare Android system VPN approval") {
+                dialog.dismiss()
+                requestVpnPermission(PendingVpnAction.NONE)
+            })
+            addView(bottomSheetActionRow("◷", "Load latest profile", "Select the newest encrypted local config") {
+                dialog.dismiss()
+                loadLatestProfile()
+            })
+            addView(bottomSheetActionRow("◉", "OpenVPN TCP handoff", "Save a pinned .ovpn for external clients") {
+                dialog.dismiss()
+                prepareAndSaveOpenVpnConfig()
+            })
+            addView(bottomSheetActionRow("▶", "Start bootstrap VPN", "Technical TUN bootstrap check") {
+                dialog.dismiss()
+                requestVpnPermission(PendingVpnAction.BOOTSTRAP)
+            })
+            addView(bottomSheetActionRow("■", "Stop bootstrap VPN", "Stop only the technical bootstrap tunnel") {
+                dialog.dismiss()
+                stopBootstrapVpn()
             })
         }
     }
