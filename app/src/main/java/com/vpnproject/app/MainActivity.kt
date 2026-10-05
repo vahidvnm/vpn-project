@@ -169,6 +169,7 @@ class MainActivity : Activity() {
     private val profileRowSubtitleViews = mutableMapOf<String, TextView>()
     private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
     private val profileRuntimeCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
+    private val profileRuntimeDeepCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
     private lateinit var navHomeButton: TextView
     private lateinit var navProfilesButton: TextView
     private lateinit var navToolsButton: TextView
@@ -2927,17 +2928,33 @@ class MainActivity : Activity() {
     }
 
     private fun profileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility {
+        val deepCached = profileRuntimeDeepCompatibilityCache[profile.id]
+        if (deepCached != null && deepCached.first == profile.updatedAtEpochMs) return deepCached.second
         val cached = profileRuntimeCompatibilityCache[profile.id]
         if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
-        val compatibility = buildProfileRuntimeCompatibility(profile)
+        val compatibility = buildLightweightProfileRuntimeCompatibility(profile)
         profileRuntimeCompatibilityCache[profile.id] = profile.updatedAtEpochMs to compatibility
         return compatibility
     }
 
-    private fun buildProfileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility = when (profile.kind) {
-        VpnProfileKind.XRAY,
-        VpnProfileKind.SING_BOX,
-        VpnProfileKind.CLASH -> buildXrayMappedCompatibility(profile)
+    private fun profileRuntimeCompatibilityDeep(profile: VpnProfile): ProfileRuntimeCompatibility {
+        val cached = profileRuntimeDeepCompatibilityCache[profile.id]
+        if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
+        val compatibility = buildDeepProfileRuntimeCompatibility(profile)
+        profileRuntimeDeepCompatibilityCache[profile.id] = profile.updatedAtEpochMs to compatibility
+        return compatibility
+    }
+
+    private fun buildLightweightProfileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility = when (profile.kind) {
+        VpnProfileKind.XRAY -> profileXrayDescriptor(profile)?.let { descriptor ->
+            if (descriptor.runtimeSupported) {
+                ProfileRuntimeCompatibility("Xray", "Xray ready", connectReady = true, tone = ProfileRuntimeTone.READY)
+            } else {
+                compatibilityFromIssue(profile, listOf(descriptor.runtimeIssue ?: "unsupported Xray field"))
+            }
+        } ?: ProfileRuntimeCompatibility("Xray", "Xray ready", connectReady = true, tone = ProfileRuntimeTone.READY)
+        VpnProfileKind.SING_BOX -> lightweightMappedCompatibility(profile)
+        VpnProfileKind.CLASH -> lightweightMappedCompatibility(profile)
         VpnProfileKind.WIREGUARD -> ProfileRuntimeCompatibility(
             badge = "WG",
             detail = "Advanced fallback",
@@ -2956,6 +2973,24 @@ class MainActivity : Activity() {
             connectReady = false,
             tone = ProfileRuntimeTone.WARNING
         )
+    }
+
+    private fun lightweightMappedCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility {
+        val protocol = profile.endpoints.firstOrNull()?.protocol
+        return when {
+            protocol.isNullOrBlank() -> ProfileRuntimeCompatibility("Issue", "Missing endpoint", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            protocol?.endsWith("_UNKNOWN") == true -> ProfileRuntimeCompatibility("Map", "Check mapper", connectReady = false, tone = ProfileRuntimeTone.WARNING)
+            else -> ProfileRuntimeCompatibility("Xray", "Xray mapped", connectReady = true, tone = ProfileRuntimeTone.READY)
+        }
+    }
+
+    private fun buildDeepProfileRuntimeCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility = when (profile.kind) {
+        VpnProfileKind.XRAY,
+        VpnProfileKind.SING_BOX,
+        VpnProfileKind.CLASH -> buildXrayMappedCompatibility(profile)
+        VpnProfileKind.WIREGUARD,
+        VpnProfileKind.OPENVPN,
+        VpnProfileKind.UNKNOWN -> buildLightweightProfileRuntimeCompatibility(profile)
     }
 
     private fun buildXrayMappedCompatibility(profile: VpnProfile): ProfileRuntimeCompatibility {
@@ -3132,7 +3167,7 @@ class MainActivity : Activity() {
         selectedProfile = profile
         selectedProfileId = profile.id
         updateDashboardSummary()
-        val compatibility = profileRuntimeCompatibility(profile)
+        val compatibility = profileRuntimeCompatibilityDeep(profile)
         showBottomSheet(
             title = compactProfileTitle(profile),
             subtitle = compactProfileSubtitle(profile)?.shortUi(34) ?: "Saved config"
@@ -3165,7 +3200,7 @@ class MainActivity : Activity() {
     }
 
     private fun showProfileRuntimeDetailsSheet(profile: VpnProfile) {
-        val compatibility = profileRuntimeCompatibility(profile)
+        val compatibility = profileRuntimeCompatibilityDeep(profile)
         showBottomSheet(
             title = "Runtime details",
             subtitle = "${compatibility.badge} • ${compatibility.detail}".shortUi(70)
@@ -3576,8 +3611,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun profileNeedsXrayMapper(profile: VpnProfile): Boolean =
-        !profileRuntimeCompatibility(profile).connectReady && profileRuntimeCompatibility(profile).tone == ProfileRuntimeTone.WARNING
+    private fun profileNeedsXrayMapper(profile: VpnProfile): Boolean {
+        val compatibility = profileRuntimeCompatibility(profile)
+        return !compatibility.connectReady && compatibility.tone == ProfileRuntimeTone.WARNING
+    }
 
     private fun matchesLocationSearch(profile: VpnProfile, query: String): Boolean {
         val terms = query.replace(Regex("\\s+"), " ").trim().lowercase(java.util.Locale.US)
