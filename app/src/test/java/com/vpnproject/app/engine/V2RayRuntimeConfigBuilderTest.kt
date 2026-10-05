@@ -154,7 +154,8 @@ class V2RayRuntimeConfigBuilderTest {
                 ws-opts:
                   path: /ws
                   headers:
-                    Host: front.example.net
+                    Host:
+                      - front.example.net
         """.trimIndent()
         val runtime = buildRuntime(ConfigKind.CLASH, clash)
 
@@ -162,6 +163,48 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(runtime.configJson, "\"network\": \"ws\"")
         assertContains(runtime.configJson, "\"wsSettings\"")
         assertContains(runtime.configJson, "\"path\": \"/ws\"")
+        assertContains(runtime.configJson, "\"Host\": \"front.example.net\"")
+        assertContains(runtime.configJson, "\"serverName\": \"front.example.net\"")
+    }
+
+    @Test
+    fun buildsFromClashInlineWebSocketRealityOptions() {
+        val clash = """
+            proxies:
+              - { name: Inline WS Reality, type: vless, server: edge.example.net, port: 443, uuid: 11111111-1111-1111-1111-111111111111, network: ws, flow: xtls-rprx-vision, servername: www.microsoft.com, client-fingerprint: chrome, ws-opts: { path: /edge, headers: { Host: front.example.net } }, reality-opts: { public-key: PUBLICKEY, short-id: abc123 } }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.CLASH, clash)
+
+        assertContains(runtime.configJson, "\"network\": \"ws\"")
+        assertContains(runtime.configJson, "\"wsSettings\"")
+        assertContains(runtime.configJson, "\"path\": \"/edge\"")
+        assertContains(runtime.configJson, "\"Host\": \"front.example.net\"")
+        assertContains(runtime.configJson, "\"realitySettings\"")
+        assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
+        assertContains(runtime.configJson, "\"shortId\": \"abc123\"")
+    }
+
+    @Test
+    fun buildsFromClashGrpcOptsWithMultiMode() {
+        val clash = """
+            proxies:
+              - name: Trojan gRPC
+                type: trojan
+                server: grpc.example.net
+                port: 443
+                password: secret
+                tls: true
+                sni: front.example.net
+                grpc-opts:
+                  grpc-service-name: myGrpcService
+                  grpc-mode: multi
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.CLASH, clash)
+
+        assertContains(runtime.configJson, "\"network\": \"grpc\"")
+        assertContains(runtime.configJson, "\"grpcSettings\"")
+        assertContains(runtime.configJson, "\"serviceName\": \"myGrpcService\"")
+        assertContains(runtime.configJson, "\"multiMode\": true")
         assertContains(runtime.configJson, "\"serverName\": \"front.example.net\"")
     }
 
@@ -178,8 +221,10 @@ class V2RayRuntimeConfigBuilderTest {
                 flow: xtls-rprx-vision
                 servername: www.microsoft.com
                 client-fingerprint: chrome
-                path: /xhttp
-                host: front.example.net
+                xhttp-opts:
+                  path: /xhttp
+                  host: front.example.net
+                  mode: auto
                 reality-opts:
                   public-key: PUBLICKEY
                   short-id: abc123
@@ -190,6 +235,8 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(runtime.configJson, "\"network\": \"xhttp\"")
         assertContains(runtime.configJson, "\"xhttpSettings\"")
         assertContains(runtime.configJson, "\"path\": \"/xhttp\"")
+        assertContains(runtime.configJson, "\"host\": \"front.example.net\"")
+        assertContains(runtime.configJson, "\"mode\": \"auto\"")
         assertContains(runtime.configJson, "\"realitySettings\"")
         assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
     }

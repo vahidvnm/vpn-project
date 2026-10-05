@@ -62,13 +62,95 @@ object ClashConfigParser {
         if (rawType !in supportedProxyTypes) return null
         val server = block.field("server")?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val port = block.intField("port")?.takeIf { it in 1..65535 } ?: return null
-        val network = normalizeNetwork(block.field("network") ?: block.field("transport") ?: block.field("net"))
+        val rawNetwork = block.field("network") ?: block.field("transport") ?: block.field("net") ?: block.inferredTransport()
+        val network = normalizeNetwork(rawNetwork)
+        val hostHeader = firstNonBlank(
+            block.field("Host"),
+            block.field("host"),
+            block.sectionField("ws-opts", "Host"),
+            block.sectionField("ws-opts", "host"),
+            block.sectionField("ws_opts", "host"),
+            block.sectionField("http-opts", "Host"),
+            block.sectionField("http_opts", "host"),
+            block.sectionField("h2-opts", "host"),
+            block.sectionField("h2_opts", "host"),
+            block.sectionField("xhttp-opts", "host"),
+            block.sectionField("xhttp_opts", "host"),
+            block.sectionField("splithttp-opts", "host"),
+            block.sectionField("split-http-opts", "host"),
+            block.sectionField("split_http_opts", "host")
+        )
+        val path = firstNonBlank(
+            block.field("path"),
+            block.field("ws-path"),
+            block.sectionField("ws-opts", "path"),
+            block.sectionField("ws_opts", "path"),
+            block.sectionField("http-opts", "path"),
+            block.sectionField("http_opts", "path"),
+            block.sectionField("h2-opts", "path"),
+            block.sectionField("h2_opts", "path"),
+            block.sectionField("httpupgrade-opts", "path"),
+            block.sectionField("http-upgrade-opts", "path"),
+            block.sectionField("httpupgrade_opts", "path"),
+            block.sectionField("xhttp-opts", "path"),
+            block.sectionField("xhttp_opts", "path"),
+            block.sectionField("splithttp-opts", "path"),
+            block.sectionField("split-http-opts", "path"),
+            block.sectionField("split_http_opts", "path")
+        )
+        val serviceName = firstNonBlank(
+            block.field("grpc-service-name"),
+            block.field("serviceName"),
+            block.field("service-name"),
+            block.sectionField("grpc-opts", "grpc-service-name"),
+            block.sectionField("grpc-opts", "serviceName"),
+            block.sectionField("grpc-opts", "service-name"),
+            block.sectionField("grpc_opts", "grpc-service-name"),
+            block.sectionField("grpc_opts", "serviceName"),
+            block.sectionField("grpc_opts", "service-name")
+        )
+        val publicKey = firstNonBlank(
+            block.field("public-key"),
+            block.field("public_key"),
+            block.field("pbk"),
+            block.sectionField("reality-opts", "public-key"),
+            block.sectionField("reality-opts", "public_key"),
+            block.sectionField("reality-opts", "pbk"),
+            block.sectionField("reality_opts", "public-key"),
+            block.sectionField("reality_opts", "public_key"),
+            block.sectionField("reality_opts", "pbk")
+        )
+        val shortId = firstNonBlank(
+            block.field("short-id"),
+            block.field("short_id"),
+            block.field("sid"),
+            block.sectionField("reality-opts", "short-id"),
+            block.sectionField("reality-opts", "short_id"),
+            block.sectionField("reality-opts", "sid"),
+            block.sectionField("reality_opts", "short-id"),
+            block.sectionField("reality_opts", "short_id"),
+            block.sectionField("reality_opts", "sid")
+        )
+        val fingerprint = firstNonBlank(
+            block.field("client-fingerprint"),
+            block.field("fingerprint"),
+            block.field("fp"),
+            block.sectionField("reality-opts", "fingerprint"),
+            block.sectionField("reality-opts", "client-fingerprint"),
+            block.sectionField("reality_opts", "fingerprint"),
+            block.sectionField("reality_opts", "client-fingerprint"),
+            block.sectionField("tls-opts", "client-fingerprint"),
+            block.sectionField("tls_opts", "client-fingerprint")
+        )
         val tlsEnabled = block.booleanField("tls") == true ||
             block.booleanField("skip-cert-verify") != null ||
             !block.field("servername").isNullOrBlank() ||
             !block.field("sni").isNullOrBlank() ||
             rawType == "trojan"
-        val reality = block.hasKey("reality-opts") || block.hasKey("reality_opts") || block.field("flow")?.contains("xtls-rprx", ignoreCase = true) == true
+        val reality = !publicKey.isNullOrBlank() ||
+            block.hasKey("reality-opts") ||
+            block.hasKey("reality_opts") ||
+            block.field("flow")?.contains("xtls-rprx", ignoreCase = true) == true
         val security = when {
             reality -> "reality"
             tlsEnabled -> "tls"
@@ -77,10 +159,33 @@ object ClashConfigParser {
         val verifyHost = firstNonBlank(
             block.field("servername"),
             block.field("sni"),
-            block.field("Host"),
-            block.field("host"),
+            block.sectionField("reality-opts", "server-name"),
+            block.sectionField("reality-opts", "server_name"),
+            block.sectionField("reality_opts", "server-name"),
+            block.sectionField("reality_opts", "server_name"),
+            hostHeader,
             server.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
         )
+        val transportMode = when (network) {
+            "grpc" -> firstNonBlank(
+                block.field("grpc-mode"),
+                block.field("mode")?.takeIf { it.equals("multi", ignoreCase = true) },
+                block.sectionField("grpc-opts", "grpc-mode"),
+                block.sectionField("grpc-opts", "mode"),
+                block.sectionField("grpc_opts", "grpc-mode"),
+                block.sectionField("grpc_opts", "mode")
+            )?.takeIf { it.equals("multi", ignoreCase = true) }
+            "xhttp" -> firstNonBlank(
+                block.field("mode"),
+                block.field("xhttp-mode"),
+                block.sectionField("xhttp-opts", "mode"),
+                block.sectionField("xhttp_opts", "mode"),
+                block.sectionField("splithttp-opts", "mode"),
+                block.sectionField("split-http-opts", "mode"),
+                block.sectionField("split_http_opts", "mode")
+            )
+            else -> null
+        }
         val runtimeLink = buildRuntimeLink(
             type = rawType,
             server = server,
@@ -91,13 +196,14 @@ object ClashConfigParser {
             flow = block.field("flow"),
             security = security,
             transport = network,
-            hostHeader = firstNonBlank(block.field("Host"), block.field("host")),
-            path = firstNonBlank(block.field("path"), block.field("ws-path")),
+            hostHeader = hostHeader,
+            path = path,
             sni = verifyHost,
-            fingerprint = firstNonBlank(block.field("client-fingerprint"), block.field("fingerprint"), block.field("fp")),
-            publicKey = firstNonBlank(block.field("public-key"), block.field("public_key"), block.field("pbk")),
-            shortId = firstNonBlank(block.field("short-id"), block.field("short_id"), block.field("sid")),
-            serviceName = firstNonBlank(block.field("grpc-service-name"), block.field("serviceName"), block.field("service-name")),
+            fingerprint = fingerprint,
+            publicKey = publicKey,
+            shortId = shortId,
+            serviceName = serviceName,
+            transportMode = transportMode,
             allowInsecure = block.booleanField("skip-cert-verify") == true,
             name = block.field("name")
         )
@@ -140,13 +246,14 @@ object ClashConfigParser {
         publicKey: String?,
         shortId: String?,
         serviceName: String?,
+        transportMode: String?,
         allowInsecure: Boolean,
         name: String?
     ): String? {
         val secret = credential?.takeIf { it.isNotBlank() } ?: return null
         val safeName = V2RayLinkInspector.safeDisplayName(name)
         val shareHost = server.toShareAuthorityHost()
-        val query = buildQuery(security, transport, hostHeader, path, sni, fingerprint, publicKey, shortId, serviceName, allowInsecure, flow)
+        val query = buildQuery(security, transport, hostHeader, path, sni, fingerprint, publicKey, shortId, serviceName, transportMode, allowInsecure, flow)
         val fragment = safeName?.takeIf { it.isNotBlank() }?.let { "#${it.urlEncode()}" }.orEmpty()
         return when (type) {
             "vless" -> "vless://${secret.urlEncode()}@$shareHost:$port?$query$fragment"
@@ -188,6 +295,7 @@ object ClashConfigParser {
         publicKey: String?,
         shortId: String?,
         serviceName: String?,
+        transportMode: String?,
         allowInsecure: Boolean,
         flow: String?
     ): String = buildList {
@@ -200,6 +308,7 @@ object ClashConfigParser {
         publicKey?.takeIf { it.isNotBlank() }?.let { add("pbk=${it.urlEncode()}") }
         shortId?.takeIf { it.isNotBlank() }?.let { add("sid=${it.urlEncode()}") }
         serviceName?.takeIf { it.isNotBlank() }?.let { add("serviceName=${it.urlEncode()}") }
+        transportMode?.takeIf { it.isNotBlank() }?.let { add("mode=${it.urlEncode()}") }
         if (allowInsecure) add("allowInsecure=1")
         flow?.takeIf { it.isNotBlank() }?.let { add("flow=${it.urlEncode()}") }
     }.joinToString("&")
@@ -231,6 +340,7 @@ object ClashConfigParser {
         val blocks = mutableListOf<ProxyBlock>()
         var inProxies = false
         var proxiesIndent = 0
+        var proxyItemIndent: Int? = null
         var current = mutableListOf<String>()
 
         fun flush() {
@@ -257,7 +367,10 @@ object ClashConfigParser {
                 break
             }
 
-            if (trimmed.startsWith("- ") || trimmed == "-") {
+            val isListItem = trimmed.startsWith("- ") || trimmed == "-"
+            val startsProxy = isListItem && (proxyItemIndent == null || indent <= proxyItemIndent!!)
+            if (startsProxy) {
+                proxyItemIndent = indent
                 flush()
                 current += trimmed.removePrefix("-").trim()
             } else if (current.isNotEmpty()) {
@@ -287,11 +400,49 @@ object ClashConfigParser {
                 for (candidate in names) {
                     val prefix = "$candidate:"
                     if (trimmed.startsWith(prefix, ignoreCase = true)) {
-                        return trimmed.substringAfter(':').cleanYamlValue().takeIf { it.isNotBlank() }
+                        return trimmed.substringAfter(':').cleanBlockValue().takeIf { it.isNotBlank() }
                     }
                 }
             }
             return null
+        }
+
+        fun sectionField(sectionName: String, fieldName: String): String? {
+            inlineFields[sectionName.lowercase()]?.let { rawSection ->
+                findInInlineMap(rawSection, fieldName)?.let { return it }
+            }
+
+            lines.forEachIndexed { index, line ->
+                val trimmed = line.trim().removePrefix("-").trim()
+                val prefix = "$sectionName:"
+                if (!trimmed.startsWith(prefix, ignoreCase = true)) return@forEachIndexed
+                val inlineSection = trimmed.substringAfter(':', "").cleanYamlValue()
+                findInInlineMap(inlineSection, fieldName)?.let { return it }
+                val sectionIndent = line.leadingSpaces()
+                for (childIndex in index + 1 until lines.size) {
+                    val childLine = lines[childIndex]
+                    val childTrimmed = childLine.trim()
+                    if (childTrimmed.isBlank() || childTrimmed.startsWith('#')) continue
+                    val childIndent = childLine.leadingSpaces()
+                    if (childIndent <= sectionIndent) break
+                    val normalized = childTrimmed.removePrefix("-").trim()
+                    if (normalized.startsWith("$fieldName:", ignoreCase = true)) {
+                        val directValue = normalized.substringAfter(':').cleanBlockValue()
+                        if (directValue.isNotBlank()) return directValue
+                        firstNestedListValue(childIndex + 1, childIndent)?.let { return it }
+                    }
+                }
+            }
+            return null
+        }
+
+        fun inferredTransport(): String? = when {
+            hasKey("ws-opts") || hasKey("ws_opts") -> "ws"
+            hasKey("grpc-opts") || hasKey("grpc_opts") -> "grpc"
+            hasKey("h2-opts") || hasKey("h2_opts") || hasKey("http-opts") || hasKey("http_opts") -> "http"
+            hasKey("httpupgrade-opts") || hasKey("http-upgrade-opts") || hasKey("httpupgrade_opts") -> "httpupgrade"
+            hasKey("xhttp-opts") || hasKey("xhttp_opts") || hasKey("splithttp-opts") || hasKey("split-http-opts") || hasKey("split_http_opts") -> "xhttp"
+            else -> null
         }
 
         fun intField(name: String): Int? = field(name)?.toIntOrNull()
@@ -325,9 +476,41 @@ object ClashConfigParser {
             val body = value.trim().removePrefix("{").removeSuffix("}")
             return splitInlineMap(body).mapNotNull { part ->
                 val key = part.substringBefore(':', "").trim().trim('"', '\'')
-                val rawValue = part.substringAfter(':', "").cleanYamlValue()
+                val rawValue = part.substringAfter(':', "").cleanBlockValue()
                 key.lowercase().takeIf { it.isNotBlank() }?.let { it to rawValue }
             }.toMap()
+        }
+
+        private fun String.cleanBlockValue(): String {
+            val cleaned = cleanYamlValue()
+            if (!cleaned.startsWith('[') || !cleaned.endsWith(']')) return cleaned
+            return splitInlineMap(cleaned.removePrefix("[").removeSuffix("]"))
+                .firstOrNull()
+                ?.cleanYamlValue()
+                .orEmpty()
+        }
+
+        private fun firstNestedListValue(startIndex: Int, parentIndent: Int): String? {
+            for (index in startIndex until lines.size) {
+                val line = lines[index]
+                val trimmed = line.trim()
+                if (trimmed.isBlank() || trimmed.startsWith('#')) continue
+                if (line.leadingSpaces() <= parentIndent) break
+                val normalized = trimmed.removePrefix("-").trim().cleanBlockValue()
+                if (normalized.isNotBlank() && !normalized.endsWith(':')) return normalized
+            }
+            return null
+        }
+
+        private fun findInInlineMap(value: String, fieldName: String): String? {
+            val normalized = value.trim()
+            if (!normalized.startsWith('{') || !normalized.endsWith('}')) return null
+            val map = parseInlineMap(normalized)
+            map[fieldName.lowercase()]?.takeIf { it.isNotBlank() }?.let { return it }
+            map.values.forEach { child ->
+                findInInlineMap(child, fieldName)?.let { return it }
+            }
+            return null
         }
 
         private fun splitInlineMap(body: String): List<String> {
