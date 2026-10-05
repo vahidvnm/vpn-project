@@ -21,8 +21,12 @@ import java.util.concurrent.TimeUnit
  * only by XrayVpnService after Connect.
  */
 class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
-    fun measure(config: ImportedConfig, verifyUrls: List<String> = DEFAULT_VERIFY_URLS): XrayRealDelayResult {
-        val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(config)
+    fun measure(
+        config: ImportedConfig,
+        verifyUrls: List<String> = DEFAULT_VERIFY_URLS,
+        dnsServers: List<String> = DEFAULT_DNS_SERVERS
+    ): XrayRealDelayResult {
+        val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(config, dnsServers)
         val urls = verifyUrls.filter { it.startsWith("http://") || it.startsWith("https://") }
             .ifEmpty { DEFAULT_VERIFY_URLS }
         Seq.setContext(context.applicationContext)
@@ -110,6 +114,7 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             "https://www.google.com/generate_204",
             "https://cp.cloudflare.com/generate_204"
         )
+        val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
     }
 }
 

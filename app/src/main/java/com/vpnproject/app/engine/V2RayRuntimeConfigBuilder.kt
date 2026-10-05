@@ -11,19 +11,19 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 
 object V2RayRuntimeConfigBuilder {
-    fun build(config: ImportedConfig): V2RayRuntimeConfig {
+    fun build(config: ImportedConfig, dnsServers: List<String> = DEFAULT_DNS_SERVERS): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         return V2RayRuntimeConfig(
-            configJson = buildXrayConfig(prepared.profile, includeTunInbound = true),
+            configJson = buildXrayConfig(prepared.profile, includeTunInbound = true, dnsServers = dnsServers),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray."
         )
     }
 
-    fun buildDelayProbe(config: ImportedConfig): V2RayRuntimeConfig {
+    fun buildDelayProbe(config: ImportedConfig, dnsServers: List<String> = DEFAULT_DNS_SERVERS): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         return V2RayRuntimeConfig(
-            configJson = buildXrayConfig(prepared.profile, includeTunInbound = false),
+            configJson = buildXrayConfig(prepared.profile, includeTunInbound = false, dnsServers = dnsServers),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN."
         )
@@ -189,8 +189,14 @@ object V2RayRuntimeConfigBuilder {
         }
     }
 
-    private fun buildXrayConfig(profile: V2RayProfile, includeTunInbound: Boolean): String {
+    private fun buildXrayConfig(profile: V2RayProfile, includeTunInbound: Boolean, dnsServers: List<String>): String {
         val outbound = buildOutbound(profile)
+        val dnsJson = dnsServers
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .ifEmpty { DEFAULT_DNS_SERVERS }
+            .joinToString(prefix = "[", postfix = "]") { it.json() }
         val inbounds = if (includeTunInbound) {
             """
                 [
@@ -225,7 +231,7 @@ object V2RayRuntimeConfigBuilder {
                   { "type": "field", "ip": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"], "outboundTag": "direct" }
                 ]
               },
-              "dns": { "servers": ["1.1.1.1", "8.8.8.8", "localhost"] }
+              "dns": { "servers": $dnsJson }
             }
         """.trimIndent()
     }
@@ -525,6 +531,8 @@ object V2RayRuntimeConfigBuilder {
         }
         append('"')
     }
+
+    private val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
 }
 
 data class V2RayRuntimeConfig(

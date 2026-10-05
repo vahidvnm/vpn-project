@@ -68,9 +68,11 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
                 val profileName = intent.getStringExtra(EXTRA_PROFILE_NAME).orEmpty().ifBlank { "v2ray-import" }
                 val note = intent.getStringExtra(EXTRA_NOTE).orEmpty()
+                val dnsServers = intent.getStringArrayListExtra(EXTRA_DNS_SERVERS).orEmpty().ifEmpty { DEFAULT_DNS_SERVERS }
+                val bypassPackages = intent.getStringArrayListExtra(EXTRA_BYPASS_PACKAGES).orEmpty()
                 startForegroundNotification("Starting embedded Xray engine…")
                 updateStatus(EngineState.CONNECTING, "Starting embedded Xray engine for $profileName.", note)
-                Thread({ startXray(configJson, profileName, note) }, "xray-start").start()
+                Thread({ startXray(configJson, profileName, note, dnsServers, bypassPackages) }, "xray-start").start()
                 Service.START_REDELIVER_INTENT
             }
             else -> Service.START_NOT_STICKY
@@ -122,7 +124,13 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         return 0L
     }
 
-    private fun startXray(configJson: String, profileName: String, note: String) {
+    private fun startXray(
+        configJson: String,
+        profileName: String,
+        note: String,
+        dnsServers: List<String>,
+        bypassPackages: List<String>
+    ) {
         if (configJson.isBlank()) {
             updateStatus(EngineState.FAILED, "Xray runtime config is empty.", note)
             startForegroundNotification("Xray failed: runtime config is empty.")
@@ -138,7 +146,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 note
             )
             startForegroundNotification("Establishing Android VPN interface for Xray…")
-            val tun = establishTunOrThrow(profileName)
+            val tun = establishTunOrThrow(profileName, dnsServers, bypassPackages)
             updateStatus(
                 EngineState.CONNECTING,
                 "Android VPN interface is established; starting Xray core for $profileName.",
@@ -178,7 +186,11 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
     }
 
-    private fun establishTunOrThrow(profileName: String): ParcelFileDescriptor {
+    private fun establishTunOrThrow(
+        profileName: String,
+        dnsServers: List<String>,
+        bypassPackages: List<String>
+    ): ParcelFileDescriptor {
         if (VpnService.prepare(this) != null) {
             throw IllegalStateException("VPN permission is missing. Tap Prepare VPN permission, allow it, then start again.")
         }
@@ -189,18 +201,26 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             .setBlocking(false)
             .addAddress("172.19.0.1", 30)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("8.8.8.8")
+
+        dnsServers.filter { it.isNotBlank() }.distinct().forEach { dns ->
+            builder.addDnsServer(dns)
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
 
-        try {
-            builder.addDisallowedApplication(packageName)
-        } catch (_: PackageManager.NameNotFoundException) {
-            // Ignore; the package exists, but Android can still throw on unusual profiles.
-        }
+        (listOf(packageName) + bypassPackages)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .forEach { packageToBypass ->
+                try {
+                    builder.addDisallowedApplication(packageToBypass)
+                } catch (_: PackageManager.NameNotFoundException) {
+                    // Ignore missing/removed packages; Settings keeps plain package names only.
+                }
+            }
 
         return try {
             vpnInterface?.close()
@@ -526,6 +546,9 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         const val EXTRA_CONFIG_JSON = "com.vpnproject.app.vpn.xray.extra.CONFIG_JSON"
         const val EXTRA_PROFILE_NAME = "com.vpnproject.app.vpn.xray.extra.PROFILE_NAME"
         const val EXTRA_NOTE = "com.vpnproject.app.vpn.xray.extra.NOTE"
+        const val EXTRA_DNS_SERVERS = "com.vpnproject.app.vpn.xray.extra.DNS_SERVERS"
+        const val EXTRA_BYPASS_PACKAGES = "com.vpnproject.app.vpn.xray.extra.BYPASS_PACKAGES"
+        val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
 
         @Volatile
         var lastStatus: EngineStatus = EngineStatus(

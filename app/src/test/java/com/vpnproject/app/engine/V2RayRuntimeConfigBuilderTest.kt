@@ -196,6 +196,20 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun customDnsServersAreAppliedToRuntimeConfig() {
+        val runtime = V2RayRuntimeConfigBuilder.build(
+            ImportedConfig(
+                kind = ConfigKind.V2RAY,
+                originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Dns",
+                endpoints = emptyList()
+            ),
+            dnsServers = listOf("9.9.9.9", "223.5.5.5", "localhost")
+        )
+
+        assertContains(runtime.configJson, "\"dns\": { \"servers\": [\"9.9.9.9\", \"223.5.5.5\", \"localhost\"] }")
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

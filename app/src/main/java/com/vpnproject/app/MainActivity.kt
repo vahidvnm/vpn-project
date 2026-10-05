@@ -1336,7 +1336,7 @@ class MainActivity : Activity() {
         setAutoTestStatus("Real delay running for ${compactProfileTitle(profile)} with Xray core...")
         val network = currentNetworkLabel()
         Thread {
-            val result = xrayRealDelayTester.measure(config, realDelayVerifyUrls())
+            val result = xrayRealDelayTester.measure(config, realDelayVerifyUrls(), vpnDnsServers(includeLocalhost = true))
             val updated = runCatching {
                 profileStore.markTested(
                     profileId = profile.id,
@@ -1399,7 +1399,7 @@ class MainActivity : Activity() {
                     }
                 }
                 val config = loadProfileConfigQuiet(profile)
-                val delayResult = if (config != null) xrayRealDelayTester.measure(config, realDelayVerifyUrls()) else null
+                val delayResult = if (config != null) xrayRealDelayTester.measure(config, realDelayVerifyUrls(), vpnDnsServers(includeLocalhost = true)) else null
                 val summary = ConfigProbeSummary(
                     report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
                     okCount = if (delayResult?.reachable == true) 1 else 0,
@@ -1871,9 +1871,21 @@ class MainActivity : Activity() {
     private fun showRoutingSettingsSheet() {
         showBottomSheet(
             title = "Routing & DNS",
-            subtitle = "Keep normal UI simple; advanced routing stays here."
+            subtitle = "Xray/VPN routing controls without cluttering Home."
         ) { dialog ->
-            addView(settingsHintText("Next priorities: per-app VPN, bypass LAN, DNS controls, and Xray advanced toggles. Root/LAN sharing will stay advanced/off by default."))
+            addView(settingsHintText("These settings apply to embedded Xray connections. WireGuard/OpenVPN fallback behavior depends on their own configs/clients."))
+            addView(bottomSheetActionRow("DNS", "VPN DNS", vpnDnsServers(includeLocalhost = false).joinToString(", ")) {
+                dialog.dismiss()
+                showDnsSettingsSheet()
+            })
+            val bypassCount = bypassAppPackages().size
+            addView(bottomSheetActionRow("APP", "Bypass apps", if (bypassCount == 0) "No extra app bypasses; only this app bypasses itself" else "$bypassCount app package${if (bypassCount == 1) "" else "s"} bypass VPN") {
+                dialog.dismiss()
+                showPerAppRoutingSheet()
+            })
+            addView(bottomSheetActionRow("LAN", "Bypass LAN / private IPs", "ON in Xray routing: private ranges go direct") {
+                setActionStatus("LAN/private IP bypass is currently ON for Xray routing to keep local network access safer.")
+            })
             addView(bottomSheetActionRow("🛡", "Kill switch", "Use Android Always-on VPN and lockdown for stricter blocking") {
                 dialog.dismiss()
                 showKillSwitchInfoSheet()
@@ -1882,11 +1894,86 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 requestVpnPermission(PendingVpnAction.NONE)
             })
-            addView(bottomSheetActionRow("DNS", "DNS settings", "Planned: VPN DNS, direct DNS fallback, FakeDNS advanced") {
-                setActionStatus("DNS settings are planned for the next advanced pass.")
+            addView(bottomSheetActionRow("ADV", "Advanced Xray toggles", "Planned: Fragment, Mux, FakeDNS, Sniffing controls") {
+                setActionStatus("Advanced Xray toggles are next; they will stay OFF/advanced by default.")
             })
-            addView(bottomSheetActionRow("APP", "Per-app routing", "Planned: include/exclude apps from the VPN tunnel") {
-                setActionStatus("Per-app routing is planned after the current Xray/subscription polish.")
+        }
+    }
+
+    private fun showDnsSettingsSheet() {
+        showBottomSheet(
+            title = "VPN DNS",
+            subtitle = "Used by Android VPN interface and Xray core DNS."
+        ) { dialog ->
+            addView(settingsHintText("Enter public IPv4 DNS servers, one per line. Defaults are 1.1.1.1 and 8.8.8.8. Xray also keeps localhost internally for fallback."))
+            val input = EditText(this@MainActivity).apply {
+                setText(vpnDnsServers(includeLocalhost = false).joinToString("\n"))
+                textSize = 15f
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                minLines = 2
+                maxLines = 4
+                setSingleLine(false)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(10), 0, dp(8)) }
+            }
+            addView(input)
+            addView(bottomSheetActionRow("✓", "Save DNS", "Apply to future Xray connects and Real delay probes") {
+                val dns = parseDnsServers(input.text?.toString().orEmpty())
+                if (dns.isEmpty()) {
+                    setActionStatus("Add at least one IPv4 DNS server, e.g. 1.1.1.1")
+                    return@bottomSheetActionRow
+                }
+                dialog.dismiss()
+                appSettings.edit().putString(KEY_VPN_DNS_SERVERS, dns.joinToString("\n")).apply()
+                setActionStatus("VPN DNS saved: ${dns.joinToString(", ")}. Reconnect to apply.")
+            })
+            addView(bottomSheetActionRow("↺", "Reset DNS", "Use 1.1.1.1 and 8.8.8.8") {
+                dialog.dismiss()
+                appSettings.edit().remove(KEY_VPN_DNS_SERVERS).apply()
+                setActionStatus("VPN DNS reset to defaults. Reconnect to apply.")
+            })
+        }
+    }
+
+    private fun showPerAppRoutingSheet() {
+        showBottomSheet(
+            title = "Bypass apps",
+            subtitle = "Package names here bypass the Android VPN tunnel."
+        ) { dialog ->
+            addView(settingsHintText("This is the safe first per-app mode: excluded apps go direct, while the rest of the phone uses the VPN. One package name per line."))
+            val input = EditText(this@MainActivity).apply {
+                setText(bypassAppPackages().joinToString("\n"))
+                hint = "com.example.app\norg.telegram.messenger"
+                textSize = 13.5f
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                minLines = 3
+                maxLines = 6
+                setSingleLine(false)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(10), 0, dp(8)) }
+            }
+            addView(input)
+            addView(bottomSheetActionRow("✓", "Save bypass list", "Reconnect Xray to apply") {
+                val packages = parsePackageNameList(input.text?.toString().orEmpty())
+                dialog.dismiss()
+                appSettings.edit().putString(KEY_BYPASS_PACKAGES, packages.joinToString("\n")).apply()
+                setActionStatus(if (packages.isEmpty()) "Bypass app list cleared. Reconnect to apply." else "${packages.size} bypass app package${if (packages.size == 1) "" else "s"} saved. Reconnect to apply.")
+            })
+            addView(bottomSheetActionRow("☰", "Show package-name help", "Copies a small sample of installed package names") {
+                copyInstalledPackageSample()
+            })
+            addView(bottomSheetActionRow("×", "Clear bypass apps", "Only this app will bypass itself") {
+                dialog.dismiss()
+                appSettings.edit().remove(KEY_BYPASS_PACKAGES).apply()
+                setActionStatus("Bypass app list cleared. Reconnect to apply.")
             })
         }
     }
@@ -2024,6 +2111,69 @@ class MainActivity : Activity() {
         .removePrefix("http://")
         .substringBefore('/')
 
+    private fun vpnDnsServers(includeLocalhost: Boolean): List<String> {
+        val saved = appSettings.getString(KEY_VPN_DNS_SERVERS, null).orEmpty()
+        val base = parseDnsServers(saved).ifEmpty { DEFAULT_VPN_DNS_SERVERS }
+        return if (includeLocalhost) (base + "localhost").distinct() else base
+    }
+
+    private fun parseDnsServers(raw: String): List<String> = raw
+        .lineSequence()
+        .flatMap { it.split(',', ';', ' ').asSequence() }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .filter { it == "localhost" || isIpv4Address(it) }
+        .filter { it != "0.0.0.0" }
+        .distinct()
+        .take(MAX_VPN_DNS_SERVERS)
+        .filterNot { it == "localhost" }
+        .ifEmpty { emptyList() }
+
+    private fun isIpv4Address(value: String): Boolean {
+        val parts = value.split('.')
+        if (parts.size != 4) return false
+        return parts.all { part ->
+            part.isNotBlank() && part.length <= 3 && part.all { it.isDigit() } && (part.toIntOrNull() ?: -1) in 0..255
+        }
+    }
+
+    private fun bypassAppPackages(): List<String> = parsePackageNameList(
+        appSettings.getString(KEY_BYPASS_PACKAGES, null).orEmpty()
+    )
+
+    private fun parsePackageNameList(raw: String): List<String> = raw
+        .lineSequence()
+        .flatMap { it.split(',', ';', ' ').asSequence() }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .filter { PACKAGE_NAME_REGEX.matches(it) }
+        .filterNot { it == packageName }
+        .distinct()
+        .take(MAX_BYPASS_PACKAGES)
+        .toList()
+
+    private fun copyInstalledPackageSample() {
+        val packages = runCatching {
+            packageManager.getInstalledApplications(0)
+                .asSequence()
+                .map { info ->
+                    val label = runCatching { info.loadLabel(packageManager).toString() }.getOrDefault(info.packageName)
+                    "$label — ${info.packageName}"
+                }
+                .sortedBy { it.lowercase(java.util.Locale.US) }
+                .take(80)
+                .toList()
+        }.getOrDefault(emptyList())
+        val text = if (packages.isEmpty()) {
+            "No package list available from Android package manager."
+        } else {
+            "Installed package-name sample for VPN bypass:\n" + packages.joinToString("\n")
+        }
+        (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("Package names", text))
+        setActionStatus("Copied package-name sample. Paste only the packages you want to bypass VPN.")
+    }
+
     private fun copySafeDiagnosticsReport() {
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
@@ -2041,6 +2191,8 @@ class MainActivity : Activity() {
             appendLine("Quick check limit: ${quickCheckProfileLimit()}")
             appendLine("Real delay limit: ${realDelayProfileLimit()}")
             appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
+            appendLine("VPN DNS: ${vpnDnsServers(includeLocalhost = false).joinToString(", ")}")
+            appendLine("Bypass app packages: ${bypassAppPackages().size}")
             appendLine()
             appendLine(engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus))
         }
@@ -3233,7 +3385,7 @@ class MainActivity : Activity() {
         hubStatusTitle.text = "Preparing"
         hubStatusDetail.text = "Embedded Xray is preparing a runtime config. V2Ray links start directly; supported sing-box/Clash proxies are mapped to Xray."
         Thread {
-            val result = runCatching { V2RayRuntimeConfigBuilder.build(config) }
+            val result = runCatching { V2RayRuntimeConfigBuilder.build(config, vpnDnsServers(includeLocalhost = true)) }
             runOnUiThread {
                 result.fold(
                     onSuccess = { runtime -> startXrayEngine(runtime) },
@@ -3256,6 +3408,8 @@ class MainActivity : Activity() {
             putExtra(XrayVpnService.EXTRA_CONFIG_JSON, runtime.configJson)
             putExtra(XrayVpnService.EXTRA_PROFILE_NAME, safeTunnelName(runtime.profileName))
             putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
+            putStringArrayListExtra(XrayVpnService.EXTRA_DNS_SERVERS, ArrayList(vpnDnsServers(includeLocalhost = false)))
+            putStringArrayListExtra(XrayVpnService.EXTRA_BYPASS_PACKAGES, ArrayList(bypassAppPackages()))
         }
         startForegroundServiceCompat(intent)
         status.text = "Starting embedded Xray engine. Verification will refresh automatically."
@@ -5227,6 +5381,8 @@ class MainActivity : Activity() {
         const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
         const val MAX_REAL_DELAY_SETTING_LIMIT = 32
         const val MAX_REAL_DELAY_URLS = 4
+        const val MAX_VPN_DNS_SERVERS = 4
+        const val MAX_BYPASS_PACKAGES = 64
         const val MAX_PARALLEL_PING_TESTS = 6
         const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80
@@ -5241,6 +5397,10 @@ class MainActivity : Activity() {
         const val KEY_QUICK_CHECK_LIMIT = "quick_check_limit"
         const val KEY_REAL_DELAY_LIMIT = "real_delay_limit"
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"
+        const val KEY_VPN_DNS_SERVERS = "vpn_dns_servers"
+        const val KEY_BYPASS_PACKAGES = "bypass_packages"
+        val DEFAULT_VPN_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
+        val PACKAGE_NAME_REGEX = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
         val DEFAULT_REAL_DELAY_URLS = listOf(
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",
