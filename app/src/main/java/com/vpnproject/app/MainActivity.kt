@@ -2124,10 +2124,10 @@ class MainActivity : Activity() {
         .filter { it.isNotBlank() }
         .filter { it == "localhost" || isIpv4Address(it) }
         .filter { it != "0.0.0.0" }
+        .filterNot { it == "localhost" }
         .distinct()
         .take(MAX_VPN_DNS_SERVERS)
-        .filterNot { it == "localhost" }
-        .ifEmpty { emptyList() }
+        .toList()
 
     private fun isIpv4Address(value: String): Boolean {
         val parts = value.split('.')
