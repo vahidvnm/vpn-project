@@ -583,6 +583,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد انتخاب خلاصه نشان داده می‌شود: `Recommended` یا `Custom/All`; تست قبل از ذخیره حذف شد چون تست‌های سالم/واقعی باید بعد از import و از Queue tools/Connect اجرا شوند.
 - [x] بازتعریف تست‌ها: Queue tools حالا دو تست قبل اتصال دارد: `Quick check` برای TCP/TLS endpoint reachability و `Real delay` برای اجرای موقت Xray core بدون Android VPN/TUN؛ تست نهایی `Connect & Verify` همچنان هنگام اتصال فقط روی کانفیگ انتخاب‌شده انجام می‌شود.
 - [x] رفع محدودیت نمای Locations: لیست اصلی به‌جای فقط ۴۰ ردیف، همه‌ی کانفیگ‌های load‌شده را نشان می‌دهد؛ تست‌ها همچنان manual/capped می‌مانند.
+- [x] polish رنگ/تم: UI از آبی/سبز پررنگ به سفید صدفی/متالیک با متن و چارچوب مشکی/ذغالی تغییر کرد؛ فقط یک accent شامپاینی خیلی کم برای حس لوکس نگه داشته شد.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

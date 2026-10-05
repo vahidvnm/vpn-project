@@ -84,6 +84,44 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
+
+private object PearlPalette {
+    val TRANSPARENT = 0x00000000
+    val INK = 0xFF111111.toInt()
+    val INK_SOFT = 0xFF2A2926.toInt()
+    val TEXT_MUTED = 0xFF6A6760.toInt()
+    val TEXT_FAINT = 0xFF9A958B.toInt()
+    val PEARL_WHITE = 0xFFFFFEFA.toInt()
+    val PEARL_TOP = 0xFFFBFAF6.toInt()
+    val PEARL_GHOST = 0xFFFCFAF5.toInt()
+    val PEARL_MID = 0xFFF4F0E7.toInt()
+    val PEARL_DEEP = 0xFFE7E1D5.toInt()
+    val SHELL = 0xFFEFE9DD.toInt()
+    val SHELL_DARK = 0xFFD8D0C0.toInt()
+    val HAIRLINE = 0x33000000
+    val HAIRLINE_STRONG = 0x66000000
+    val BORDER = 0xFF151515.toInt()
+    val CHAMPAGNE = 0xFFC7B27C.toInt()
+    val CHAMPAGNE_DARK = 0xFF806C3A.toInt()
+    val CHAMPAGNE_SOFT = 0xFFF4ECD8.toInt()
+    val CHAMPAGNE_GLOW = 0x22C7B27C
+    val CHAMPAGNE_RING = 0x88C7B27C.toInt()
+    val CHAMPAGNE_RING_STRONG = 0x99C7B27C.toInt()
+    val ERROR = 0xFF6B2222.toInt()
+    val ERROR_SOFT = 0xFFF4ECE8.toInt()
+    val ERROR_STROKE = 0xFFBFA09B.toInt()
+    val GLASS = 0xF7FFFEFA.toInt()
+    val GLASS_LIGHT = 0xF8FFFEFA.toInt()
+    val GLASS_HEAVY = 0xEFFFFEFA.toInt()
+    val GLASS_SOFT = 0xDFFFFEFA.toInt()
+    val GLASS_MEDIUM = 0xBFFFFEFA.toInt()
+    val SHINE = 0x99FFFFFF.toInt()
+    val SHINE_MEDIUM = 0x77FFFFFF
+    val SHINE_SOFT = 0x66FFFFFF
+    val SHINE_FAINT = 0x22FFFFFF
+    val PEARL_WASH = 0xCCEDE8DE.toInt()
+}
+
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var hubStatusTitle: TextView
@@ -159,15 +197,15 @@ class MainActivity : Activity() {
 
         autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, false)
 
-        window.statusBarColor = 0xFFEAF6FF.toInt()
-        window.navigationBarColor = 0xFFFFFFFF.toInt()
+        window.statusBarColor = PearlPalette.PEARL_MID
+        window.navigationBarColor = PearlPalette.PEARL_WHITE
 
         val appRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(0, statusBarTopPadding(), 0, 0)
-            background = verticalGradient(0xFFEAF6FF.toInt(), 0xFFF8FBFF.toInt(), 0xFFFFFFFF.toInt())
+            background = verticalGradient(PearlPalette.PEARL_MID, PearlPalette.PEARL_TOP, PearlPalette.PEARL_WHITE)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -192,7 +230,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF64748B.toInt())
+            setTextColor(PearlPalette.TEXT_MUTED)
             visibility = View.GONE
         }
         content.addView(status)
@@ -230,7 +268,7 @@ class MainActivity : Activity() {
             text = "Queue tests are manual and capped. Auto latency only verifies the selected config and is OFF by default."
             textSize = 14f
             gravity = Gravity.CENTER
-            setTextColor(0xFF64748B.toInt())
+            setTextColor(PearlPalette.TEXT_MUTED)
             setPadding(dp(8), 0, dp(8), dp(10))
         })
         settingsConnectionSummaryText = TextView(this).apply {
@@ -239,8 +277,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF334155.toInt())
-            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            setTextColor(PearlPalette.INK_SOFT)
+            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
             setPadding(dp(10), dp(9), dp(10), dp(9))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -271,12 +309,12 @@ class MainActivity : Activity() {
             gravity = Gravity.START
             maxLines = 10
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF334155.toInt())
+            setTextColor(PearlPalette.INK_SOFT)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             isClickable = true
             isFocusable = true
             setOnClickListener { showDiagnosticsLogSheet() }
-            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -319,7 +357,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(5), dp(5), dp(5), dp(5))
-            background = roundedBackground(0xF8FFFFFF.toInt(), 0xFFE0F2FE.toInt(), radiusDp = 32)
+            background = roundedBackground(PearlPalette.GLASS_LIGHT, PearlPalette.HAIRLINE, radiusDp = 32)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(14).toFloat()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -374,8 +412,8 @@ class MainActivity : Activity() {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
-            setTextColor(0xFF0F172A.toInt())
-            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 22)
+            setTextColor(PearlPalette.INK)
+            background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 22)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(3).toFloat()
             setPadding(dp(14), 0, dp(14), 0)
             layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
@@ -395,8 +433,8 @@ class MainActivity : Activity() {
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
-        setTextColor(if (textValue == "+") 0xFF2563EB.toInt() else 0xFF0F172A.toInt())
-        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
+        setTextColor(if (textValue == "+") PearlPalette.INK else PearlPalette.INK)
+        background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 20)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(6).toFloat()
         isClickable = true
         isFocusable = true
@@ -417,7 +455,7 @@ class MainActivity : Activity() {
         )
 
         val hero = FrameLayout(this@MainActivity).apply {
-            background = roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 30)
+            background = roundedBackground(PearlPalette.TRANSPARENT, PearlPalette.TRANSPARENT, radiusDp = 30)
             clipToOutline = false
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -455,7 +493,7 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFF0F172A.toInt())
+            setTextColor(PearlPalette.INK)
         }
         hero.addView(hubStatusTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30), Gravity.TOP).apply {
             topMargin = dp(174)
@@ -467,7 +505,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(0xFF059669.toInt())
+            setTextColor(PearlPalette.BORDER)
         }
         hero.addView(hubStatusDetail, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42), Gravity.TOP).apply {
             topMargin = dp(202)
@@ -487,12 +525,12 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(9), dp(9), dp(7), dp(9))
-        background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
+        background = roundedBackground(PearlPalette.GLASS_SOFT, PearlPalette.HAIRLINE, radiusDp = 20)
         protectionBadge = TextView(this@MainActivity).apply {
             text = "✓  Protected  ›"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF047857.toInt())
+            setTextColor(PearlPalette.INK)
             maxLines = 1
         }
         addView(protectionBadge)
@@ -505,7 +543,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = row
                 textSize = 9.5f
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 maxLines = 1
                 setPadding(0, dp(5), 0, 0)
             })
@@ -516,13 +554,13 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         setPadding(dp(9), dp(9), dp(9), dp(9))
-        background = roundedBackground(0xDFFFFFFF.toInt(), 0xB3FFFFFF.toInt(), radiusDp = 20)
+        background = roundedBackground(PearlPalette.GLASS_SOFT, PearlPalette.HAIRLINE, radiusDp = 20)
         addView(MiniChartView(this@MainActivity).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
         })
-        statDownText = speedLine("↓", "0 B", "Download", 0xFF10B981.toInt())
-        statUpText = speedLine("↑", "0 B", "Upload", 0xFF7C3AED.toInt())
-        statLatencyText = speedLine("◷", "--", "Ping", 0xFF2563EB.toInt())
+        statDownText = speedLine("↓", "0 B", "Download", PearlPalette.INK)
+        statUpText = speedLine("↑", "0 B", "Upload", PearlPalette.CHAMPAGNE_DARK)
+        statLatencyText = speedLine("◷", "--", "Ping", PearlPalette.INK)
         liveStatsBadge = TextView(this@MainActivity).apply { visibility = View.GONE }
         statEngineText = TextView(this@MainActivity).apply {
             text = "Engine\nAuto"
@@ -540,7 +578,7 @@ class MainActivity : Activity() {
         textSize = 10f
         typeface = Typeface.DEFAULT_BOLD
         includeFontPadding = false
-        setTextColor(0xFF0F172A.toInt())
+        setTextColor(PearlPalette.INK)
         setPadding(0, dp(5), 0, 0)
     }
 
@@ -549,7 +587,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = verticalGradient(0xFFFFFFFF.toInt(), 0xFFEAF7FF.toInt(), 0xFFF8FAFC.toInt(), radiusDp = 34)
+        background = verticalGradient(PearlPalette.PEARL_WHITE, PearlPalette.PEARL_MID, PearlPalette.PEARL_GHOST, radiusDp = 34)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -566,8 +604,8 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        protectionBadge = statusBadge("SECURE", "Not connected", 0xFF64748B.toInt())
-        liveStatsBadge = statusBadge("LIVE", "0 B", 0xFF2563EB.toInt())
+        protectionBadge = statusBadge("SECURE", "Not connected", PearlPalette.TEXT_MUTED)
+        liveStatsBadge = statusBadge("LIVE", "0 B", PearlPalette.INK)
         addView(protectionBadge)
         addView(liveStatsBadge)
     }
@@ -579,7 +617,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTextColor(color)
-        background = roundedBackground(0xF2FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 20)
+        background = roundedBackground(PearlPalette.GLASS_HEAVY, PearlPalette.HAIRLINE, radiusDp = 20)
         setPadding(dp(10), dp(8), dp(10), dp(8))
         layoutParams = LinearLayout.LayoutParams(0, dp(58), 1f).apply {
             setMargins(dp(4), 0, dp(4), 0)
@@ -630,8 +668,8 @@ class MainActivity : Activity() {
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
-        setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0xBFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+        setTextColor(PearlPalette.INK)
+        background = roundedBackground(PearlPalette.GLASS_MEDIUM, PearlPalette.HAIRLINE, radiusDp = 18)
         setPadding(dp(8), dp(10), dp(8), dp(10))
         layoutParams = LinearLayout.LayoutParams(0, dp(62), 1f).apply {
             setMargins(dp(4), dp(4), dp(4), dp(4))
@@ -643,7 +681,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(14), dp(14), dp(14), dp(14))
-        background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
+        background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 24)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -656,8 +694,8 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 18)
+            setTextColor(PearlPalette.INK)
+            background = roundedBackground(PearlPalette.PEARL_MID, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(dp(50), dp(50)).apply {
                 setMargins(0, 0, dp(12), 0)
             }
@@ -671,14 +709,14 @@ class MainActivity : Activity() {
             text = "Choose profile"
             textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F172A.toInt())
+            setTextColor(PearlPalette.INK)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         homeProfileMetaText = TextView(this@MainActivity).apply {
             text = "Tap to import or select config"
             textSize = 12f
-            setTextColor(0xFF64748B.toInt())
+            setTextColor(PearlPalette.TEXT_MUTED)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
@@ -690,8 +728,8 @@ class MainActivity : Activity() {
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+            setTextColor(PearlPalette.INK)
+            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
             setPadding(dp(12), dp(8), dp(12), dp(8))
         })
         setOnClickListener { showSection(AppSection.PROFILES) }
@@ -702,7 +740,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(6), dp(6), dp(6), dp(6))
-        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 24)
+        background = roundedBackground(PearlPalette.GLASS_HEAVY, PearlPalette.HAIRLINE, radiusDp = 24)
         isClickable = true
         isFocusable = true
         layoutParams = LinearLayout.LayoutParams(
@@ -717,14 +755,14 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(8), dp(6), dp(6), dp(6))
-            background = roundedBackground(0xF7FFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
+            background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 20)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58))
             homeProfileIconText = TextView(this@MainActivity).apply {
                 text = "🌐"
                 textSize = 18f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_MID, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                     setMargins(0, 0, dp(8), 0)
                 }
@@ -740,14 +778,14 @@ class MainActivity : Activity() {
                     typeface = Typeface.DEFAULT_BOLD
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF0F172A.toInt())
+                    setTextColor(PearlPalette.INK)
                 }
                 homeProfileMetaText = TextView(this@MainActivity).apply {
                     text = "Tap to pick"
                     textSize = 10f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(0, dp(2), 0, 0)
                 }
                 addView(homeProfileNameText)
@@ -759,8 +797,8 @@ class MainActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+                setTextColor(PearlPalette.INK)
+                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
             })
         })
@@ -784,14 +822,14 @@ class MainActivity : Activity() {
                     text = "Smart auto test"
                     textSize = 15f
                     typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(0xFF0F172A.toInt())
+                    setTextColor(PearlPalette.INK)
                 })
                 autoTestStatusText = TextView(this@MainActivity).apply {
                     text = "Ranks saved configs and selects the best reachable one"
                     textSize = 11.5f
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                 }
                 addView(autoTestStatusText)
             })
@@ -800,8 +838,8 @@ class MainActivity : Activity() {
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                setTextColor(0xFFFFFFFF.toInt())
-                background = roundedBackground(0xFF10B981.toInt(), 0xFF059669.toInt(), radiusDp = 18)
+                setTextColor(PearlPalette.PEARL_WHITE)
+                background = roundedBackground(PearlPalette.INK, PearlPalette.BORDER, radiusDp = 18)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 isClickable = true
                 isFocusable = true
@@ -813,8 +851,8 @@ class MainActivity : Activity() {
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+                setTextColor(PearlPalette.INK)
+                background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(dp(8), 0, 0, 0)
@@ -839,19 +877,19 @@ class MainActivity : Activity() {
     private fun updateAutoTestToggle() {
         if (::autoTestToggleButton.isInitialized) {
             autoTestToggleButton.text = if (autoTestEnabled) "ON" else "OFF"
-            autoTestToggleButton.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            autoTestToggleButton.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
             autoTestToggleButton.background = roundedBackground(
-                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
-                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
+                strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = 18
             )
         }
         if (::settingsAutoTestValueText.isInitialized) {
             settingsAutoTestValueText.text = if (autoTestEnabled) "ON" else "OFF"
-            settingsAutoTestValueText.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            settingsAutoTestValueText.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
             settingsAutoTestValueText.background = roundedBackground(
-                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
-                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
+                strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = 14
             )
         }
@@ -1211,7 +1249,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Quick check is a fast endpoint probe. Real delay starts a temporary Xray core without Android VPN. Connect still performs final VPN/TUN verification."
                 textSize = 12f
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(4), dp(8), dp(4), dp(4))
             })
             if (target != null) {
@@ -1228,7 +1266,7 @@ class MainActivity : Activity() {
                     text = "No saved config is available to test yet. Use + to add a config or subscription."
                     textSize = 13f
                     gravity = Gravity.CENTER
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(dp(10), dp(14), dp(10), dp(14))
                 })
             }
@@ -1466,10 +1504,10 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFF2563EB.toInt())
+            setTextColor(PearlPalette.INK)
             background = roundedBackground(
-                fillColor = if (locationSearchQuery.isBlank()) 0xFFFFFFFF.toInt() else 0xFFEFF6FF.toInt(),
-                strokeColor = 0xFFD8EAFE.toInt(),
+                fillColor = if (locationSearchQuery.isBlank()) PearlPalette.PEARL_WHITE else PearlPalette.CHAMPAGNE_SOFT,
+                strokeColor = PearlPalette.HAIRLINE,
                 radiusDp = 18
             )
             layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
@@ -1487,8 +1525,8 @@ class MainActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(0xFF64748B.toInt())
-                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+                setTextColor(PearlPalette.TEXT_MUTED)
+                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 18)
                 layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
                     setMargins(dp(2), 0, 0, 0)
                 }
@@ -1508,9 +1546,9 @@ class MainActivity : Activity() {
             setSingleLine(true)
             textSize = 14f
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setTextColor(0xFF0F172A.toInt())
-            setHintTextColor(0xFF94A3B8.toInt())
-            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            setTextColor(PearlPalette.INK)
+            setHintTextColor(PearlPalette.TEXT_FAINT)
+            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
             setPadding(dp(12), 0, dp(12), 0)
             setText(locationSearchQuery)
             selectAll()
@@ -1546,7 +1584,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(10), dp(12), dp(10), dp(12))
-        background = roundedBackground(0xEFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 24)
+        background = roundedBackground(PearlPalette.GLASS_HEAVY, PearlPalette.HAIRLINE, radiusDp = 24)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1572,8 +1610,8 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         includeFontPadding = false
         setLineSpacing(0f, 0.92f)
-        setTextColor(0xFF0F172A.toInt())
-        background = roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 24)
+        setTextColor(PearlPalette.INK)
+        background = roundedBackground(PearlPalette.TRANSPARENT, PearlPalette.TRANSPARENT, radiusDp = 24)
         setPadding(dp(4), dp(5), dp(4), dp(5))
         layoutParams = LinearLayout.LayoutParams(
             0,
@@ -1592,7 +1630,7 @@ class MainActivity : Activity() {
         textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        setTextColor(0xFF64748B.toInt())
+        setTextColor(PearlPalette.TEXT_MUTED)
         setPadding(0, 0, 0, dp(10))
     }
 
@@ -1605,10 +1643,10 @@ class MainActivity : Activity() {
         textSize = if (primary) 15f else 14f
         typeface = if (primary) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         setAllCaps(false)
-        setTextColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        setTextColor(if (primary) PearlPalette.PEARL_WHITE else PearlPalette.INK)
         background = roundedBackground(
-            fillColor = if (primary) 0xFF2563EB.toInt() else 0xFFF1F5F9.toInt(),
-            strokeColor = if (primary) 0xFF1D4ED8.toInt() else 0xFFCBD5E1.toInt(),
+            fillColor = if (primary) PearlPalette.INK else PearlPalette.PEARL_MID,
+            strokeColor = if (primary) PearlPalette.BORDER else PearlPalette.SHELL_DARK,
             radiusDp = 18
         )
         minHeight = 0
@@ -1629,8 +1667,8 @@ class MainActivity : Activity() {
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
-        setTextColor(0xFFFFFFFF.toInt())
-        background = roundedBackground(0xFF2563EB.toInt(), 0xFF1D4ED8.toInt(), radiusDp = if (compact) 17 else 20)
+        setTextColor(PearlPalette.PEARL_WHITE)
+        background = roundedBackground(PearlPalette.INK, PearlPalette.BORDER, radiusDp = if (compact) 17 else 20)
         elevation = dp(2).toFloat()
         isClickable = true
         isFocusable = true
@@ -1649,7 +1687,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(10), dp(9), dp(10), dp(9))
-        background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 20)
+        background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 20)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1661,8 +1699,8 @@ class MainActivity : Activity() {
             textSize = 17f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 16)
+            setTextColor(PearlPalette.INK)
+            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 16)
             layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
                 setMargins(0, 0, dp(10), 0)
             }
@@ -1677,31 +1715,31 @@ class MainActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF0F172A.toInt())
+                setTextColor(PearlPalette.INK)
             })
             addView(TextView(this@MainActivity).apply {
                 text = subtitle
                 textSize = 11f
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
             })
         })
         val trailing = valueView ?: TextView(this@MainActivity).apply {
             text = "›"
             textSize = 24f
             includeFontPadding = false
-            setTextColor(0xFF94A3B8.toInt())
+            setTextColor(PearlPalette.TEXT_FAINT)
         }
         trailing.gravity = Gravity.CENTER
         trailing.typeface = Typeface.DEFAULT_BOLD
         if (valueView != null) {
             trailing.textSize = 11f
             trailing.setPadding(dp(10), dp(5), dp(10), dp(5))
-            trailing.setTextColor(if (autoTestEnabled) 0xFFFFFFFF.toInt() else 0xFF475569.toInt())
+            trailing.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
             trailing.background = roundedBackground(
-                fillColor = if (autoTestEnabled) 0xFF10B981.toInt() else 0xFFE2E8F0.toInt(),
-                strokeColor = if (autoTestEnabled) 0xFF059669.toInt() else 0xFFCBD5E1.toInt(),
+                fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
+                strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = 14
             )
             trailing.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
@@ -1732,13 +1770,13 @@ class MainActivity : Activity() {
     private fun powerButtonBackground(active: Boolean): GradientDrawable = GradientDrawable(
         GradientDrawable.Orientation.TL_BR,
         if (active) {
-            intArrayOf(0xFF10B981.toInt(), 0xFF06B6D4.toInt(), 0xFF2563EB.toInt())
+            intArrayOf(PearlPalette.INK, PearlPalette.CHAMPAGNE, PearlPalette.INK)
         } else {
-            intArrayOf(0xFFFFFFFF.toInt(), 0xFFE0F2FE.toInt(), 0xFFECFEFF.toInt())
+            intArrayOf(PearlPalette.PEARL_WHITE, PearlPalette.PEARL_MID, PearlPalette.PEARL_WHITE)
         }
     ).apply {
         shape = GradientDrawable.OVAL
-        setStroke(dp(8), if (active) 0x8834D399.toInt() else 0xAA5B7CFA.toInt())
+        setStroke(dp(8), if (active) PearlPalette.CHAMPAGNE_RING else PearlPalette.CHAMPAGNE_RING_STRONG)
     }
 
     private fun roundedBackground(
@@ -1768,11 +1806,11 @@ class MainActivity : Activity() {
     }
 
     private fun styleNavButton(button: TextView, selected: Boolean) {
-        button.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF64748B.toInt())
+        button.setTextColor(if (selected) PearlPalette.PEARL_WHITE else PearlPalette.TEXT_MUTED)
         button.background = if (selected) {
-            verticalGradient(0xFF111827.toInt(), 0xFF0F172A.toInt(), 0xFF2563EB.toInt(), radiusDp = 26)
+            verticalGradient(PearlPalette.BORDER, PearlPalette.INK, PearlPalette.INK, radiusDp = 26)
         } else {
-            roundedBackground(0x00FFFFFF, 0x00FFFFFF, radiusDp = 24)
+            roundedBackground(PearlPalette.TRANSPARENT, PearlPalette.TRANSPARENT, radiusDp = 24)
         }
         (button.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
             params.height = if (selected) dp(58) else dp(50)
@@ -1922,12 +1960,12 @@ class MainActivity : Activity() {
         hubStatusTitle.text = dashboardTitleFor(hub.state)
         hubStatusTitle.setTextColor(
             when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> 0xFF047857.toInt()
+                VpnHubConnectionState.CONNECTED -> PearlPalette.INK
                 VpnHubConnectionState.CONNECTING,
-                VpnHubConnectionState.RUNNING_UNVERIFIED -> 0xFFB45309.toInt()
-                VpnHubConnectionState.FAILED -> 0xFFB91C1C.toInt()
+                VpnHubConnectionState.RUNNING_UNVERIFIED -> PearlPalette.CHAMPAGNE_DARK
+                VpnHubConnectionState.FAILED -> PearlPalette.ERROR
                 VpnHubConnectionState.IDLE,
-                VpnHubConnectionState.STOPPED -> 0xFF0F172A.toInt()
+                VpnHubConnectionState.STOPPED -> PearlPalette.INK
             }
         )
         hubStatusDetail.text = dashboardDetail(hub)
@@ -1950,19 +1988,19 @@ class MainActivity : Activity() {
                 VpnHubConnectionState.STOPPED -> "✓  Offline  ›"
             }
             val protectionColor = when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> 0xFF047857.toInt()
+                VpnHubConnectionState.CONNECTED -> PearlPalette.INK
                 VpnHubConnectionState.CONNECTING,
-                VpnHubConnectionState.RUNNING_UNVERIFIED -> 0xFFB45309.toInt()
-                VpnHubConnectionState.FAILED -> 0xFFB91C1C.toInt()
+                VpnHubConnectionState.RUNNING_UNVERIFIED -> PearlPalette.CHAMPAGNE_DARK
+                VpnHubConnectionState.FAILED -> PearlPalette.ERROR
                 VpnHubConnectionState.IDLE,
-                VpnHubConnectionState.STOPPED -> 0xFF64748B.toInt()
+                VpnHubConnectionState.STOPPED -> PearlPalette.TEXT_MUTED
             }
             protectionBadge.text = protectionText
             protectionBadge.setTextColor(protectionColor)
         }
         if (::liveStatsBadge.isInitialized) {
             liveStatsBadge.text = if (active) "$down / $up" else "0 B"
-            liveStatsBadge.setTextColor(if (active) 0xFF2563EB.toInt() else 0xFF64748B.toInt())
+            liveStatsBadge.setTextColor(if (active) PearlPalette.INK else PearlPalette.TEXT_MUTED)
         }
 
         primaryActionButton.setActive(active)
@@ -2211,7 +2249,7 @@ class MainActivity : Activity() {
                     text = "No saved configs yet. Use + to add one."
                     textSize = 13f
                     gravity = Gravity.CENTER
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(dp(10), dp(14), dp(10), dp(14))
                 })
                 return@showBottomSheet
@@ -2285,7 +2323,7 @@ class MainActivity : Activity() {
                 text = "Subscription configs are separated into tabs. Use Locations search for a specific config."
                 textSize = 12f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(10), dp(10), dp(10), dp(4))
             })
         }
@@ -2334,14 +2372,14 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(18), dp(10), dp(18), dp(18))
-            background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 30)
+            background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 30)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             addView(TextView(this@MainActivity).apply {
                 text = ""
-                background = roundedBackground(0xFFCBD5E1.toInt(), 0xFFCBD5E1.toInt(), radiusDp = 4)
+                background = roundedBackground(PearlPalette.SHELL_DARK, PearlPalette.SHELL_DARK, radiusDp = 4)
                 layoutParams = LinearLayout.LayoutParams(dp(54), dp(5)).apply {
                     setMargins(0, 0, 0, dp(12))
                 }
@@ -2361,7 +2399,7 @@ class MainActivity : Activity() {
                         typeface = Typeface.DEFAULT_BOLD
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
-                        setTextColor(0xFF0F172A.toInt())
+                        setTextColor(PearlPalette.INK)
                     })
                     subtitle?.takeIf { it.isNotBlank() }?.let { sub ->
                         addView(TextView(this@MainActivity).apply {
@@ -2369,7 +2407,7 @@ class MainActivity : Activity() {
                             textSize = 12f
                             maxLines = 2
                             ellipsize = TextUtils.TruncateAt.END
-                            setTextColor(0xFF64748B.toInt())
+                            setTextColor(PearlPalette.TEXT_MUTED)
                         })
                     }
                 })
@@ -2379,8 +2417,8 @@ class MainActivity : Activity() {
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
                     includeFontPadding = false
-                    setTextColor(0xFF64748B.toInt())
-                    background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+                    setTextColor(PearlPalette.TEXT_MUTED)
+                    background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
                     layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
                         setMargins(dp(10), 0, 0, 0)
                     }
@@ -2407,7 +2445,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(10), dp(9), dp(10), dp(9))
-            background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 18)
+            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2419,8 +2457,8 @@ class MainActivity : Activity() {
                 textSize = 18f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 15)
+                setTextColor(PearlPalette.INK)
+                background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 15)
                 layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
                     setMargins(0, 0, dp(10), 0)
                 }
@@ -2435,14 +2473,14 @@ class MainActivity : Activity() {
                     typeface = Typeface.DEFAULT_BOLD
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF0F172A.toInt())
+                    setTextColor(PearlPalette.INK)
                 })
                 addView(TextView(this@MainActivity).apply {
                     text = subtitle
                     textSize = 11f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                 })
             })
             addView(TextView(this@MainActivity).apply {
@@ -2450,7 +2488,7 @@ class MainActivity : Activity() {
                 textSize = 24f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(0xFF94A3B8.toInt())
+                setTextColor(PearlPalette.TEXT_FAINT)
                 layoutParams = LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.MATCH_PARENT)
             })
             isClickable = true
@@ -2469,8 +2507,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             background = roundedBackground(
-                fillColor = if (profile.id == selectedProfileId) 0xFFEFF6FF.toInt() else 0xFFF8FAFC.toInt(),
-                strokeColor = if (profile.id == selectedProfileId) 0xFF93C5FD.toInt() else 0xFFE2E8F0.toInt(),
+                fillColor = if (profile.id == selectedProfileId) PearlPalette.CHAMPAGNE_SOFT else PearlPalette.PEARL_GHOST,
+                strokeColor = if (profile.id == selectedProfileId) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = if (compact) 16 else 20
             )
             setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -2485,7 +2523,7 @@ class MainActivity : Activity() {
                 textSize = if (compact) 18f else 20f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                background = roundedBackground(0xFFE0F2FE.toInt(), 0xFFBAE6FD.toInt(), radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_MID, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
                     setMargins(0, 0, dp(10), 0)
                 }
@@ -2500,14 +2538,14 @@ class MainActivity : Activity() {
                     typeface = if (profile.id == selectedProfileId) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF0F172A.toInt())
+                    setTextColor(PearlPalette.INK)
                 })
                 addView(TextView(this@MainActivity).apply {
                     text = profileRowSubtitle(profile)
                     textSize = if (compact) 10f else 11f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                 })
             })
             addView(TextView(this@MainActivity).apply {
@@ -2529,7 +2567,7 @@ class MainActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(if (profile.id == selectedProfileId) 0xFF2563EB.toInt() else 0xFF94A3B8.toInt())
+                setTextColor(if (profile.id == selectedProfileId) PearlPalette.INK else PearlPalette.TEXT_FAINT)
                 layoutParams = LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.MATCH_PARENT)
                 setOnClickListener { onActions() }
             })
@@ -2565,36 +2603,36 @@ class MainActivity : Activity() {
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
-        profileNeedsXrayMapper(profile) -> 0xFFFFF7ED.toInt()
-        profile.id == selectedProfileId -> 0xFFEFF6FF.toInt()
-        profile.lastVerifiedEpochMs != null -> 0xFFD1FAE5.toInt()
-        profile.lastTestSuccess == true -> 0xFFEFF6FF.toInt()
-        profile.favorite -> 0xFFFEF3C7.toInt()
-        profile.lastTestSuccess == false -> 0xFFFEE2E2.toInt()
-        else -> 0xFFF1F5F9.toInt()
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE_SOFT
+        profile.id == selectedProfileId -> PearlPalette.CHAMPAGNE_SOFT
+        profile.lastVerifiedEpochMs != null -> PearlPalette.CHAMPAGNE_SOFT
+        profile.lastTestSuccess == true -> PearlPalette.CHAMPAGNE_SOFT
+        profile.favorite -> PearlPalette.CHAMPAGNE_SOFT
+        profile.lastTestSuccess == false -> PearlPalette.ERROR_SOFT
+        else -> PearlPalette.PEARL_MID
     }
 
     private fun profileStatusStrokeColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
-        profileNeedsXrayMapper(profile) -> 0xFFFED7AA.toInt()
-        profile.id == selectedProfileId -> 0xFF93C5FD.toInt()
-        profile.lastVerifiedEpochMs != null -> 0xFF6EE7B7.toInt()
-        profile.lastTestSuccess == true -> 0xFFBFDBFE.toInt()
-        profile.favorite -> 0xFFFCD34D.toInt()
-        profile.lastTestSuccess == false -> 0xFFFCA5A5.toInt()
-        else -> 0xFFE2E8F0.toInt()
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE
+        profile.id == selectedProfileId -> PearlPalette.BORDER
+        profile.lastVerifiedEpochMs != null -> PearlPalette.SHELL_DARK
+        profile.lastTestSuccess == true -> PearlPalette.SHELL_DARK
+        profile.favorite -> PearlPalette.CHAMPAGNE
+        profile.lastTestSuccess == false -> PearlPalette.ERROR_STROKE
+        else -> PearlPalette.HAIRLINE
     }
 
     private fun profileStatusTextColor(profile: VpnProfile): Int = when {
-        profile.id == selectedProfileId && profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
-        profileNeedsXrayMapper(profile) -> 0xFFC2410C.toInt()
-        profile.id == selectedProfileId -> 0xFF2563EB.toInt()
-        profile.lastVerifiedEpochMs != null -> 0xFF047857.toInt()
-        profile.lastTestSuccess == true -> 0xFF1D4ED8.toInt()
-        profile.favorite -> 0xFF92400E.toInt()
-        profile.lastTestSuccess == false -> 0xFFB91C1C.toInt()
-        else -> 0xFF64748B.toInt()
+        profile.id == selectedProfileId && profile.lastTestSuccess == false -> PearlPalette.ERROR
+        profileNeedsXrayMapper(profile) -> PearlPalette.CHAMPAGNE_DARK
+        profile.id == selectedProfileId -> PearlPalette.INK
+        profile.lastVerifiedEpochMs != null -> PearlPalette.INK
+        profile.lastTestSuccess == true -> PearlPalette.BORDER
+        profile.favorite -> PearlPalette.CHAMPAGNE_DARK
+        profile.lastTestSuccess == false -> PearlPalette.ERROR
+        else -> PearlPalette.TEXT_MUTED
     }
 
     private fun profileNeedsXrayMapper(profile: VpnProfile): Boolean =
@@ -2625,7 +2663,7 @@ class MainActivity : Activity() {
         textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER_VERTICAL
-        setTextColor(0xFF64748B.toInt())
+        setTextColor(PearlPalette.TEXT_MUTED)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2965,9 +3003,9 @@ class MainActivity : Activity() {
                 addView(TextView(this@MainActivity).apply {
                     text = log
                     textSize = 12f
-                    setTextColor(0xFF334155.toInt())
+                    setTextColor(PearlPalette.INK_SOFT)
                     setPadding(dp(12), dp(12), dp(12), dp(12))
-                    background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                    background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
                 })
             })
             addView(bottomSheetActionRow("✓", "Close", "Return to Settings") {
@@ -2984,7 +3022,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "For strict leak protection, open Android VPN settings for this app and enable Always-on VPN and Block connections without VPN. This app should not fake a kill switch toggle until it can enforce it reliably."
                 textSize = 13f
-                setTextColor(0xFF334155.toInt())
+                setTextColor(PearlPalette.INK_SOFT)
                 setPadding(dp(8), dp(12), dp(8), dp(8))
             })
             addView(bottomSheetActionRow("✓", "Got it", "Keep settings honest and enforceable") {
@@ -3025,7 +3063,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Only paste your own or provider-approved subscription URL. The app stores it encrypted on this phone."
                 textSize = 12.5f
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(10), dp(8), dp(6))
             })
             val nameInput = EditText(this@MainActivity).apply {
@@ -3034,7 +3072,7 @@ class MainActivity : Activity() {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
                 setSingleLine(true)
                 setPadding(dp(14), 0, dp(14), 0)
-                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(54)
@@ -3048,7 +3086,7 @@ class MainActivity : Activity() {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                 setSingleLine(true)
                 setPadding(dp(14), 0, dp(14), 0)
-                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(54)
@@ -3191,7 +3229,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Import fewer configs for a lighter phone list, or import all when you want the full provider queue. Queue tests stay manual and capped."
                 textSize = 12.5f
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(10), dp(8), dp(6))
             })
             val recommended = clampSubscriptionImportLimit(MAX_SUBSCRIPTION_LINKS, preview.totalCount)
@@ -3223,7 +3261,7 @@ class MainActivity : Activity() {
                 setSingleLine(true)
                 setText(maxAllowed.toString())
                 setPadding(dp(14), 0, dp(14), 0)
-                background = roundedBackground(0xFFF8FAFC.toInt(), 0xFFE2E8F0.toInt(), radiusDp = 16)
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     dp(54)
@@ -3922,7 +3960,7 @@ class MainActivity : Activity() {
                 }
                 textSize = 13f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF475569.toInt())
+                setTextColor(PearlPalette.INK_SOFT)
                 setPadding(0, dp(4), 0, dp(4))
             })
         }
@@ -3936,7 +3974,7 @@ class MainActivity : Activity() {
                 }
                 textSize = 12f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             })
         }
@@ -3977,7 +4015,7 @@ class MainActivity : Activity() {
                 text = "Showing $shown of ${scopedProfiles.size} in ${locationFilterLabel(groups)}. Use search or another tab to narrow the list."
                 textSize = 12f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(10), dp(10), dp(10), dp(4))
             })
         }
@@ -4105,7 +4143,7 @@ class MainActivity : Activity() {
                 text = "Showing ${MAX_SUBSCRIPTION_GROUP_BUTTONS} of ${groups.size} subscription tabs."
                 textSize = 11f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF64748B.toInt())
+                setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(4), dp(8), dp(2))
             })
         }
@@ -4118,8 +4156,8 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         maxLines = 1
         includeFontPadding = false
-        setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFE0F2FE.toInt(), radiusDp = 17)
+        setTextColor(PearlPalette.INK)
+        background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.PEARL_MID, radiusDp = 17)
         layoutParams = LinearLayout.LayoutParams(dp(36), dp(34)).apply {
             setMargins(dp(5), 0, 0, 0)
         }
@@ -4187,10 +4225,10 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF0F172A.toInt())
+        setTextColor(if (selected) PearlPalette.PEARL_WHITE else PearlPalette.INK)
         background = roundedBackground(
-            fillColor = if (selected) 0xFF2563EB.toInt() else 0xFFF8FAFC.toInt(),
-            strokeColor = if (selected) 0xFF1D4ED8.toInt() else 0xFFD8EAFE.toInt(),
+            fillColor = if (selected) PearlPalette.INK else PearlPalette.PEARL_GHOST,
+            strokeColor = if (selected) PearlPalette.BORDER else PearlPalette.HAIRLINE,
             radiusDp = 18
         )
         setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -4208,7 +4246,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 18)
+            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -4223,8 +4261,8 @@ class MainActivity : Activity() {
                 textSize = 17f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(0xFF2563EB.toInt())
-                background = roundedBackground(0xFFFFFFFF.toInt(), 0xFFD8EAFE.toInt(), radiusDp = 14)
+                setTextColor(PearlPalette.INK)
+                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 14)
                 layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { setMargins(0, 0, dp(8), 0) }
             })
             addView(LinearLayout(this@MainActivity).apply {
@@ -4237,14 +4275,14 @@ class MainActivity : Activity() {
                     typeface = Typeface.DEFAULT_BOLD
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF0F172A.toInt())
+                    setTextColor(PearlPalette.INK)
                 })
                 addView(TextView(this@MainActivity).apply {
                     text = "$visibleCount visible • ${subscriptionGroupSubtitle(group).shortUi(44)}"
                     textSize = 10.5f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                 })
             })
         }
@@ -4263,7 +4301,7 @@ class MainActivity : Activity() {
                     text = "No configs are saved in this group yet. Refresh it or paste the subscription again."
                     textSize = 13f
                     gravity = Gravity.CENTER
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(dp(10), dp(14), dp(10), dp(14))
                 })
                 return@showBottomSheet
@@ -4292,7 +4330,7 @@ class MainActivity : Activity() {
                     text = "Showing ${MAX_GROUP_PROFILE_PREVIEW} best of ${profiles.size}. Use Locations search for a specific country/operator."
                     textSize = 12f
                     gravity = Gravity.CENTER
-                    setTextColor(0xFF64748B.toInt())
+                    setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(dp(8), dp(10), dp(8), dp(4))
                 })
             }
@@ -4844,29 +4882,29 @@ private class PowerRingButton(context: Context) : View(context) {
         val radius = size * 0.42f
 
         paint.style = Paint.Style.FILL
-        paint.shader = RadialGradient(cx, cy, radius * 1.35f, intArrayOf(0x66FFFFFF, 0x22FFFFFF, 0x00000000), null, Shader.TileMode.CLAMP)
+        paint.shader = RadialGradient(cx, cy, radius * 1.35f, intArrayOf(PearlPalette.SHINE_SOFT, PearlPalette.SHINE_FAINT, PearlPalette.TRANSPARENT), null, Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, radius * 1.22f, paint)
         paint.shader = null
 
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeWidth = size * 0.075f
-        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(0xFF2563EB.toInt(), 0xFF06B6D4.toInt(), 0xFF22C55E.toInt()), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(PearlPalette.INK, PearlPalette.CHAMPAGNE, PearlPalette.CHAMPAGNE), null, Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, radius, paint)
         paint.shader = null
 
         paint.strokeWidth = size * 0.018f
-        paint.color = if (active) 0x9934D399.toInt() else 0x8842A5F5.toInt()
+        paint.color = if (active) PearlPalette.CHAMPAGNE_RING_STRONG else PearlPalette.CHAMPAGNE_RING
         canvas.drawCircle(cx, cy, radius * 1.12f, paint)
 
         paint.style = Paint.Style.FILL
-        paint.color = 0xEFFFFFFF.toInt()
+        paint.color = PearlPalette.GLASS_HEAVY
         canvas.drawCircle(cx, cy, radius * 0.74f, paint)
 
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = size * 0.045f
         paint.strokeCap = Paint.Cap.ROUND
-        paint.color = 0xFF0F172A.toInt()
+        paint.color = PearlPalette.INK
         canvas.drawLine(cx, cy - radius * 0.36f, cx, cy + radius * 0.08f, paint)
         val iconRect = RectF(cx - radius * 0.30f, cy - radius * 0.12f, cx + radius * 0.30f, cy + radius * 0.48f)
         canvas.drawArc(iconRect, 125f, 290f, false, paint)
@@ -4891,7 +4929,7 @@ private class MiniChartView(context: Context) : View(context) {
             cubicTo(w * 0.55f, h * 0.22f, w * 0.60f, h * 0.82f, w * 0.72f, h * 0.56f)
             cubicTo(w * 0.82f, h * 0.35f, w * 0.88f, h * 0.18f, w * 0.96f, h * 0.36f)
         }
-        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(0xFF0EA5E9.toInt(), 0xFF2563EB.toInt(), 0xFF22C55E.toInt()), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(PearlPalette.CHAMPAGNE, PearlPalette.INK, PearlPalette.CHAMPAGNE), null, Shader.TileMode.CLAMP)
         canvas.drawPath(path, paint)
         paint.shader = null
     }
@@ -4912,23 +4950,23 @@ private class ScenicBackgroundView(context: Context) : View(context) {
         canvas.clipPath(clipPath)
 
         paint.style = Paint.Style.FILL
-        paint.shader = LinearGradient(0f, 0f, 0f, h, intArrayOf(0xFFEAF7FF.toInt(), 0xFFF8FBFF.toInt(), 0xFFE0F2FE.toInt()), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, 0f, h, intArrayOf(PearlPalette.PEARL_MID, PearlPalette.PEARL_TOP, PearlPalette.PEARL_MID), null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, w, h, paint)
         paint.shader = null
 
-        paint.shader = RadialGradient(w * 0.58f, h * 0.42f, w * 0.34f, intArrayOf(0x77FFFFFF, 0x22FDE68A, 0x00000000), null, Shader.TileMode.CLAMP)
+        paint.shader = RadialGradient(w * 0.58f, h * 0.42f, w * 0.34f, intArrayOf(PearlPalette.SHINE_MEDIUM, PearlPalette.CHAMPAGNE_GLOW, PearlPalette.TRANSPARENT), null, Shader.TileMode.CLAMP)
         canvas.drawCircle(w * 0.58f, h * 0.42f, w * 0.36f, paint)
         paint.shader = null
 
-        drawMountain(canvas, w, h, 0xFFC7D2FE.toInt(), 0.42f, 0.78f)
-        drawMountain(canvas, w, h, 0xFF93C5FD.toInt(), 0.52f, 0.84f)
-        drawMountain(canvas, w, h, 0xFF64748B.toInt(), 0.62f, 0.90f)
+        drawMountain(canvas, w, h, PearlPalette.PEARL_DEEP, 0.42f, 0.78f)
+        drawMountain(canvas, w, h, PearlPalette.SHELL_DARK, 0.52f, 0.84f)
+        drawMountain(canvas, w, h, PearlPalette.TEXT_MUTED, 0.62f, 0.90f)
 
-        paint.shader = LinearGradient(0f, h * 0.68f, 0f, h, intArrayOf(0xCCDBEAFE.toInt(), 0xFFE0F2FE.toInt(), 0xFFFFFFFF.toInt()), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, h * 0.68f, 0f, h, intArrayOf(PearlPalette.PEARL_WASH, PearlPalette.PEARL_MID, PearlPalette.PEARL_WHITE), null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, h * 0.64f, w, h, paint)
         paint.shader = null
 
-        paint.color = 0x6638BDF8
+        paint.color = PearlPalette.HAIRLINE_STRONG
         paint.strokeWidth = 2f
         paint.style = Paint.Style.STROKE
         for (i in 0..5) {
@@ -4951,7 +4989,7 @@ private class ScenicBackgroundView(context: Context) : View(context) {
             close()
         }
         canvas.drawPath(path, paint)
-        paint.color = 0x99FFFFFF.toInt()
+        paint.color = PearlPalette.SHINE
         val snow = Path().apply {
             moveTo(w * 0.34f, h * peak)
             lineTo(w * 0.29f, h * (peak + 0.07f))
