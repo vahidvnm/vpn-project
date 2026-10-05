@@ -582,7 +582,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] رفع ابهام شمارنده subscription بزرگ: tabهای Locations حالا loaded/total را مثل `80/1448` نشان می‌دهند تا مشخص باشد چند کانفیگ واقعاً در subscription هست و چندتا فعلاً داخل اپ load شده.
 - [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد انتخاب خلاصه نشان داده می‌شود: `Recommended` یا `Custom/All`; تست قبل از ذخیره حذف شد چون تست‌های سالم/واقعی باید بعد از import و از Queue tools/Connect اجرا شوند.
 - [x] بازتعریف تست‌ها: Queue tools حالا دو تست قبل اتصال دارد: `Quick check` برای TCP/TLS endpoint reachability و `Real delay` برای اجرای موقت Xray core بدون Android VPN/TUN؛ تست نهایی `Connect & Verify` همچنان هنگام اتصال فقط روی کانفیگ انتخاب‌شده انجام می‌شود.
-- [x] رفع محدودیت نمای Locations: لیست اصلی به‌جای فقط ۴۰ ردیف، همه‌ی کانفیگ‌های load‌شده را نشان می‌دهد؛ تست‌ها همچنان manual/capped می‌مانند.
+- [x] رفع کندی Locations برای subscription بزرگ: به‌جای ساختن ۱۳۰۰+ row یک‌باره، ردیف‌ها progressive render می‌شوند (اول ۱۶۰، سپس Show more/long-press all)، درحالی‌که شمارنده loaded/total و Search/Queue tools همچنان کل صف load‌شده را می‌بینند.
 - [x] polish رنگ/تم مرحله ۳: مثل reference فقط در هر صفحه یک accent کوچک اضافه شد؛ حلقه دور دکمه power گرادیان خیلی ملایم گرفت، Locations tab/menu accent آبی-یاسی کم‌رنگ دارد، و Settings فقط روی icon chipها رنگ ظریف نشان می‌دهد.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.

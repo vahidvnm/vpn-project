@@ -153,6 +153,10 @@ class MainActivity : Activity() {
     private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
+    private var locationRenderLimit = INITIAL_PROFILE_RENDER_ROWS
+    private var locationRenderKey = ""
+    private val profileRowStatusViews = mutableMapOf<String, TextView>()
+    private val profileRowSubtitleViews = mutableMapOf<String, TextView>()
     private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
     private lateinit var navHomeButton: TextView
     private lateinit var navProfilesButton: TextView
@@ -1062,6 +1066,7 @@ class MainActivity : Activity() {
                         val startedIndex = started.incrementAndGet()
                         mainHandler.post {
                             if (autoTestInFlight) {
+                                markProfileRowTesting(profile, testLabel)
                                 setAutoTestStatus("$testLabel ${finished.get()}/$total • testing $startedIndex/$total: ${compactProfileTitle(profile)}")
                             }
                         }
@@ -1075,7 +1080,8 @@ class MainActivity : Activity() {
                         }
                         mainHandler.post {
                             if (autoTestInFlight) {
-                                setAutoTestStatus("$testLabel $done/$total: ${compactProfileTitle(profile)} • $state")
+                                updateProfileRowMetadata(result.profile)
+                                setAutoTestStatus("$testLabel $done/$total: ${compactProfileTitle(result.profile)} • $state")
                             }
                         }
                     } finally {
@@ -1381,7 +1387,12 @@ class MainActivity : Activity() {
             val results = mutableListOf<ProfileProbeResult>()
             candidates.forEachIndexed { index, profile ->
                 if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) return@forEachIndexed
-                mainHandler.post { setAutoTestStatus("Real delay ${index + 1}/${candidates.size}: ${compactProfileTitle(profile)}") }
+                mainHandler.post {
+                    if (autoTestInFlight) {
+                        markProfileRowTesting(profile, "Real delay")
+                        setAutoTestStatus("Real delay ${index + 1}/${candidates.size}: ${compactProfileTitle(profile)}")
+                    }
+                }
                 val config = loadProfileConfigQuiet(profile)
                 val delayResult = if (config != null) xrayRealDelayTester.measure(config) else null
                 val summary = ConfigProbeSummary(
@@ -1392,7 +1403,7 @@ class MainActivity : Activity() {
                     bestScore = delayResult?.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) },
                     checkedAtEpochMs = System.currentTimeMillis()
                 )
-                runCatching {
+                val updatedProfile = runCatching {
                     profileStore.markTested(
                         profileId = profile.id,
                         testedAtEpochMs = summary.checkedAtEpochMs,
@@ -1401,8 +1412,16 @@ class MainActivity : Activity() {
                         latencyMs = summary.bestLatencyMs,
                         score = summary.bestScore
                     )
+                }.getOrNull() ?: profile
+                results += ProfileProbeResult(updatedProfile, config, summary)
+                val done = index + 1
+                val state = if (summary.reachable) summary.bestLatencyMs?.let { "OK ${it}ms" } ?: "OK" else "failed"
+                mainHandler.post {
+                    if (autoTestInFlight) {
+                        updateProfileRowMetadata(updatedProfile)
+                        setAutoTestStatus("Real delay $done/${candidates.size}: ${compactProfileTitle(updatedProfile)} • $state")
+                    }
                 }
-                results += ProfileProbeResult(profile, config, summary)
             }
             val best = results.filter { it.summary.reachable }
                 .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
@@ -2546,15 +2565,17 @@ class MainActivity : Activity() {
                     ellipsize = TextUtils.TruncateAt.END
                     setTextColor(PearlPalette.INK)
                 })
-                addView(TextView(this@MainActivity).apply {
+                val subtitleView = TextView(this@MainActivity).apply {
                     text = profileRowSubtitle(profile)
                     textSize = if (compact) 10f else 11f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                     setTextColor(PearlPalette.TEXT_MUTED)
-                })
+                }
+                profileRowSubtitleViews[profile.id] = subtitleView
+                addView(subtitleView)
             })
-            addView(TextView(this@MainActivity).apply {
+            val statusView = TextView(this@MainActivity).apply {
                 text = profileStatusLabel(profile)
                 textSize = 9.5f
                 typeface = Typeface.DEFAULT_BOLD
@@ -2566,7 +2587,9 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                     setMargins(dp(6), 0, dp(4), 0)
                 }
-            })
+            }
+            profileRowStatusViews[profile.id] = statusView
+            addView(statusView)
             addView(TextView(this@MainActivity).apply {
                 text = if (profile.id == selectedProfileId) "✓" else "⋯"
                 textSize = if (profile.id == selectedProfileId) 15f else 20f
@@ -2585,6 +2608,29 @@ class MainActivity : Activity() {
                 true
             }
         }
+
+    private fun markProfileRowTesting(profile: VpnProfile, label: String) {
+        profileRowSubtitleViews[profile.id]?.text = "${label.shortUi(18)} running…"
+        profileRowStatusViews[profile.id]?.let { statusView ->
+            statusView.text = "…"
+            statusView.setTextColor(PearlPalette.ACCENT_BLUE)
+            statusView.background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.ACCENT_LILAC, radiusDp = 12)
+        }
+    }
+
+    private fun updateProfileRowMetadata(profile: VpnProfile) {
+        profileRowSubtitleViews[profile.id]?.text = profileRowSubtitle(profile)
+        profileRowStatusViews[profile.id]?.let { statusView ->
+            statusView.text = profileStatusLabel(profile)
+            statusView.setTextColor(profileStatusTextColor(profile))
+            statusView.background = roundedBackground(
+                profileStatusFillColor(profile),
+                profileStatusStrokeColor(profile),
+                radiusDp = 12
+            )
+        }
+        if (selectedProfileId == profile.id) selectedProfile = profile
+    }
 
     private fun updateProfileActionButtons() {
         if (!::favoriteActionButton.isInitialized) return
@@ -3946,6 +3992,8 @@ class MainActivity : Activity() {
     private fun refreshProfileButtons(syncVerified: Boolean = true) {
         if (!::profileListContainer.isInitialized) return
         if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
+        profileRowStatusViews.clear()
+        profileRowSubtitleViews.clear()
         profileListContainer.removeAllViews()
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
@@ -3955,6 +4003,16 @@ class MainActivity : Activity() {
         val profiles = allProfiles.filter { matchesLocationSearch(it, query) }
         val scopedProfiles = profilesForLocationFilter(profiles, groups)
         refreshSubscriptionGroupButtons(groups, allProfiles, profiles)
+        val currentRenderKey = locationRenderStateKey(groups, allProfiles.size, scopedProfiles.size, query)
+        if (currentRenderKey != locationRenderKey) {
+            locationRenderKey = currentRenderKey
+            locationRenderLimit = INITIAL_PROFILE_RENDER_ROWS
+        }
+        val effectiveProfileButtonLimit = if (scopedProfiles.size > INITIAL_PROFILE_RENDER_ROWS) {
+            locationRenderLimit.coerceIn(INITIAL_PROFILE_RENDER_ROWS, MAX_PROFILE_BUTTONS)
+        } else {
+            MAX_PROFILE_BUTTONS
+        }
 
         if (allProfiles.isEmpty() || query.isNotBlank()) {
             profileListContainer.addView(TextView(this).apply {
@@ -3988,12 +4046,12 @@ class MainActivity : Activity() {
         val shownIds = mutableSetOf<String>()
         var shown = 0
         fun addUniqueSection(title: String, sectionProfiles: List<VpnProfile>) {
-            if (shown >= MAX_PROFILE_BUTTONS) return
+            if (shown >= effectiveProfileButtonLimit) return
             val unique = sectionProfiles.filter { it.id !in shownIds }
-            val limited = unique.take(MAX_PROFILE_BUTTONS - shown)
+            val limited = unique.take(effectiveProfileButtonLimit - shown)
             if (limited.isEmpty()) return
             shownIds.addAll(limited.map { it.id })
-            shown += addLocationSection(profileListContainer, title, limited, MAX_PROFILE_BUTTONS - shown)
+            shown += addLocationSection(profileListContainer, title, limited, effectiveProfileButtonLimit - shown)
         }
 
         val rankedScoped = scopedProfiles.sortedWith(profileRankingComparator())
@@ -4017,15 +4075,54 @@ class MainActivity : Activity() {
         }
 
         if (scopedProfiles.size > shown) {
-            profileListContainer.addView(TextView(this).apply {
-                text = "Showing $shown of ${scopedProfiles.size} in ${locationFilterLabel(groups)}. Use search or another tab to narrow the list."
-                textSize = 12f
-                gravity = Gravity.CENTER
-                setTextColor(PearlPalette.TEXT_MUTED)
-                setPadding(dp(10), dp(10), dp(10), dp(4))
-            })
+            profileListContainer.addView(locationRenderMoreButton(shown, scopedProfiles.size, locationFilterLabel(groups)))
         }
         updateDashboardSummary()
+    }
+
+    private fun locationRenderStateKey(
+        groups: List<SubscriptionGroup>,
+        allCount: Int,
+        scopedCount: Int,
+        query: String
+    ): String = listOf(
+        selectedLocationGroupFilter,
+        query.lowercase(java.util.Locale.US),
+        allCount.toString(),
+        scopedCount.toString(),
+        groups.joinToString("|") { "${it.id}:${it.profileIds.size}:${subscriptionTotalCount(it) ?: -1}" }
+    ).joinToString("#")
+
+    private fun locationRenderMoreButton(shown: Int, total: Int, scope: String): TextView = TextView(this).apply {
+        val next = minOf(total, MAX_PROFILE_BUTTONS, shown + PROFILE_RENDER_STEP)
+        text = if (next >= total || next >= MAX_PROFILE_BUTTONS) {
+            "Showing $shown of $total in ${scope.shortUi(20)} • tap to show all visible rows"
+        } else {
+            "Showing $shown of $total in ${scope.shortUi(20)} • tap +${next - shown} • long-press all (slower)"
+        }
+        textSize = 12.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(PearlPalette.ACCENT_BLUE)
+        background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
+        setPadding(dp(10), dp(11), dp(10), dp(11))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(10), 0, dp(4))
+        }
+        isClickable = true
+        isFocusable = true
+        setOnClickListener {
+            locationRenderLimit = next.coerceAtLeast(INITIAL_PROFILE_RENDER_ROWS)
+            refreshProfileButtons(syncVerified = false)
+        }
+        setOnLongClickListener {
+            locationRenderLimit = minOf(total, MAX_PROFILE_BUTTONS).coerceAtLeast(INITIAL_PROFILE_RENDER_ROWS)
+            refreshProfileButtons(syncVerified = false)
+            true
+        }
     }
 
     private fun normalizeLocationGroupFilter(groups: List<SubscriptionGroup>) {
@@ -4848,6 +4945,8 @@ class MainActivity : Activity() {
         const val EXPORT_OPENVPN_REQUEST = 1003
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
+        const val INITIAL_PROFILE_RENDER_ROWS = 160
+        const val PROFILE_RENDER_STEP = 160
         const val MAX_PROFILE_BUTTONS = 2_000
         const val MAX_PROFILE_SHEET_CHOICES = 40
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 20
