@@ -3794,13 +3794,14 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        tabRow.addView(locationFilterTab("All", allProfiles.size, selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
+        val allTotal = groups.mapNotNull { subscriptionTotalCount(it) }.takeIf { it.isNotEmpty() }?.sum()
+        tabRow.addView(locationFilterTab("All", subscriptionCountLabel(allProfiles.size, allTotal), selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
             refreshProfileButtons(syncVerified = false)
         })
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
-            tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), groupCount, selectedLocationGroupFilter == group.id) {
+            tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), subscriptionCountLabel(groupCount, subscriptionTotalCount(group)), selectedLocationGroupFilter == group.id) {
                 selectedLocationGroupFilter = group.id
                 refreshProfileButtons(syncVerified = false)
             })
@@ -3903,11 +3904,11 @@ class MainActivity : Activity() {
 
     private fun locationFilterTab(
         label: String,
-        count: Int,
+        countLabel: String,
         selected: Boolean,
         onClick: () -> Unit
     ): TextView = TextView(this).apply {
-        text = "${label.shortUi(18)} ($count)"
+        text = "${label.shortUi(18)} ($countLabel)"
         textSize = 12.5f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
@@ -4036,6 +4037,9 @@ class MainActivity : Activity() {
     private fun nextSubscriptionProfileLimit(currentCount: Int): Int =
         (if (currentCount < MAX_SUBSCRIPTION_LINKS) MAX_SUBSCRIPTION_LINKS else currentCount + SUBSCRIPTION_LOAD_MORE_STEP)
             .coerceAtMost(MAX_SUBSCRIPTION_TOTAL_PROFILES)
+
+    private fun subscriptionCountLabel(loaded: Int, total: Int?): String =
+        if (total != null && total > loaded) "$loaded/$total" else loaded.toString()
 
     private fun subscriptionTotalCount(group: SubscriptionGroup): Int? = Regex("\\b\\d+/(\\d+) profiles")
         .find(group.lastResult.orEmpty())
