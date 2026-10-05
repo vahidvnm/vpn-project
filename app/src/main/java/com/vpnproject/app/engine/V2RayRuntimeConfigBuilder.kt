@@ -11,19 +11,48 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 
 object V2RayRuntimeConfigBuilder {
-    fun build(config: ImportedConfig, dnsServers: List<String> = DEFAULT_DNS_SERVERS): V2RayRuntimeConfig {
+    fun build(
+        config: ImportedConfig,
+        dnsServers: List<String> = DEFAULT_DNS_SERVERS,
+        sniffingEnabled: Boolean = true,
+        muxEnabled: Boolean = false,
+        muxConcurrency: Int = DEFAULT_MUX_CONCURRENCY,
+        logLevel: String = DEFAULT_LOG_LEVEL
+    ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         return V2RayRuntimeConfig(
-            configJson = buildXrayConfig(prepared.profile, includeTunInbound = true, dnsServers = dnsServers),
+            configJson = buildXrayConfig(
+                profile = prepared.profile,
+                includeTunInbound = true,
+                dnsServers = dnsServers,
+                sniffingEnabled = sniffingEnabled,
+                muxEnabled = muxEnabled,
+                muxConcurrency = muxConcurrency,
+                logLevel = logLevel
+            ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray."
         )
     }
 
-    fun buildDelayProbe(config: ImportedConfig, dnsServers: List<String> = DEFAULT_DNS_SERVERS): V2RayRuntimeConfig {
+    fun buildDelayProbe(
+        config: ImportedConfig,
+        dnsServers: List<String> = DEFAULT_DNS_SERVERS,
+        muxEnabled: Boolean = false,
+        muxConcurrency: Int = DEFAULT_MUX_CONCURRENCY,
+        logLevel: String = DEFAULT_LOG_LEVEL
+    ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         return V2RayRuntimeConfig(
-            configJson = buildXrayConfig(prepared.profile, includeTunInbound = false, dnsServers = dnsServers),
+            configJson = buildXrayConfig(
+                profile = prepared.profile,
+                includeTunInbound = false,
+                dnsServers = dnsServers,
+                sniffingEnabled = false,
+                muxEnabled = muxEnabled,
+                muxConcurrency = muxConcurrency,
+                logLevel = logLevel
+            ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN."
         )
@@ -189,14 +218,27 @@ object V2RayRuntimeConfigBuilder {
         }
     }
 
-    private fun buildXrayConfig(profile: V2RayProfile, includeTunInbound: Boolean, dnsServers: List<String>): String {
-        val outbound = buildOutbound(profile)
+    private fun buildXrayConfig(
+        profile: V2RayProfile,
+        includeTunInbound: Boolean,
+        dnsServers: List<String>,
+        sniffingEnabled: Boolean,
+        muxEnabled: Boolean,
+        muxConcurrency: Int,
+        logLevel: String
+    ): String {
+        val outbound = buildOutbound(profile, muxEnabled, muxConcurrency)
         val dnsJson = dnsServers
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
             .ifEmpty { DEFAULT_DNS_SERVERS }
             .joinToString(prefix = "[", postfix = "]") { it.json() }
+        val sniffingJson = if (sniffingEnabled) {
+            "\"sniffing\": { \"enabled\": true, \"destOverride\": [\"http\", \"tls\", \"quic\"] }"
+        } else {
+            "\"sniffing\": { \"enabled\": false }"
+        }
         val inbounds = if (includeTunInbound) {
             """
                 [
@@ -204,17 +246,18 @@ object V2RayRuntimeConfigBuilder {
                     "tag": "tun",
                     "protocol": "tun",
                     "settings": { "name": "xray0", "MTU": 1500, "userLevel": 8 },
-                    "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+                    $sniffingJson
                   }
                 ]
             """.trimIndent()
         } else {
             "[]"
         }
+        val safeLogLevel = safeLogLevel(logLevel)
         return """
             {
               "stats": {},
-              "log": { "loglevel": "warning" },
+              "log": { "loglevel": ${safeLogLevel.json()} },
               "policy": {
                 "levels": { "8": { "handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 1 } },
                 "system": { "statsOutboundUplink": true, "statsOutboundDownlink": true }
@@ -236,7 +279,7 @@ object V2RayRuntimeConfigBuilder {
         """.trimIndent()
     }
 
-    private fun buildOutbound(profile: V2RayProfile): String {
+    private fun buildOutbound(profile: V2RayProfile, muxEnabled: Boolean, muxConcurrency: Int): String {
         val protocol = when (profile.scheme) {
             "ss" -> "shadowsocks"
             else -> profile.scheme
@@ -304,9 +347,20 @@ object V2RayRuntimeConfigBuilder {
               "protocol": ${protocol.json()},
               $settings,
               "streamSettings": ${buildStreamSettings(profile)},
-              "mux": { "enabled": false }
+              "mux": ${muxSettings(muxEnabled, muxConcurrency)}
             }
         """.trimIndent()
+    }
+
+    private fun muxSettings(enabled: Boolean, concurrency: Int): String = if (enabled) {
+        "{ \"enabled\": true, \"concurrency\": ${concurrency.coerceIn(MIN_MUX_CONCURRENCY, MAX_MUX_CONCURRENCY)} }"
+    } else {
+        "{ \"enabled\": false }"
+    }
+
+    private fun safeLogLevel(logLevel: String): String = when (logLevel.lowercase(java.util.Locale.US)) {
+        "debug", "info", "warning", "error", "none" -> logLevel.lowercase(java.util.Locale.US)
+        else -> DEFAULT_LOG_LEVEL
     }
 
     private fun buildStreamSettings(profile: V2RayProfile): String {
@@ -532,6 +586,10 @@ object V2RayRuntimeConfigBuilder {
         append('"')
     }
 
+    private const val DEFAULT_LOG_LEVEL = "warning"
+    private const val DEFAULT_MUX_CONCURRENCY = 8
+    private const val MIN_MUX_CONCURRENCY = 1
+    private const val MAX_MUX_CONCURRENCY = 32
     private val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
 }
 

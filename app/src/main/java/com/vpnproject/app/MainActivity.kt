@@ -1336,7 +1336,14 @@ class MainActivity : Activity() {
         setAutoTestStatus("Real delay running for ${compactProfileTitle(profile)} with Xray core...")
         val network = currentNetworkLabel()
         Thread {
-            val result = xrayRealDelayTester.measure(config, realDelayVerifyUrls(), vpnDnsServers(includeLocalhost = true))
+            val result = xrayRealDelayTester.measure(
+                config = config,
+                verifyUrls = realDelayVerifyUrls(),
+                dnsServers = vpnDnsServers(includeLocalhost = true),
+                muxEnabled = xrayMuxEnabled(),
+                muxConcurrency = xrayMuxConcurrency(),
+                logLevel = xrayLogLevel()
+            )
             val updated = runCatching {
                 profileStore.markTested(
                     profileId = profile.id,
@@ -1399,7 +1406,14 @@ class MainActivity : Activity() {
                     }
                 }
                 val config = loadProfileConfigQuiet(profile)
-                val delayResult = if (config != null) xrayRealDelayTester.measure(config, realDelayVerifyUrls(), vpnDnsServers(includeLocalhost = true)) else null
+                val delayResult = if (config != null) xrayRealDelayTester.measure(
+                    config = config,
+                    verifyUrls = realDelayVerifyUrls(),
+                    dnsServers = vpnDnsServers(includeLocalhost = true),
+                    muxEnabled = xrayMuxEnabled(),
+                    muxConcurrency = xrayMuxConcurrency(),
+                    logLevel = xrayLogLevel()
+                ) else null
                 val summary = ConfigProbeSummary(
                     report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
                     okCount = if (delayResult?.reachable == true) 1 else 0,
@@ -1894,8 +1908,9 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 requestVpnPermission(PendingVpnAction.NONE)
             })
-            addView(bottomSheetActionRow("ADV", "Advanced Xray toggles", "Planned: Fragment, Mux, FakeDNS, Sniffing controls") {
-                setActionStatus("Advanced Xray toggles are next; they will stay OFF/advanced by default.")
+            addView(bottomSheetActionRow("ADV", "Advanced Xray", "Sniffing ${if (xraySniffingEnabled()) "ON" else "OFF"} • Mux ${if (xrayMuxEnabled()) "ON" else "OFF"} • log ${xrayLogLevel()}") {
+                dialog.dismiss()
+                showAdvancedXraySettingsSheet()
             })
         }
     }
@@ -1975,6 +1990,74 @@ class MainActivity : Activity() {
                 appSettings.edit().remove(KEY_BYPASS_PACKAGES).apply()
                 setActionStatus("Bypass app list cleared. Reconnect to apply.")
             })
+        }
+    }
+
+    private fun showAdvancedXraySettingsSheet() {
+        showBottomSheet(
+            title = "Advanced Xray",
+            subtitle = "Power-user toggles. Defaults are safest for Iran-first MVP."
+        ) { dialog ->
+            addView(settingsHintText("Change these only when a provider or test result suggests it. Reconnect after changing runtime options."))
+            addView(bottomSheetActionRow("SNI", "Sniffing", if (xraySniffingEnabled()) "ON • detect HTTP/TLS/QUIC destination domains" else "OFF • no destination sniffing") {
+                dialog.dismiss()
+                appSettings.edit().putBoolean(KEY_XRAY_SNIFFING, !xraySniffingEnabled()).apply()
+                setActionStatus("Xray sniffing ${if (xraySniffingEnabled()) "enabled" else "disabled"}. Reconnect to apply.")
+            })
+            addView(bottomSheetActionRow("MUX", "Mux", if (xrayMuxEnabled()) "ON • concurrency ${xrayMuxConcurrency()}" else "OFF • safest default") {
+                dialog.dismiss()
+                appSettings.edit().putBoolean(KEY_XRAY_MUX_ENABLED, !xrayMuxEnabled()).apply()
+                setActionStatus("Xray Mux ${if (xrayMuxEnabled()) "enabled" else "disabled"}. Reconnect to apply.")
+            })
+            addView(bottomSheetActionRow("#", "Mux concurrency", "Current ${xrayMuxConcurrency()} • only used when Mux is ON") {
+                dialog.dismiss()
+                promptIntegerSetting(
+                    title = "Mux concurrency",
+                    subtitle = "Higher values can help or hurt depending on server/provider. Keep default unless needed.",
+                    currentValue = xrayMuxConcurrency(),
+                    minValue = MIN_XRAY_MUX_CONCURRENCY,
+                    maxValue = MAX_XRAY_MUX_CONCURRENCY,
+                    onSave = { value ->
+                        appSettings.edit().putInt(KEY_XRAY_MUX_CONCURRENCY, value).apply()
+                        setActionStatus("Mux concurrency set to $value. Reconnect to apply.")
+                    }
+                )
+            })
+            addView(bottomSheetActionRow("LOG", "Log level", xrayLogLevel()) {
+                dialog.dismiss()
+                showXrayLogLevelSheet()
+            })
+            addView(bottomSheetActionRow("FRG", "Fragment", "Planned • stays OFF until safely mapped for Xray") {
+                setActionStatus("Fragment is planned for a later advanced pass; it will stay OFF by default.")
+            })
+            addView(bottomSheetActionRow("DNS", "FakeDNS", "Planned • advanced only") {
+                setActionStatus("FakeDNS is planned for a later advanced pass; it can break some apps if enabled blindly.")
+            })
+            addView(bottomSheetActionRow("↺", "Reset Xray advanced", "Sniffing ON, Mux OFF, log warning") {
+                dialog.dismiss()
+                appSettings.edit()
+                    .remove(KEY_XRAY_SNIFFING)
+                    .remove(KEY_XRAY_MUX_ENABLED)
+                    .remove(KEY_XRAY_MUX_CONCURRENCY)
+                    .remove(KEY_XRAY_LOG_LEVEL)
+                    .apply()
+                setActionStatus("Advanced Xray settings reset. Reconnect to apply.")
+            })
+        }
+    }
+
+    private fun showXrayLogLevelSheet() {
+        showBottomSheet(
+            title = "Xray log level",
+            subtitle = "Warning is recommended; debug can be noisy."
+        ) { dialog ->
+            XRAY_LOG_LEVELS.forEach { level ->
+                addView(bottomSheetActionRow(if (level == xrayLogLevel()) "✓" else "LOG", level, if (level == "warning") "Recommended default" else "Set Xray core loglevel to $level") {
+                    dialog.dismiss()
+                    appSettings.edit().putString(KEY_XRAY_LOG_LEVEL, level).apply()
+                    setActionStatus("Xray log level set to $level. Reconnect to apply.")
+                })
+            }
         }
     }
 
@@ -2152,6 +2235,19 @@ class MainActivity : Activity() {
         .take(MAX_BYPASS_PACKAGES)
         .toList()
 
+    private fun xraySniffingEnabled(): Boolean = appSettings.getBoolean(KEY_XRAY_SNIFFING, true)
+
+    private fun xrayMuxEnabled(): Boolean = appSettings.getBoolean(KEY_XRAY_MUX_ENABLED, false)
+
+    private fun xrayMuxConcurrency(): Int = appSettings
+        .getInt(KEY_XRAY_MUX_CONCURRENCY, DEFAULT_XRAY_MUX_CONCURRENCY)
+        .coerceIn(MIN_XRAY_MUX_CONCURRENCY, MAX_XRAY_MUX_CONCURRENCY)
+
+    private fun xrayLogLevel(): String = appSettings
+        .getString(KEY_XRAY_LOG_LEVEL, DEFAULT_XRAY_LOG_LEVEL)
+        ?.takeIf { it in XRAY_LOG_LEVELS }
+        ?: DEFAULT_XRAY_LOG_LEVEL
+
     private fun copyInstalledPackageSample() {
         val packages = runCatching {
             packageManager.getInstalledApplications(0)
@@ -2193,6 +2289,9 @@ class MainActivity : Activity() {
             appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
             appendLine("VPN DNS: ${vpnDnsServers(includeLocalhost = false).joinToString(", ")}")
             appendLine("Bypass app packages: ${bypassAppPackages().size}")
+            appendLine("Xray sniffing: ${xraySniffingEnabled()}")
+            appendLine("Xray mux: ${xrayMuxEnabled()} concurrency ${xrayMuxConcurrency()}")
+            appendLine("Xray log level: ${xrayLogLevel()}")
             appendLine()
             appendLine(engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus))
         }
@@ -3385,7 +3484,16 @@ class MainActivity : Activity() {
         hubStatusTitle.text = "Preparing"
         hubStatusDetail.text = "Embedded Xray is preparing a runtime config. V2Ray links start directly; supported sing-box/Clash proxies are mapped to Xray."
         Thread {
-            val result = runCatching { V2RayRuntimeConfigBuilder.build(config, vpnDnsServers(includeLocalhost = true)) }
+            val result = runCatching {
+                V2RayRuntimeConfigBuilder.build(
+                    config = config,
+                    dnsServers = vpnDnsServers(includeLocalhost = true),
+                    sniffingEnabled = xraySniffingEnabled(),
+                    muxEnabled = xrayMuxEnabled(),
+                    muxConcurrency = xrayMuxConcurrency(),
+                    logLevel = xrayLogLevel()
+                )
+            }
             runOnUiThread {
                 result.fold(
                     onSuccess = { runtime -> startXrayEngine(runtime) },
@@ -5399,6 +5507,15 @@ class MainActivity : Activity() {
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"
         const val KEY_VPN_DNS_SERVERS = "vpn_dns_servers"
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
+        const val KEY_XRAY_SNIFFING = "xray_sniffing"
+        const val KEY_XRAY_MUX_ENABLED = "xray_mux_enabled"
+        const val KEY_XRAY_MUX_CONCURRENCY = "xray_mux_concurrency"
+        const val KEY_XRAY_LOG_LEVEL = "xray_log_level"
+        const val DEFAULT_XRAY_MUX_CONCURRENCY = 8
+        const val MIN_XRAY_MUX_CONCURRENCY = 1
+        const val MAX_XRAY_MUX_CONCURRENCY = 32
+        const val DEFAULT_XRAY_LOG_LEVEL = "warning"
+        val XRAY_LOG_LEVELS = listOf("warning", "error", "info", "debug", "none")
         val DEFAULT_VPN_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
         val PACKAGE_NAME_REGEX = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
         val DEFAULT_REAL_DELAY_URLS = listOf(

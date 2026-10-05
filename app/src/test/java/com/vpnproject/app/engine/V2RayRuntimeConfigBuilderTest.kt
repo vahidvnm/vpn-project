@@ -210,6 +210,25 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun advancedXrayOptionsAreAppliedToRuntimeConfig() {
+        val runtime = V2RayRuntimeConfigBuilder.build(
+            ImportedConfig(
+                kind = ConfigKind.V2RAY,
+                originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Advanced",
+                endpoints = emptyList()
+            ),
+            sniffingEnabled = false,
+            muxEnabled = true,
+            muxConcurrency = 4,
+            logLevel = "info"
+        )
+
+        assertContains(runtime.configJson, "\"log\": { \"loglevel\": \"info\" }")
+        assertContains(runtime.configJson, "\"sniffing\": { \"enabled\": false }")
+        assertContains(runtime.configJson, "\"mux\": { \"enabled\": true, \"concurrency\": 4 }")
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

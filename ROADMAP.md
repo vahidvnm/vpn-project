@@ -586,6 +586,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] polish رنگ/تم مرحله ۳: مثل reference فقط در هر صفحه یک accent کوچک اضافه شد؛ حلقه دور دکمه power گرادیان خیلی ملایم گرفت، Locations tab/menu accent آبی-یاسی کم‌رنگ دارد، و Settings فقط روی icon chipها رنگ ظریف نشان می‌دهد.
 - [x] شروع Settings شبیه v2rayNG ولی ساده‌تر: ردیف‌های Test settings، Subscriptions، Routing & DNS و Diagnostics اضافه شدند؛ Quick check/Real delay limit و Real delay URL قابل تنظیم شدند و safe diagnostics قابل کپی است.
 - [x] مرحله بعد Routing & DNS: تنظیم VPN DNS برای Android VPN/Xray core و لیست packageهای bypass برای per-app routing پایه اضافه شد؛ LAN/private IP bypass فعلاً برای Xray مستقیم/ON نگه داشته شد و گزینه‌های Fragment/Mux/FakeDNS به مرحله Advanced موکول شدند.
+- [x] مرحله Advanced Xray: کنترل‌های Sniffing، Mux/concurrency و log level به Settings اضافه شدند و واقعاً وارد runtime JSON/Real delay می‌شوند؛ Fragment و FakeDNS فعلاً planned/خاموش ماندند تا بدون نگاشت مطمئن اتصال خراب نشود.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

@@ -24,9 +24,18 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
     fun measure(
         config: ImportedConfig,
         verifyUrls: List<String> = DEFAULT_VERIFY_URLS,
-        dnsServers: List<String> = DEFAULT_DNS_SERVERS
+        dnsServers: List<String> = DEFAULT_DNS_SERVERS,
+        muxEnabled: Boolean = false,
+        muxConcurrency: Int = DEFAULT_MUX_CONCURRENCY,
+        logLevel: String = DEFAULT_LOG_LEVEL
     ): XrayRealDelayResult {
-        val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(config, dnsServers)
+        val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(
+            config = config,
+            dnsServers = dnsServers,
+            muxEnabled = muxEnabled,
+            muxConcurrency = muxConcurrency,
+            logLevel = logLevel
+        )
         val urls = verifyUrls.filter { it.startsWith("http://") || it.startsWith("https://") }
             .ifEmpty { DEFAULT_VERIFY_URLS }
         Seq.setContext(context.applicationContext)
@@ -115,6 +124,8 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             "https://cp.cloudflare.com/generate_204"
         )
         val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
+        const val DEFAULT_MUX_CONCURRENCY = 8
+        const val DEFAULT_LOG_LEVEL = "warning"
     }
 }
 
