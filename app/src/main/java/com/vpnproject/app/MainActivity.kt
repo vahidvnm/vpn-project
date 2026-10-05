@@ -3929,7 +3929,7 @@ class MainActivity : Activity() {
             profile.favorite -> "Fav"
             compatibility.badge.isNotBlank() -> compatibility.badge
             else -> "New"
-        }.shortUi(13)
+        }.shortUi(16)
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int {
