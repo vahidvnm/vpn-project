@@ -170,6 +170,7 @@ class MainActivity : Activity() {
     private val profileRowStatusViews = mutableMapOf<String, TextView>()
     private val profileRowSubtitleViews = mutableMapOf<String, TextView>()
     private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
+    private val profileLocationLabelCache = mutableMapOf<String, Pair<Long, LocationDisplayLabel>>()
     private val profileRuntimeCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
     private val profileRuntimeDeepCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
     private lateinit var navHomeButton: TextView
@@ -2812,6 +2813,17 @@ class MainActivity : Activity() {
         val tone: ProfileRuntimeTone
     )
 
+    private data class LocationDisplayLabel(
+        val title: String,
+        val subtitle: String?
+    )
+
+    private data class LocationCountry(
+        val flag: String,
+        val name: String,
+        val aliases: List<String>
+    )
+
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
@@ -2869,7 +2881,47 @@ class MainActivity : Activity() {
     private fun compactProfileTitle(profile: VpnProfile?, fallback: String): String =
         profile?.let { compactProfileTitle(it) } ?: fallback.shortUi(24)
 
-    private fun compactProfileTitle(profile: VpnProfile): String {
+    private fun compactProfileTitle(profile: VpnProfile): String =
+        profileLocationLabel(profile).title.shortUi(26)
+
+    private fun compactProfileSubtitle(profile: VpnProfile): String? =
+        profileLocationLabel(profile).subtitle?.shortUi(24)
+            ?: profile.endpoints.firstOrNull()?.let { "${it.host.shortHost().shortUi(16)}:${it.port}" }
+
+    private fun profileFlagOrIcon(profile: VpnProfile): String = profileLocationCountry(profile)?.flag
+        ?: when (profile.kind) {
+            VpnProfileKind.XRAY -> "✦"
+            VpnProfileKind.SING_BOX -> "◇"
+            VpnProfileKind.CLASH -> "◆"
+            VpnProfileKind.WIREGUARD -> "◎"
+            VpnProfileKind.OPENVPN -> "◉"
+            VpnProfileKind.UNKNOWN -> "◎"
+        }
+
+    private fun profileLocationLabel(profile: VpnProfile): LocationDisplayLabel {
+        val cached = profileLocationLabelCache[profile.id]
+        if (cached != null && cached.first == profile.updatedAtEpochMs) return cached.second
+        val country = profileLocationCountry(profile)
+        val segments = profileLocationSegments(profile)
+        val displaySegments = segments
+            .map { it.withoutCountryWords(country) }
+            .filter { segment -> segment.isNotBlank() && !segment.matchesCountry(country) && !segment.isNoisyLocationSegment() }
+            .distinctBy { it.lowercase(java.util.Locale.US) }
+        val focused = displaySegments.firstOrNull()
+        val fallback = fallbackCompactProfileTitle(profile)
+        val title = when {
+            country != null && focused != null -> "${country.name} • ${focused.shortUi(14)}"
+            country != null -> country.name
+            focused != null -> focused
+            else -> fallback
+        }.ifBlank { fallback }
+        val subtitle = displaySegments.firstOrNull { segment -> segment != focused }
+        val label = LocationDisplayLabel(title = title, subtitle = subtitle)
+        profileLocationLabelCache[profile.id] = profile.updatedAtEpochMs to label
+        return label
+    }
+
+    private fun fallbackCompactProfileTitle(profile: VpnProfile): String {
         val inspectedName = profileXrayDescriptor(profile)?.displayName
         val base = primaryProfileNameSegment(profile.displayName.cleanProfileLabel())
         val title = base.substringBefore("/")
@@ -2887,38 +2939,83 @@ class MainActivity : Activity() {
             .shortUi(24)
     }
 
-    private fun compactProfileSubtitle(profile: VpnProfile): String? {
-        val base = primaryProfileNameSegment(profile.displayName.cleanProfileLabel())
-        val afterSlash = base.substringAfter("/", "")
-            .substringBefore("(")
-            .substringBefore("~")
-            .replace("✨", "")
-            .replace("✦", "")
-            .replace("✅", "")
-            .trim(' ', '•', '-', '·')
-            .trim()
-            .takeIf { it.isNotBlank() }
-        return afterSlash?.shortUi(18)
-            ?: profile.endpoints.firstOrNull()?.let { "${it.host.shortHost().shortUi(16)}:${it.port}" }
+    private fun profileLocationCountry(profile: VpnProfile): LocationCountry? {
+        val label = locationSourceLabel(profile)
+        return LOCATION_COUNTRIES.firstOrNull { label.contains(it.flag) }
+            ?: LOCATION_COUNTRIES.firstOrNull { country ->
+                country.aliases.any { alias -> label.containsLocationAlias(alias) }
+            }
     }
 
-    private fun profileFlagOrIcon(profile: VpnProfile): String {
-        val label = listOfNotNull(
-            profile.displayName.cleanProfileLabel(),
-            profileXrayDescriptor(profile)?.displayName
-        ).joinToString(" ")
-        return listOf(
-            "🇮🇷", "🇳🇱", "🇺🇸", "🇨🇦", "🇩🇪", "🇫🇷", "🇬🇧", "🇹🇷", "🇦🇪", "🇷🇺",
-            "🇸🇬", "🇯🇵", "🇰🇷", "🇭🇰", "🇮🇳", "🇧🇷", "🇦🇺", "🇮🇹", "🇪🇸", "🇵🇱"
-        ).firstOrNull { label.contains(it) }
-            ?: when (profile.kind) {
-                VpnProfileKind.XRAY -> "✦"
-                VpnProfileKind.SING_BOX -> "◇"
-                VpnProfileKind.CLASH -> "◆"
-                VpnProfileKind.WIREGUARD -> "◎"
-                VpnProfileKind.OPENVPN -> "◉"
-                VpnProfileKind.UNKNOWN -> "◎"
-            }
+    private fun profileLocationSegments(profile: VpnProfile): List<String> = locationSourceLabel(profile)
+        .replace('|', '•')
+        .replace('/', '•')
+        .replace('\\', '•')
+        .replace('~', '•')
+        .replace('—', '•')
+        .replace('–', '•')
+        .replace(Regex("\\s+-\\s+"), " • ")
+        .replace(Regex("[\\[\\]{}()<>]+"), " • ")
+        .withoutFlagEmojis()
+        .split('•')
+        .mapNotNull { it.cleanLocationSegment().takeIf { segment -> segment.isNotBlank() } }
+        .distinctBy { it.lowercase(java.util.Locale.US) }
+        .take(4)
+
+    private fun locationSourceLabel(profile: VpnProfile): String = listOfNotNull(
+        profileXrayDescriptor(profile)?.displayName,
+        profile.displayName.cleanProfileLabel()
+    ).joinToString(" • ")
+
+    private fun String.cleanLocationSegment(): String = replace('_', ' ')
+        .replace(Regex("\\s+"), " ")
+        .replace(Regex("^[#0-9.\\-•·]+"), "")
+        .replace(Regex("(?i)\\b(vless|vmess|trojan|xray|v2ray|vpn|proxy|config|subscription|sub|profile|clash|sing-box|hiddify|nekobox)\\b"), "")
+        .replace(Regex("(?i)\\b(tls|xtls|grpc|websocket|ws|tcp|httpupgrade|xhttp|splithttp|reality|cdn)\\b"), "")
+        .trim(' ', '•', '-', '·', ':')
+        .collapseLabelWhitespace()
+
+    private fun String.isNoisyLocationSegment(): Boolean {
+        val lower = lowercase(java.util.Locale.US)
+        return lower.isBlank() ||
+            lower.length < 2 ||
+            lower.startsWith("http") ||
+            lower.contains("://") ||
+            lower.contains("@") ||
+            lower.contains("=") ||
+            Regex("^[a-f0-9]{8,}(-[a-f0-9]{4,}){1,}$", RegexOption.IGNORE_CASE).matches(lower) ||
+            lower in setOf("server", "node", "new", "free", "vip", "premium", "direct")
+    }
+
+    private fun String.matchesCountry(country: LocationCountry?): Boolean {
+        if (country == null) return false
+        val lower = lowercase(java.util.Locale.US)
+        return lower == country.name.lowercase(java.util.Locale.US) ||
+            country.aliases.take(3).any { alias -> lower.containsLocationAlias(alias) }
+    }
+
+    private fun String.withoutCountryWords(country: LocationCountry?): String {
+        if (country == null) return this
+        var cleaned = this
+        val removable = (listOf(country.name) + country.aliases.take(3)).distinctBy { it.lowercase(java.util.Locale.US) }
+        removable.sortedByDescending { it.length }.forEach { alias ->
+            cleaned = cleaned.replace(Regex("\\b${Regex.escape(alias)}\\b", RegexOption.IGNORE_CASE), " ")
+        }
+        return cleaned.trim(' ', '•', '-', '·', ':').collapseLabelWhitespace()
+    }
+
+    private fun String.containsLocationAlias(alias: String): Boolean {
+        val lower = lowercase(java.util.Locale.US)
+        val normalizedAlias = alias.lowercase(java.util.Locale.US)
+        if (normalizedAlias.any { it !in 'a'..'z' && it !in '0'..'9' && it != ' ' }) {
+            return contains(alias)
+        }
+        return if (normalizedAlias.length <= 3) {
+            lower.split(Regex("[^a-z0-9]+"))
+                .any { it == normalizedAlias }
+        } else {
+            lower.contains(normalizedAlias)
+        }
     }
 
     private fun profileRowSubtitle(profile: VpnProfile): String {
@@ -6156,6 +6253,37 @@ class MainActivity : Activity() {
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",
             "https://cp.cloudflare.com/generate_204"
+        )
+        val LOCATION_COUNTRIES = listOf(
+            LocationCountry("🇮🇷", "Iran", listOf("iran", "ir", "tehran", "ایران", "تهران")),
+            LocationCountry("🇳🇱", "Netherlands", listOf("netherlands", "nederland", "nl", "amsterdam", "rotterdam")),
+            LocationCountry("🇩🇪", "Germany", listOf("germany", "deutschland", "de", "frankfurt", "berlin", "nuremberg", "falkenstein")),
+            LocationCountry("🇺🇸", "United States", listOf("united states", "usa", "us", "america", "new york", "los angeles", "ashburn", "dallas", "california")),
+            LocationCountry("🇨🇦", "Canada", listOf("canada", "ca", "toronto", "montreal", "vancouver")),
+            LocationCountry("🇬🇧", "United Kingdom", listOf("united kingdom", "uk", "gb", "england", "london")),
+            LocationCountry("🇫🇷", "France", listOf("france", "fr", "paris", "roubaix")),
+            LocationCountry("🇹🇷", "Turkey", listOf("turkey", "tr", "istanbul", "izmir")),
+            LocationCountry("🇦🇪", "UAE", listOf("uae", "ae", "emirates", "dubai", "abu dhabi")),
+            LocationCountry("🇷🇺", "Russia", listOf("russia", "ru", "moscow", "saint petersburg")),
+            LocationCountry("🇸🇬", "Singapore", listOf("singapore", "sg")),
+            LocationCountry("🇯🇵", "Japan", listOf("japan", "jp", "tokyo", "osaka")),
+            LocationCountry("🇰🇷", "Korea", listOf("korea", "kr", "seoul")),
+            LocationCountry("🇭🇰", "Hong Kong", listOf("hong kong", "hk")),
+            LocationCountry("🇮🇳", "India", listOf("india", "in", "mumbai", "delhi")),
+            LocationCountry("🇧🇷", "Brazil", listOf("brazil", "br", "sao paulo")),
+            LocationCountry("🇦🇺", "Australia", listOf("australia", "au", "sydney", "melbourne")),
+            LocationCountry("🇮🇹", "Italy", listOf("italy", "it", "milan", "rome")),
+            LocationCountry("🇪🇸", "Spain", listOf("spain", "es", "madrid")),
+            LocationCountry("🇵🇱", "Poland", listOf("poland", "pl", "warsaw")),
+            LocationCountry("🇫🇮", "Finland", listOf("finland", "fi", "helsinki")),
+            LocationCountry("🇸🇪", "Sweden", listOf("sweden", "se", "stockholm")),
+            LocationCountry("🇨🇭", "Switzerland", listOf("switzerland", "ch", "zurich")),
+            LocationCountry("🇷🇴", "Romania", listOf("romania", "ro", "bucharest")),
+            LocationCountry("🇦🇹", "Austria", listOf("austria", "at", "vienna")),
+            LocationCountry("🇧🇪", "Belgium", listOf("belgium", "be", "brussels")),
+            LocationCountry("🇦🇲", "Armenia", listOf("armenia", "am", "yerevan")),
+            LocationCountry("🇶🇦", "Qatar", listOf("qatar", "qa", "doha")),
+            LocationCountry("🇸🇦", "Saudi Arabia", listOf("saudi", "saudi arabia", "sa", "riyadh"))
         )
         const val LOCATION_FILTER_ALL = "all"
         const val LOCATION_FILTER_MANUAL = "manual"
