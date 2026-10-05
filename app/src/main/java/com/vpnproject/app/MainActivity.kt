@@ -220,6 +220,7 @@ class MainActivity : Activity() {
 
         autoTestEnabled = appSettings.getBoolean(KEY_AUTO_TEST_ENABLED, false)
         smartFallbackEnabled = appSettings.getBoolean(KEY_SMART_FALLBACK_ENABLED, false)
+        loadLocationViewPrefs()
 
         window.statusBarColor = PearlPalette.PEARL_TOP
         window.navigationBarColor = PearlPalette.PEARL_WHITE
@@ -1402,6 +1403,7 @@ class MainActivity : Activity() {
         val allProfiles = activeLocationProfiles(storedProfiles, groups)
         selectedLocationGroupFilter = filter
         normalizeLocationGroupFilter(groups)
+        saveLocationViewPrefs()
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
         val grouped = profilesForLocationFilter(filtered, groups)
@@ -1917,7 +1919,7 @@ class MainActivity : Activity() {
             title = "Subscriptions",
             subtitle = "${groups.size} group${if (groups.size == 1) "" else "s"} • ${subscriptionIds.size} saved subscription configs"
         ) { dialog ->
-            addView(settingsHintText("Subscriptions are user/provider-provided and stored encrypted. Large lists are rendered progressively so the phone does not lock up."))
+            addView(settingsHintText("Subscriptions are user/provider-provided and stored encrypted. Large lists are rendered progressively. Last tab, runtime filter, and sort are remembered; search is session-only."))
             addView(bottomSheetActionRow("+", "Add subscription URL", "Use the main + flow and compact import picker") {
                 dialog.dismiss()
                 promptAddSubscriptionGroup()
@@ -1934,6 +1936,13 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 showSection(AppSection.PROFILES)
                 showLocationSearchSheet()
+            })
+            addView(bottomSheetActionRow("↺", "Reset Locations view", "Back to All configs, Recommended sort, no active search") {
+                dialog.dismiss()
+                resetLocationViewPrefs(clearSearch = true)
+                refreshProfileButtons(syncVerified = false)
+                setActionStatus("Locations view reset to All + Recommended. Search cleared.")
+                showSection(AppSection.PROFILES)
             })
             if (groups.isEmpty() && storedProfiles.isEmpty()) {
                 addView(settingsHintText("No configs yet. Add a subscription URL, paste configs, or import a file from +."))
@@ -4183,6 +4192,7 @@ class MainActivity : Activity() {
                 synced.lastOrNull()?.group?.let { group ->
                     if (selectedLocationGroupFilter != LOCATION_FILTER_ALL && selectedLocationGroupFilter != LOCATION_FILTER_MANUAL) {
                         selectedLocationGroupFilter = group.id
+                        saveLocationViewPrefs()
                     }
                 }
                 refreshProfileButtons()
@@ -4360,6 +4370,7 @@ class MainActivity : Activity() {
 
     private fun handleSubscriptionSyncSuccess(sync: SubscriptionSyncResult) {
         selectedLocationGroupFilter = sync.group.id
+        saveLocationViewPrefs()
         sync.profiles.firstOrNull()?.let { profile ->
             selectedProfile = profile
             selectedProfileId = profile.id
@@ -4399,6 +4410,7 @@ class MainActivity : Activity() {
                 result.fold(
                     onSuccess = { sync ->
                         selectedLocationGroupFilter = sync.group.id
+                        saveLocationViewPrefs()
                         refreshProfileButtons()
                         updateDashboardSummary()
                         setActionStatus("Loaded ${sync.profiles.size}/${sync.linkCount} configs for ${sync.group.displayName.shortUi(28)}" +
@@ -4423,6 +4435,7 @@ class MainActivity : Activity() {
                 result.fold(
                     onSuccess = { sync ->
                         selectedLocationGroupFilter = sync.group.id
+                        saveLocationViewPrefs()
                         sync.profiles.firstOrNull()?.let { profile ->
                             selectedProfile = profile
                             selectedProfileId = profile.id
@@ -5113,15 +5126,63 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun loadLocationViewPrefs() {
+        selectedLocationGroupFilter = sanitizeLocationGroupFilter(
+            appSettings.getString(KEY_LOCATION_GROUP_FILTER, LOCATION_FILTER_ALL)
+        )
+        selectedLocationRuntimeFilter = sanitizeLocationRuntimeFilter(
+            appSettings.getString(KEY_LOCATION_RUNTIME_FILTER, LOCATION_RUNTIME_ALL)
+        )
+        selectedLocationSortMode = sanitizeLocationSortMode(
+            appSettings.getString(KEY_LOCATION_SORT_MODE, LOCATION_SORT_RECOMMENDED)
+        )
+        locationSearchQuery = ""
+    }
+
+    private fun saveLocationViewPrefs() {
+        appSettings.edit()
+            .putString(KEY_LOCATION_GROUP_FILTER, sanitizeLocationGroupFilter(selectedLocationGroupFilter))
+            .putString(KEY_LOCATION_RUNTIME_FILTER, sanitizeLocationRuntimeFilter(selectedLocationRuntimeFilter))
+            .putString(KEY_LOCATION_SORT_MODE, sanitizeLocationSortMode(selectedLocationSortMode))
+            .apply()
+    }
+
+    private fun resetLocationViewPrefs(clearSearch: Boolean) {
+        selectedLocationGroupFilter = LOCATION_FILTER_ALL
+        selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+        selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
+        if (clearSearch) locationSearchQuery = ""
+        saveLocationViewPrefs()
+    }
+
+    private fun sanitizeLocationGroupFilter(value: String?): String = when {
+        value.isNullOrBlank() -> LOCATION_FILTER_ALL
+        value == LOCATION_FILTER_MANUAL -> LOCATION_FILTER_ALL
+        else -> value
+    }
+
+    private fun sanitizeLocationRuntimeFilter(value: String?): String = when (value) {
+        LOCATION_RUNTIME_READY -> LOCATION_RUNTIME_READY
+        LOCATION_RUNTIME_ATTENTION -> LOCATION_RUNTIME_ATTENTION
+        else -> LOCATION_RUNTIME_ALL
+    }
+
+    private fun sanitizeLocationSortMode(value: String?): String = when (value) {
+        LOCATION_SORT_NEWEST -> LOCATION_SORT_NEWEST
+        LOCATION_SORT_LATENCY -> LOCATION_SORT_LATENCY
+        LOCATION_SORT_RUNTIME_READY -> LOCATION_SORT_RUNTIME_READY
+        else -> LOCATION_SORT_RECOMMENDED
+    }
+
     private fun normalizeLocationGroupFilter(groups: List<SubscriptionGroup>) {
-        if (selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
-            selectedLocationGroupFilter = LOCATION_FILTER_ALL
-            return
-        }
-        if (selectedLocationGroupFilter == LOCATION_FILTER_ALL) return
-        if (groups.none { it.id == selectedLocationGroupFilter }) {
+        val before = selectedLocationGroupFilter
+        selectedLocationGroupFilter = sanitizeLocationGroupFilter(selectedLocationGroupFilter)
+        if (selectedLocationGroupFilter != LOCATION_FILTER_ALL && groups.none { it.id == selectedLocationGroupFilter }) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
         }
+        selectedLocationRuntimeFilter = sanitizeLocationRuntimeFilter(selectedLocationRuntimeFilter)
+        selectedLocationSortMode = sanitizeLocationSortMode(selectedLocationSortMode)
+        if (selectedLocationGroupFilter != before) saveLocationViewPrefs()
     }
 
     private fun profilesForLocationFilter(
@@ -5178,6 +5239,7 @@ class MainActivity : Activity() {
         val allProfiles = activeLocationProfiles(storedProfiles, groups)
         selectedLocationGroupFilter = filter
         normalizeLocationGroupFilter(groups)
+        saveLocationViewPrefs()
         val query = locationSearchQuery.trim()
         val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
         val grouped = profilesForLocationFilter(filtered, groups)
@@ -5222,12 +5284,14 @@ class MainActivity : Activity() {
         val allTotal = groups.mapNotNull { subscriptionTotalCount(it) }.takeIf { it.isNotEmpty() }?.sum()
         tabRow.addView(locationFilterTab("All", subscriptionCountLabel(allProfiles.size, allTotal), selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
+            saveLocationViewPrefs()
             refreshProfileButtons(syncVerified = false)
         })
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
             tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), subscriptionCountLabel(groupCount, subscriptionTotalCount(group)), selectedLocationGroupFilter == group.id) {
                 selectedLocationGroupFilter = group.id
+                saveLocationViewPrefs()
                 refreshProfileButtons(syncVerified = false)
             })
         }
@@ -5264,6 +5328,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
                     selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
+                    saveLocationViewPrefs()
                     refreshProfileButtons(syncVerified = false)
                 }
             })
@@ -5358,16 +5423,19 @@ class MainActivity : Activity() {
         ) { dialog ->
             addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_ALL) "✓" else "◎", "All configs", "Show every config in the selected tab") {
                 selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
             addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_READY) "✓" else "X", "Only Xray-ready", "Show profiles that are startable or mapped through the embedded runtime") {
                 selectedLocationRuntimeFilter = LOCATION_RUNTIME_READY
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
             addView(bottomSheetActionRow(if (selectedLocationRuntimeFilter == LOCATION_RUNTIME_ATTENTION) "✓" else "!", "Needs attention", "Show missing-key, mapper/runtime-needed, or handoff-only profiles") {
                 selectedLocationRuntimeFilter = LOCATION_RUNTIME_ATTENTION
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
@@ -5381,21 +5449,25 @@ class MainActivity : Activity() {
         ) { dialog ->
             addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_RECOMMENDED) "✓" else "★", "Recommended", "Saved successful/verified and favorites first") {
                 selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
             addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_NEWEST) "✓" else "↻", "Newest", "Newest saved/refreshed configs first") {
                 selectedLocationSortMode = LOCATION_SORT_NEWEST
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
             addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_LATENCY) "✓" else "◷", "Latency", "Lowest saved Quick/Real-delay latency first") {
                 selectedLocationSortMode = LOCATION_SORT_LATENCY
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
             addView(bottomSheetActionRow(if (selectedLocationSortMode == LOCATION_SORT_RUNTIME_READY) "✓" else "X", "Runtime-ready first", "Xray-ready/mapped profiles first without running tests") {
                 selectedLocationSortMode = LOCATION_SORT_RUNTIME_READY
+                saveLocationViewPrefs()
                 dialog.dismiss()
                 refreshProfileButtons(syncVerified = false)
             })
@@ -6070,6 +6142,9 @@ class MainActivity : Activity() {
         const val KEY_XRAY_MUX_ENABLED = "xray_mux_enabled"
         const val KEY_XRAY_MUX_CONCURRENCY = "xray_mux_concurrency"
         const val KEY_XRAY_LOG_LEVEL = "xray_log_level"
+        const val KEY_LOCATION_GROUP_FILTER = "location_group_filter"
+        const val KEY_LOCATION_RUNTIME_FILTER = "location_runtime_filter"
+        const val KEY_LOCATION_SORT_MODE = "location_sort_mode"
         const val DEFAULT_XRAY_MUX_CONCURRENCY = 8
         const val MIN_XRAY_MUX_CONCURRENCY = 1
         const val MAX_XRAY_MUX_CONCURRENCY = 32
