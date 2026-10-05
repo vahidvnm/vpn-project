@@ -49,6 +49,26 @@ class VpnHubStatusMapperTest {
     }
 
     @Test
+    fun reportsConnectingDuringNetworkReverification() {
+        val hub = VpnHubStatusMapper.from(
+            wireGuard = EngineStatus(
+                kind = EngineKind.WIREGUARD_GO,
+                state = EngineState.STOPPED,
+                message = "WireGuard stopped."
+            ),
+            xray = EngineStatus(
+                kind = EngineKind.XRAY_CORE,
+                state = EngineState.RECONNECTING,
+                message = "Network changed; re-checking Xray route."
+            )
+        )
+
+        assertEquals(VpnHubConnectionState.CONNECTING, hub.state)
+        assertEquals("Connecting", hub.title)
+        assertEquals(EngineKind.XRAY_CORE, hub.activeEngine)
+    }
+
+    @Test
     fun reportsFailureWithEngineName() {
         val hub = VpnHubStatusMapper.from(
             wireGuard = EngineStatus(

@@ -8,6 +8,9 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -17,6 +20,7 @@ import com.vpnproject.app.core.IpClassifier
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
+import com.vpnproject.app.engine.NetworkRebindPolicy
 import com.vpnproject.app.engine.XrayTrafficStatsParser
 import go.Seq
 import libv2ray.CoreCallbackHandler
@@ -32,6 +36,25 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class XrayVpnService : VpnService(), CoreCallbackHandler {
     private val running = AtomicBoolean(false)
+    private val reverifyRunning = AtomicBoolean(false)
+    private val rebindPolicy = NetworkRebindPolicy(
+        minIntervalMs = NETWORK_REVERIFY_MIN_INTERVAL_MS,
+        debounceMs = NETWORK_REVERIFY_DEBOUNCE_MS
+    )
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            scheduleNetworkReverification("network available")
+        }
+
+        override fun onLost(network: Network) {
+            scheduleNetworkReverification("network lost")
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            scheduleNetworkReverification("network changed: ${networkCapabilities.summary()}")
+        }
+    }
 
     @Volatile
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -47,6 +70,21 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 
     @Volatile
     private var heartbeatThread: Thread? = null
+
+    @Volatile
+    private var reverifyThread: Thread? = null
+
+    @Volatile
+    private var networkCallbackRegistered: Boolean = false
+
+    @Volatile
+    private var lastRebindRequestedAtEpochMs: Long = 0L
+
+    @Volatile
+    private var activeNote: String = ""
+
+    @Volatile
+    private var activeLocalHttpProxyPort: Int = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
@@ -147,6 +185,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         }
 
         stopCoreOnly()
+        activeNote = note
+        activeLocalHttpProxyPort = localHttpProxyPort
         try {
             updateStatus(
                 EngineState.CONNECTING,
@@ -161,12 +201,14 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                 note
             )
             startForegroundNotification("VPN interface established; starting Xray core…")
+            setCurrentUnderlyingNetwork()
             Seq.setContext(applicationContext)
             Libv2ray.initCoreEnv(filesDir.absolutePath, xudpBaseKey())
             val controller = Libv2ray.newCoreController(this)
             coreController = controller
             controller.startLoop(configJson, tun.fd)
             running.set(true)
+            registerNetworkCallback()
             startForegroundHeartbeat()
             startStatsPolling(controller)
             updateStatus(
@@ -409,6 +451,110 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             .firstOrNull { IpClassifier.isPublicIpv4(it) }
     }
 
+    private fun scheduleNetworkReverification(reason: String) {
+        val controller = coreController ?: return
+        val now = System.currentTimeMillis()
+        val decision = rebindPolicy.evaluate(
+            isRunning = running.get(),
+            nowEpochMs = now,
+            lastRequestedEpochMs = lastRebindRequestedAtEpochMs,
+            reason = reason
+        )
+        if (!decision.shouldSchedule) return
+        lastRebindRequestedAtEpochMs = now
+        if (!reverifyRunning.compareAndSet(false, true)) return
+
+        reverifyThread?.interrupt()
+        reverifyThread = Thread({
+            try {
+                if (decision.delayMs > 0L) Thread.sleep(decision.delayMs)
+                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
+                val activeController = coreController ?: controller
+                val current = lastStatus
+                setCurrentUnderlyingNetwork()
+                updateStatus(
+                    EngineState.RECONNECTING,
+                    "Network changed; re-checking Xray route.",
+                    appendDetailLine(activeNote, "Network change: ${decision.reason}"),
+                    verified = false,
+                    rxBytes = current.rxBytes,
+                    txBytes = current.txBytes,
+                    egressIp = current.egressIp,
+                    latencyMs = current.latencyMs
+                )
+                startForegroundNotification("Network changed. Re-checking Xray route…")
+                startVerification(
+                    activeController,
+                    appendDetailLine(activeNote, "Network re-check: ${decision.reason}").orEmpty(),
+                    activeLocalHttpProxyPort
+                )
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (e: Exception) {
+                val current = lastStatus
+                updateStatus(
+                    EngineState.RUNNING,
+                    "Xray is running, but network re-check could not start: ${e.message ?: e.javaClass.simpleName}",
+                    current.detail,
+                    verified = false,
+                    rxBytes = current.rxBytes,
+                    txBytes = current.txBytes,
+                    egressIp = current.egressIp,
+                    latencyMs = current.latencyMs
+                )
+            } finally {
+                reverifyRunning.set(false)
+            }
+        }, "xray-network-reverify")
+        reverifyThread?.isDaemon = true
+        reverifyThread?.start()
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        val connectivityManager = connectivityManager() ?: return
+        runCatching {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+            lastRebindRequestedAtEpochMs = System.currentTimeMillis()
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        val connectivityManager = connectivityManager() ?: return
+        runCatching {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkCallbackRegistered = false
+        }
+    }
+
+    private fun setCurrentUnderlyingNetwork() {
+        val connectivityManager = connectivityManager() ?: return
+        val underlying = connectivityManager.allNetworks.firstOrNull { network ->
+            val caps = connectivityManager.getNetworkCapabilities(network) ?: return@firstOrNull false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+        runCatching {
+            setUnderlyingNetworks(underlying?.let { arrayOf(it) } ?: emptyArray())
+        }
+    }
+
+    private fun connectivityManager(): ConnectivityManager? =
+        runCatching { getSystemService(ConnectivityManager::class.java) }.getOrNull()
+
+    private fun NetworkCapabilities.summary(): String {
+        val transports = buildList {
+            if (hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) add("wifi")
+            if (hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) add("mobile")
+            if (hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) add("ethernet")
+            if (hasTransport(NetworkCapabilities.TRANSPORT_VPN)) add("vpn")
+        }.ifEmpty { listOf("unknown") }
+        val validated = if (hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) "validated" else "not-validated"
+        return transports.joinToString("+") + "/" + validated
+    }
+
     private fun startForegroundHeartbeat() {
         heartbeatThread?.interrupt()
         heartbeatThread = Thread({
@@ -418,7 +564,12 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                     if (!running.get() || Thread.currentThread().isInterrupted) break
                     val current = lastStatus
                     val message = when (current.state) {
-                        EngineState.VERIFIED -> "Xray VPN protected${current.latencyMs?.let { " • ${it}ms" }.orEmpty()}"
+                        EngineState.VERIFIED -> buildString {
+                            append("Xray VPN protected")
+                            current.egressIp?.let { append(" • IP ").append(it) }
+                            current.latencyMs?.let { append(" • ").append(it).append("ms") }
+                        }
+                        EngineState.RECONNECTING -> "Network changed; re-checking Xray route…"
                         EngineState.VERIFYING,
                         EngineState.CONNECTING -> "Xray VPN is running; verifying route…"
                         EngineState.RUNNING -> "Xray VPN is running; egress is not verified yet."
@@ -540,12 +691,19 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 
     private fun stopCoreOnly() {
         running.set(false)
+        reverifyRunning.set(false)
+        unregisterNetworkCallback()
         verifierThread?.interrupt()
         verifierThread = null
+        reverifyThread?.interrupt()
+        reverifyThread = null
         statsThread?.interrupt()
         statsThread = null
         heartbeatThread?.interrupt()
         heartbeatThread = null
+        activeNote = ""
+        activeLocalHttpProxyPort = 0
+        lastRebindRequestedAtEpochMs = 0L
         runCatching { coreController?.stopLoop() }
         coreController = null
         runCatching { vpnInterface?.close() }
@@ -671,6 +829,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val MAX_POST_CHECK_RESPONSE_CHARS = 4_096
         private const val STATS_REFRESH_MS = 2_000L
         private const val FOREGROUND_HEARTBEAT_MS = 60_000L
+        private const val NETWORK_REVERIFY_MIN_INTERVAL_MS = 15_000L
+        private const val NETWORK_REVERIFY_DEBOUNCE_MS = 1_000L
         private const val MIN_LOCAL_HTTP_PROXY_PORT = 1024
         private const val MAX_LOCAL_HTTP_PROXY_PORT = 65535
         private val IPV4_REGEX = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")

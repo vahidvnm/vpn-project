@@ -291,6 +291,7 @@ score = latency + recentFailurePenalty - lastSuccessBonus
   - [x] حفظ SNI/Host/Path/ALPN/Fingerprint/REALITY publicKey/shortId در config runtime تا حد parser فعلی.
   - [x] پشتیبانی runtime و تست موفق VLESS `httpupgrade/none` با status `VERIFIED` روی شبکه موبایل ایران.
   - [x] verification اولیه Xray با delay check و traffic stats از core.
+  - [x] re-verification اولیه Xray روی تغییر شبکه با debounce و refresh کردن underlying network.
   - [ ] test matrix گوشی برای transportهای بیشتر: `ws/tls`, `tcp/none`, `tcp` با HTTP header, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.
   - [ ] تشخیص credential/transport/server failure با پیام‌های قابل فهم‌تر برای کاربر.
   - [ ] review کامل license/LGPL و noticeهای production.
@@ -588,6 +589,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله بعد Routing & DNS: تنظیم VPN DNS برای Android VPN/Xray core و لیست packageهای bypass برای per-app routing پایه اضافه شد؛ LAN/private IP bypass فعلاً برای Xray مستقیم/ON نگه داشته شد و گزینه‌های Fragment/Mux/FakeDNS به مرحله Advanced موکول شدند.
 - [x] مرحله Advanced Xray: کنترل‌های Sniffing، Mux/concurrency و log level به Settings اضافه شدند و واقعاً وارد runtime JSON/Real delay می‌شوند؛ Fragment و FakeDNS فعلاً planned/خاموش ماندند تا بدون نگاشت مطمئن اتصال خراب نشود.
 - [x] مرحله verification تکمیلی Xray: هنگام Connect یک HTTP proxy لوکال فقط روی `127.0.0.1` داخل runtime ساخته می‌شود تا بعد از بالا آمدن VPN، public egress IP و مسیر DNS/DoH به‌صورت best-effort از مسیر Xray چک شود؛ جزئیات leak همچنان امن/غیرمحرمانه گزارش می‌شود.
+- [x] مرحله lifecycle/reconnect اولیه Xray: سرویس Xray تغییر شبکه Wi‑Fi/mobile/VPN capability را با `ConnectivityManager` می‌گیرد، underlying network را refresh می‌کند، foreground notification را زنده نگه می‌دارد و verification را با debounce دوباره اجرا می‌کند؛ auto-switch بین کانفیگ‌ها هنوز مرحله بعد است.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

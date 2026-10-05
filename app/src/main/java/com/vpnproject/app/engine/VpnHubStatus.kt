@@ -51,7 +51,12 @@ object VpnHubStatusMapper {
             )
         }
 
-        candidates.firstOrNull { it.state == EngineState.CONNECTING || it.state == EngineState.VERIFYING || it.state == EngineState.PREPARING_CONFIG }?.let { status ->
+        candidates.firstOrNull {
+            it.state == EngineState.CONNECTING ||
+                it.state == EngineState.VERIFYING ||
+                it.state == EngineState.RECONNECTING ||
+                it.state == EngineState.PREPARING_CONFIG
+        }?.let { status ->
             return VpnHubStatus(
                 state = VpnHubConnectionState.CONNECTING,
                 title = "Connecting",
