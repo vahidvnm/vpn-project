@@ -28,6 +28,15 @@ object EngineRegistry {
             description = "Experimental: import user-owned sing-box JSON for grouping and diagnostics; embedded engine comes next."
         ),
         RegisteredEngine(
+            id = VpnEngineId.CLASH_IMPORT,
+            engineKind = EngineKind.CLASH_IMPORT,
+            displayName = "Clash import",
+            embedded = false,
+            startableInApp = false,
+            priority = 25,
+            description = "Experimental: import Clash/Clash.Meta YAML for grouping and diagnostics; runtime mapping comes next."
+        ),
+        RegisteredEngine(
             id = VpnEngineId.WIREGUARD_GO,
             engineKind = EngineKind.WIREGUARD_GO,
             displayName = "WireGuard GoBackend",
@@ -50,6 +59,7 @@ object EngineRegistry {
     fun engineFor(kind: VpnProfileKind): RegisteredEngine = when (kind) {
         VpnProfileKind.XRAY -> engine(VpnEngineId.XRAY_CORE)
         VpnProfileKind.SING_BOX -> engine(VpnEngineId.SING_BOX_EXPERIMENTAL)
+        VpnProfileKind.CLASH -> engine(VpnEngineId.CLASH_IMPORT)
         VpnProfileKind.WIREGUARD -> engine(VpnEngineId.WIREGUARD_GO)
         VpnProfileKind.OPENVPN -> engine(VpnEngineId.OPENVPN_EXTERNAL)
         VpnProfileKind.UNKNOWN -> RegisteredEngine.none()
@@ -58,6 +68,7 @@ object EngineRegistry {
     fun engineFor(kind: ConfigKind): RegisteredEngine = when (kind) {
         ConfigKind.V2RAY -> engine(VpnEngineId.XRAY_CORE)
         ConfigKind.SING_BOX -> engine(VpnEngineId.SING_BOX_EXPERIMENTAL)
+        ConfigKind.CLASH -> engine(VpnEngineId.CLASH_IMPORT)
         ConfigKind.WIREGUARD -> engine(VpnEngineId.WIREGUARD_GO)
         ConfigKind.OPENVPN -> engine(VpnEngineId.OPENVPN_EXTERNAL)
         ConfigKind.UNKNOWN -> RegisteredEngine.none()
@@ -69,6 +80,7 @@ object EngineRegistry {
 enum class VpnEngineId {
     XRAY_CORE,
     SING_BOX_EXPERIMENTAL,
+    CLASH_IMPORT,
     WIREGUARD_GO,
     OPENVPN_EXTERNAL,
     NONE

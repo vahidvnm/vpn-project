@@ -49,6 +49,7 @@ data class VpnProfile(
 enum class VpnProfileKind(val displayName: String) {
     XRAY("V2Ray/Xray"),
     SING_BOX("sing-box"),
+    CLASH("Clash"),
     WIREGUARD("WireGuard"),
     OPENVPN("OpenVPN"),
     UNKNOWN("Unknown")
@@ -109,6 +110,7 @@ object VpnProfileFactory {
     private fun defaultProfileName(kind: ConfigKind): String = when (kind) {
         ConfigKind.V2RAY -> "V2Ray/Xray profile"
         ConfigKind.SING_BOX -> "sing-box profile"
+        ConfigKind.CLASH -> "Clash profile"
         ConfigKind.WIREGUARD -> "WireGuard profile"
         ConfigKind.OPENVPN -> "OpenVPN profile"
         ConfigKind.UNKNOWN -> "Imported profile"
@@ -117,6 +119,7 @@ object VpnProfileFactory {
     private fun ConfigKind.toProfileKind(): VpnProfileKind = when (this) {
         ConfigKind.V2RAY -> VpnProfileKind.XRAY
         ConfigKind.SING_BOX -> VpnProfileKind.SING_BOX
+        ConfigKind.CLASH -> VpnProfileKind.CLASH
         ConfigKind.WIREGUARD -> VpnProfileKind.WIREGUARD
         ConfigKind.OPENVPN -> VpnProfileKind.OPENVPN
         ConfigKind.UNKNOWN -> VpnProfileKind.UNKNOWN

@@ -48,6 +48,29 @@ class VpnProfileFactoryTest {
     }
 
     @Test
+    fun createsClashProfileMetadata() {
+        val imported = ConfigImporter.parse(
+            """
+                proxies:
+                  - name: clash tls
+                    type: vmess
+                    server: clash.example.net
+                    port: 443
+                    uuid: 00000000-0000-4000-8000-000000000000
+                    tls: true
+                    servername: front.example.net
+            """.trimIndent()
+        )
+
+        val profile = VpnProfileFactory.fromImportedConfig(imported, nowEpochMs = 345L)
+
+        assertEquals(VpnProfileKind.CLASH, profile.kind)
+        assertEquals("clash tls", profile.name)
+        assertEquals("CLASH_TLS", profile.endpoints.single().protocol)
+        assertEquals("clash.example.net", profile.endpoints.single().host)
+    }
+
+    @Test
     fun createsWireGuardProfileMetadata() {
         val imported = ConfigImporter.parse(
             """

@@ -29,6 +29,16 @@ class EngineRegistryTest {
     }
 
     @Test
+    fun mapsClashToExperimentalImportOnlyEngine() {
+        val engine = EngineRegistry.engineFor(ConfigKind.CLASH)
+
+        assertEquals(VpnEngineId.CLASH_IMPORT, engine.id)
+        assertEquals(EngineKind.CLASH_IMPORT, engine.engineKind)
+        assertFalse(engine.embedded)
+        assertFalse(engine.startableInApp)
+    }
+
+    @Test
     fun mapsOpenVpnToExternalHandoffUntilEmbeddedLicenseDecision() {
         val engine = EngineRegistry.engineFor(ConfigKind.OPENVPN)
 

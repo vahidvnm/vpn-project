@@ -4,6 +4,7 @@ enum class EngineKind {
     WIREGUARD_GO,
     XRAY_CORE,
     SING_BOX_EXPERIMENTAL,
+    CLASH_IMPORT,
     OPENVPN_UNAVAILABLE
 }
 

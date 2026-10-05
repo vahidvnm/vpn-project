@@ -12,6 +12,7 @@ object PinnedConfigRenderer {
             ConfigKind.WIREGUARD -> renderWireGuard(config.originalText, endpoint, pinnedIp)
             ConfigKind.V2RAY,
             ConfigKind.SING_BOX,
+            ConfigKind.CLASH,
             ConfigKind.UNKNOWN -> throw IllegalArgumentException("Unsupported config kind for IP pin rendering.")
         }
     }

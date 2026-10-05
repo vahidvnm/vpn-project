@@ -13,6 +13,10 @@ enum class VpnProtocol {
     SING_BOX_TCP,
     SING_BOX_REALITY,
     SING_BOX_UNKNOWN,
+    CLASH_TLS,
+    CLASH_TCP,
+    CLASH_REALITY,
+    CLASH_UNKNOWN,
     UNKNOWN
 }
 

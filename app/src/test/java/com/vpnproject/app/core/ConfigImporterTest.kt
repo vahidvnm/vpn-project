@@ -150,6 +150,28 @@ class ConfigImporterTest {
     }
 
     @Test
+    fun parsesClashYamlConfig() {
+        val text = """
+            proxies:
+              - name: clash-reality
+                type: vless
+                server: clash.example.com
+                port: 443
+                uuid: 00000000-0000-4000-8000-000000000000
+                tls: true
+                servername: www.example.com
+                reality-opts:
+                  public-key: PUB
+        """.trimIndent()
+
+        val config = ConfigImporter.parse(text)
+
+        assertEquals(ConfigKind.CLASH, config.kind)
+        assertEquals("clash.example.com", config.endpoints.single().host)
+        assertEquals(VpnProtocol.CLASH_REALITY, config.endpoints.single().protocol)
+    }
+
+    @Test
     fun parsesTrojanRealityAsTcpDiagnosticEndpoint() {
         val text = "trojan://password@example.org:443?security=reality&sni=www.microsoft.com&type=tcp#reality"
 

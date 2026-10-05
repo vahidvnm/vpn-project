@@ -5,6 +5,7 @@ enum class ConfigKind {
     WIREGUARD,
     V2RAY,
     SING_BOX,
+    CLASH,
     UNKNOWN
 }
 

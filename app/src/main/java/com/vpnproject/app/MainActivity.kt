@@ -1908,6 +1908,7 @@ class MainActivity : Activity() {
     private fun engineLabel(kind: com.vpnproject.app.engine.EngineKind): String = when (kind) {
         com.vpnproject.app.engine.EngineKind.XRAY_CORE -> "Xray"
         com.vpnproject.app.engine.EngineKind.SING_BOX_EXPERIMENTAL -> "sing-box"
+        com.vpnproject.app.engine.EngineKind.CLASH_IMPORT -> "Clash"
         com.vpnproject.app.engine.EngineKind.WIREGUARD_GO -> "WireGuard"
         com.vpnproject.app.engine.EngineKind.OPENVPN_UNAVAILABLE -> "OpenVPN handoff"
     }
@@ -2006,6 +2007,7 @@ class MainActivity : Activity() {
             ?: when (profile.kind) {
                 VpnProfileKind.XRAY -> "✦"
                 VpnProfileKind.SING_BOX -> "◇"
+                VpnProfileKind.CLASH -> "◆"
                 VpnProfileKind.WIREGUARD -> "◎"
                 VpnProfileKind.OPENVPN -> "◉"
                 VpnProfileKind.UNKNOWN -> "🌐"
@@ -2031,7 +2033,16 @@ class MainActivity : Activity() {
     private fun profileTransportLabel(profile: VpnProfile): String? = when (profile.kind) {
         VpnProfileKind.XRAY -> profileXrayDescriptor(profile)?.shortLabel
         VpnProfileKind.SING_BOX -> profile.endpoints.firstOrNull()?.protocol?.let { singBoxProtocolLabel(it) } ?: "sing-box"
+        VpnProfileKind.CLASH -> profile.endpoints.firstOrNull()?.protocol?.let { clashProtocolLabel(it) } ?: "Clash"
         else -> null
+    }
+
+    private fun clashProtocolLabel(protocolName: String): String = when (runCatching { VpnProtocol.valueOf(protocolName) }.getOrNull()) {
+        VpnProtocol.CLASH_REALITY -> "Clash Reality"
+        VpnProtocol.CLASH_TLS -> "Clash TLS"
+        VpnProtocol.CLASH_TCP -> "Clash TCP"
+        VpnProtocol.CLASH_UNKNOWN -> "Clash"
+        else -> "Clash"
     }
 
     private fun singBoxProtocolLabel(protocolName: String): String = when (runCatching { VpnProtocol.valueOf(protocolName) }.getOrNull()) {
@@ -2706,6 +2717,11 @@ class MainActivity : Activity() {
                 hubStatusTitle.text = "Import only"
                 hubStatusDetail.text = "sing-box engine is not bundled yet; this profile is ready for the experimental engine stage."
             }
+            ConfigKind.CLASH -> {
+                status.text = "Clash import is saved for grouping and no-VPN diagnostics. Runtime mapping to Xray/sing-box comes next; use Advanced diagnostics for now."
+                hubStatusTitle.text = "Import only"
+                hubStatusDetail.text = "Clash/Hiddify/NekoBox-style profiles are ready for the import pipeline; embedded runtime mapping is pending."
+            }
             ConfigKind.OPENVPN -> status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
             ConfigKind.UNKNOWN -> status.text = "Unknown config kind cannot be started."
         }
@@ -2878,7 +2894,7 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 importConfigFromClipboard()
             })
-            addView(bottomSheetActionRow("□", "Import from file", "Pick .json, .conf, .ovpn, or text file") {
+            addView(bottomSheetActionRow("□", "Import from file", "Pick .json, .yaml, .conf, .ovpn, or text file") {
                 dialog.dismiss()
                 openConfigPicker()
             })
@@ -3337,6 +3353,8 @@ class MainActivity : Activity() {
                     "\n\nNext: tap Connect. Advanced endpoint probe is optional."
                 ConfigKind.SING_BOX ->
                     "\n\nNext: sing-box import is experimental. Use Advanced diagnostics now; embedded sing-box engine is the next stage."
+                ConfigKind.CLASH ->
+                    "\n\nNext: Clash import is experimental. Use Advanced diagnostics now; mapping these profiles to Xray/sing-box runtime comes next."
                 else -> ""
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
@@ -3361,7 +3379,7 @@ class MainActivity : Activity() {
                 V2RayLinkInspector.safeDisplayName(config.name)?.let { return it }
             }
         }
-        if (config.kind == ConfigKind.SING_BOX && externalName.isNullOrBlank()) {
+        if ((config.kind == ConfigKind.SING_BOX || config.kind == ConfigKind.CLASH) && externalName.isNullOrBlank()) {
             V2RayLinkInspector.safeDisplayName(config.name)?.let { return it }
         }
         return externalName ?: config.name
@@ -4115,6 +4133,10 @@ class MainActivity : Activity() {
             VpnProtocol.SING_BOX_TCP,
             VpnProtocol.SING_BOX_REALITY,
             VpnProtocol.SING_BOX_UNKNOWN,
+            VpnProtocol.CLASH_TLS,
+            VpnProtocol.CLASH_TCP,
+            VpnProtocol.CLASH_REALITY,
+            VpnProtocol.CLASH_UNKNOWN,
             VpnProtocol.UNKNOWN -> true
             VpnProtocol.OPENVPN_UDP,
             VpnProtocol.WIREGUARD -> false

@@ -21,10 +21,12 @@ object ConfigImporter {
                 OpenVpnConfigParser.parse(normalized, name)
             SingBoxConfigParser.looksLikeSingBox(normalized) ->
                 SingBoxConfigParser.parse(normalized, name)
+            ClashConfigParser.looksLikeClash(normalized) ->
+                ClashConfigParser.parse(normalized, name)
             V2RayConfigParser.looksLikeV2Ray(normalized) ->
                 V2RayConfigParser.parse(normalized, name)
             else -> throw ConfigParseException(
-                "This does not look like an OpenVPN .ovpn, WireGuard .conf, V2Ray/Xray share-link/subscription, or sing-box JSON file."
+                "This does not look like an OpenVPN .ovpn, WireGuard .conf, V2Ray/Xray share-link/subscription, sing-box JSON, or Clash YAML file."
             )
         }
     }
