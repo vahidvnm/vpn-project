@@ -12,6 +12,24 @@ import java.util.Base64
 
 object V2RayRuntimeConfigBuilder {
     fun build(config: ImportedConfig): V2RayRuntimeConfig {
+        val prepared = prepareProfile(config)
+        return V2RayRuntimeConfig(
+            configJson = buildXrayConfig(prepared.profile, includeTunInbound = true),
+            profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
+            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray."
+        )
+    }
+
+    fun buildDelayProbe(config: ImportedConfig): V2RayRuntimeConfig {
+        val prepared = prepareProfile(config)
+        return V2RayRuntimeConfig(
+            configJson = buildXrayConfig(prepared.profile, includeTunInbound = false),
+            profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
+            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN."
+        )
+    }
+
+    private fun prepareProfile(config: ImportedConfig): PreparedProfile {
         val source = when (config.kind) {
             ConfigKind.V2RAY -> "V2Ray/Xray"
             ConfigKind.SING_BOX -> "sing-box"
@@ -26,11 +44,7 @@ object V2RayRuntimeConfigBuilder {
         } ?: throw ConfigParseException("No Xray-compatible outbound found in this $source config. It stays saved for diagnostics, but Connect needs an additional runtime mapper or embedded engine for its unsupported features.")
         val profile = parseLink(link)
         validateRuntimeSupport(profile)
-        return V2RayRuntimeConfig(
-            configJson = buildXrayConfig(profile),
-            profileName = profile.name ?: config.name ?: "${source.lowercase(java.util.Locale.US)}-import",
-            note = "Prepared $source ${profile.scheme.uppercase()} ${profile.address}:${profile.port} via ${profile.network}/${profile.security.ifBlank { "none" }} for embedded Xray."
-        )
+        return PreparedProfile(source, profile)
     }
 
     internal fun firstShareLink(text: String): String? = V2RaySubscriptionParser.extractLinks(text).firstOrNull()
@@ -175,8 +189,22 @@ object V2RayRuntimeConfigBuilder {
         }
     }
 
-    private fun buildXrayConfig(profile: V2RayProfile): String {
+    private fun buildXrayConfig(profile: V2RayProfile, includeTunInbound: Boolean): String {
         val outbound = buildOutbound(profile)
+        val inbounds = if (includeTunInbound) {
+            """
+                [
+                  {
+                    "tag": "tun",
+                    "protocol": "tun",
+                    "settings": { "name": "xray0", "MTU": 1500, "userLevel": 8 },
+                    "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+                  }
+                ]
+            """.trimIndent()
+        } else {
+            "[]"
+        }
         return """
             {
               "stats": {},
@@ -185,14 +213,7 @@ object V2RayRuntimeConfigBuilder {
                 "levels": { "8": { "handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 1 } },
                 "system": { "statsOutboundUplink": true, "statsOutboundDownlink": true }
               },
-              "inbounds": [
-                {
-                  "tag": "tun",
-                  "protocol": "tun",
-                  "settings": { "name": "xray0", "MTU": 1500, "userLevel": 8 },
-                  "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
-                }
-              ],
+              "inbounds": $inbounds,
               "outbounds": [
                 $outbound,
                 { "tag": "direct", "protocol": "freedom", "streamSettings": { "sockopt": { "domainStrategy": "UseIP" } } },
@@ -510,6 +531,11 @@ data class V2RayRuntimeConfig(
     val configJson: String,
     val profileName: String,
     val note: String
+)
+
+private data class PreparedProfile(
+    val source: String,
+    val profile: V2RayProfile
 )
 
 private data class V2RayProfile(

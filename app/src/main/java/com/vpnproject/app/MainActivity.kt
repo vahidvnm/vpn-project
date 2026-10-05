@@ -65,6 +65,7 @@ import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
 import com.vpnproject.app.engine.VpnHubConnectionState
+import com.vpnproject.app.engine.XrayRealDelayTester
 import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.SecureProfileStore
@@ -145,6 +146,7 @@ class MainActivity : Activity() {
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
     private val endpointDiscovery by lazy { EndpointDiscovery() }
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
+    private val xrayRealDelayTester by lazy { XrayRealDelayTester(this) }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
     private val profileStore by lazy { SecureProfileStore(this) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
@@ -905,7 +907,7 @@ class MainActivity : Activity() {
         // Use Locations > Queue tools for a capped manual ping test.
     }
 
-    private fun autoTestSelectedConfig(reason: String, testLabel: String = "Ping test") {
+    private fun autoTestSelectedConfig(reason: String, testLabel: String = "Quick check") {
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("$testLabel paused while VPN is running")
             return
@@ -981,7 +983,7 @@ class MainActivity : Activity() {
         reason: String,
         autoSelect: Boolean = true,
         scopeLabel: String = "configs",
-        testLabel: String = "Ping test"
+        testLabel: String = "Quick check"
     ) {
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("$testLabel paused while VPN is running")
@@ -1207,19 +1209,19 @@ class MainActivity : Activity() {
             subtitle = "Quick tests do not start VPN. They measure endpoint latency before connecting."
         ) { dialog ->
             addView(TextView(this@MainActivity).apply {
-                text = "Ping / Real latency here are fast no-VPN checks. Use Connect only when you want to start the Android VPN tunnel."
+                text = "Quick check is a fast endpoint probe. Real delay starts a temporary Xray core without Android VPN. Connect still performs final VPN/TUN verification."
                 textSize = 12f
                 setTextColor(0xFF64748B.toInt())
                 setPadding(dp(4), dp(8), dp(4), dp(4))
             })
             if (target != null) {
-                addView(bottomSheetActionRow("◷", "Ping test", "Quick ping for ${compactProfileTitle(target).shortUi(24)}") {
+                addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for ${compactProfileTitle(target).shortUi(24)}") {
                     dialog.dismiss()
                     runPingTestForProfile(target)
                 })
-                addView(bottomSheetActionRow("✓", "Real latency test", "Fast no-VPN latency for ${compactProfileTitle(target).shortUi(24)}") {
+                addView(bottomSheetActionRow("✓", "Real delay", "Xray-core proxy delay for ${compactProfileTitle(target).shortUi(24)} before VPN connect") {
                     dialog.dismiss()
-                    runQuickLatencyTestForProfile(target, "Real latency")
+                    runRealDelayForProfile(target)
                 })
             } else {
                 addView(TextView(this@MainActivity).apply {
@@ -1256,12 +1258,121 @@ class MainActivity : Activity() {
     }
 
     private fun runPingTestForProfile(profile: VpnProfile) {
-        runQuickLatencyTestForProfile(profile, "Ping test")
+        runQuickLatencyTestForProfile(profile, "Quick check")
     }
 
-    private fun runQuickLatencyTestForProfile(profile: VpnProfile, label: String = "Real latency") {
+    private fun runQuickLatencyTestForProfile(profile: VpnProfile, label: String = "Quick check") {
         if (!selectProfileForTest(profile)) return
         autoTestSelectedConfig("manual-${label.lowercase(java.util.Locale.US).replace(" ", "-")}", testLabel = label)
+    }
+
+    private fun runRealDelayForProfile(profile: VpnProfile) {
+        if (autoTestsShouldPauseForLiveVpn()) {
+            setAutoTestStatus("Real delay paused while VPN is running")
+            return
+        }
+        if (autoTestInFlight) {
+            setAutoTestStatus("A test is already running")
+            return
+        }
+        if (!selectProfileForTest(profile)) return
+        val config = importedConfig ?: loadProfileConfig(profile) ?: return
+        autoTestInFlight = true
+        setAutoTestStatus("Real delay running for ${compactProfileTitle(profile)} with Xray core...")
+        val network = currentNetworkLabel()
+        Thread {
+            val result = xrayRealDelayTester.measure(config)
+            val updated = runCatching {
+                profileStore.markTested(
+                    profileId = profile.id,
+                    testedAtEpochMs = System.currentTimeMillis(),
+                    success = result.reachable,
+                    network = network,
+                    latencyMs = result.latencyMs,
+                    score = result.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) }
+                )
+            }.getOrNull()
+            runOnUiThread {
+                autoTestInFlight = false
+                if (updated != null && (selectedProfileId == null || selectedProfileId == updated.id)) {
+                    selectedProfile = updated
+                    selectedProfileId = updated.id
+                }
+                setAutoTestStatus(if (result.reachable) "Real delay OK: ${result.latencyMs}ms" else result.detail.shortUi(90))
+                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = result.detail
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
+            }
+        }.start()
+    }
+
+    private fun runRealDelayForLocationFilter(filter: String) {
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
+        val allProfiles = activeLocationProfiles(storedProfiles, groups)
+        selectedLocationGroupFilter = filter
+        normalizeLocationGroupFilter(groups)
+        val query = locationSearchQuery.trim()
+        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
+        val scoped = profilesForLocationFilter(filtered, groups).sortedWith(profileRankingComparator())
+        val scope = locationFilterLabel(groups)
+        refreshProfileButtons(syncVerified = false)
+        if (scoped.isEmpty()) {
+            setActionStatus("No configs in $scope to test.")
+            return
+        }
+        if (autoTestsShouldPauseForLiveVpn()) {
+            setAutoTestStatus("Real delay paused while VPN is running")
+            return
+        }
+        if (autoTestInFlight) {
+            setAutoTestStatus("A test is already running")
+            return
+        }
+        val candidates = scoped.take(MAX_REAL_DELAY_PROFILES)
+        autoTestInFlight = true
+        setAutoTestStatus("Real delay testing ${candidates.size}/${scoped.size} configs in ${scope.shortUi(24)} with Xray core...")
+        val network = currentNetworkLabel()
+        Thread {
+            val results = mutableListOf<ProfileProbeResult>()
+            candidates.forEachIndexed { index, profile ->
+                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) return@forEachIndexed
+                mainHandler.post { setAutoTestStatus("Real delay ${index + 1}/${candidates.size}: ${compactProfileTitle(profile)}") }
+                val config = loadProfileConfigQuiet(profile)
+                val delayResult = if (config != null) xrayRealDelayTester.measure(config) else null
+                val summary = ConfigProbeSummary(
+                    report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
+                    okCount = if (delayResult?.reachable == true) 1 else 0,
+                    failedCount = if (delayResult?.reachable == true) 0 else 1,
+                    bestLatencyMs = delayResult?.latencyMs,
+                    bestScore = delayResult?.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) },
+                    checkedAtEpochMs = System.currentTimeMillis()
+                )
+                runCatching {
+                    profileStore.markTested(
+                        profileId = profile.id,
+                        testedAtEpochMs = summary.checkedAtEpochMs,
+                        success = summary.reachable,
+                        network = network,
+                        latencyMs = summary.bestLatencyMs,
+                        score = summary.bestScore
+                    )
+                }
+                results += ProfileProbeResult(profile, config, summary)
+            }
+            val best = results.filter { it.summary.reachable }
+                .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
+                    .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE })
+            val report = buildAutoRankingReport(results, best, "real delay $scope")
+            runOnUiThread {
+                autoTestInFlight = false
+                setAutoTestStatus(best?.let { "Real delay best: ${compactProfileTitle(it.profile)} • ${it.summary.bestLatencyMs}ms" }
+                    ?: "Real delay found no reachable configs")
+                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = report
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
+            }
+        }.start()
     }
 
     private fun runRealLatencyTestForProfile(profile: VpnProfile) {
@@ -1301,7 +1412,7 @@ class MainActivity : Activity() {
         val lines = mutableListOf<String>()
         lines += "Ping ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
         lines += currentNetworkDiagnosticNote()
-        lines += "Note: Queue Ping/Real latency are fast no-VPN endpoint latency checks. Full VPN verification happens only when you connect."
+        lines += "Note: Quick check is a fast no-VPN endpoint probe. Real delay uses a temporary Xray core before VPN. Full VPN/TUN verification happens only when you connect."
         if (best != null) {
             lines += "Best now: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
         }
@@ -3910,7 +4021,7 @@ class MainActivity : Activity() {
             ?: "Subscription"
     }
 
-    private fun testLocationFilter(filter: String, label: String = "Ping test") {
+    private fun testLocationFilter(filter: String, label: String = "Quick check") {
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         val allProfiles = activeLocationProfiles(storedProfiles, groups)
@@ -4029,13 +4140,14 @@ class MainActivity : Activity() {
             title = "Queue tools",
             subtitle = "$scope • manual actions only • testing is capped at $capped/${scopedProfiles.size} configs"
         ) { dialog ->
-            addView(bottomSheetActionRow("◷", "Ping test", "Fast reachability for up to $capped configs in this queue") {
+            addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for up to $capped configs in this queue") {
                 dialog.dismiss()
-                testLocationFilter(selectedLocationGroupFilter, label = "Ping test")
+                testLocationFilter(selectedLocationGroupFilter, label = "Quick check")
             })
-            addView(bottomSheetActionRow("✓", "Real latency", "Fast no-VPN latency for up to $capped configs in this queue") {
+            val realDelayCap = scopedProfiles.take(MAX_REAL_DELAY_PROFILES).size
+            addView(bottomSheetActionRow("✓", "Real delay", "Xray-core proxy delay for up to $realDelayCap configs before VPN connect") {
                 dialog.dismiss()
-                testLocationFilter(selectedLocationGroupFilter, label = "Real latency")
+                runRealDelayForLocationFilter(selectedLocationGroupFilter)
             })
             if (activeGroup != null) {
                 val total = subscriptionTotalCount(activeGroup)
@@ -4698,6 +4810,7 @@ class MainActivity : Activity() {
         const val MAX_GROUP_PROFILE_PREVIEW = 16
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_AUTO_RANK_PROFILES = 36
+        const val MAX_REAL_DELAY_PROFILES = 8
         const val MAX_PARALLEL_PING_TESTS = 6
         const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80

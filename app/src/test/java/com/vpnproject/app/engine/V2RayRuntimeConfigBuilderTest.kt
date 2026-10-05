@@ -180,6 +180,22 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsCoreOnlyDelayProbeConfigWithoutTunInbound() {
+        val runtime = V2RayRuntimeConfigBuilder.buildDelayProbe(
+            ImportedConfig(
+                kind = ConfigKind.V2RAY,
+                originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Delay",
+                endpoints = emptyList()
+            )
+        )
+
+        assertContains(runtime.note, "real-delay probe without Android VPN/TUN")
+        assertContains(runtime.configJson, "\"inbounds\": []")
+        assertContains(runtime.configJson, "\"protocol\": \"vless\"")
+        assertContains(runtime.configJson, "\"wsSettings\"")
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

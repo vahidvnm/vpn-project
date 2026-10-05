@@ -581,6 +581,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] مرحله بعدی مدیریت subscription بزرگ: منوی Queue tools برای subscription فعال گزینه `Load more configs` دارد؛ به‌جای import ناخواسته هزاران کانفیگ، هر بار ۸۰ مورد دیگر تا سقف ایمن ۲۰۰۰ ذخیره می‌شود و refresh همان مقدار load‌شده را حفظ می‌کند.
 - [x] رفع ابهام شمارنده subscription بزرگ: tabهای Locations حالا loaded/total را مثل `80/1448` نشان می‌دهند تا مشخص باشد چند کانفیگ واقعاً در subscription هست و چندتا فعلاً داخل اپ load شده.
 - [x] UX ورود subscription بزرگ: هنگام اضافه‌کردن URL جدید، اگر تعداد کانفیگ زیاد باشد انتخاب خلاصه نشان داده می‌شود: `Recommended` یا `Custom/All`; تست قبل از ذخیره حذف شد چون تست‌های سالم/واقعی باید بعد از import و از Queue tools/Connect اجرا شوند.
+- [x] بازتعریف تست‌ها: Queue tools حالا دو تست قبل اتصال دارد: `Quick check` برای TCP/TLS endpoint reachability و `Real delay` برای اجرای موقت Xray core بدون Android VPN/TUN؛ تست نهایی `Connect & Verify` همچنان هنگام اتصال فقط روی کانفیگ انتخاب‌شده انجام می‌شود.
 - [x] رفع محدودیت نمای Locations: لیست اصلی به‌جای فقط ۴۰ ردیف، همه‌ی کانفیگ‌های load‌شده را نشان می‌دهد؛ تست‌ها همچنان manual/capped می‌مانند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
