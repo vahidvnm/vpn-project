@@ -3132,6 +3132,7 @@ class MainActivity : Activity() {
         selectedProfile = profile
         selectedProfileId = profile.id
         updateDashboardSummary()
+        val compatibility = profileRuntimeCompatibility(profile)
         showBottomSheet(
             title = compactProfileTitle(profile),
             subtitle = compactProfileSubtitle(profile)?.shortUi(34) ?: "Saved config"
@@ -3139,6 +3140,10 @@ class MainActivity : Activity() {
             addView(bottomSheetActionRow("✓", "Select", "Use this config on Home") {
                 dialog.dismiss()
                 loadProfile(profile)
+            })
+            addView(bottomSheetActionRow("ⓘ", "Runtime details", "${compatibility.badge} • ${compatibility.detail}".shortUi(58)) {
+                dialog.dismiss()
+                showProfileRuntimeDetailsSheet(profile)
             })
             addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
                 dialog.dismiss()
@@ -3157,6 +3162,99 @@ class MainActivity : Activity() {
                 confirmDeleteSelectedProfile()
             })
         }
+    }
+
+    private fun showProfileRuntimeDetailsSheet(profile: VpnProfile) {
+        val compatibility = profileRuntimeCompatibility(profile)
+        showBottomSheet(
+            title = "Runtime details",
+            subtitle = "${compatibility.badge} • ${compatibility.detail}".shortUi(70)
+        ) { dialog ->
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(10), 0, dp(2)) }
+                profileRuntimeDetailLines(profile, compatibility).forEach { line ->
+                    addView(TextView(this@MainActivity).apply {
+                        text = line
+                        textSize = 12f
+                        setTextColor(PearlPalette.TEXT_MUTED)
+                        setPadding(0, dp(3), 0, dp(3))
+                    })
+                }
+            })
+            addView(settingsHintText("No secrets are shown here. Quick check is no-VPN; Real delay starts temporary Xray; full VPN verification happens only after Connect."))
+            addView(bottomSheetActionRow("✓", "Select", "Use this config on Home") {
+                dialog.dismiss()
+                loadProfile(profile)
+            })
+            if (compatibility.connectReady && profile.kind in setOf(VpnProfileKind.XRAY, VpnProfileKind.SING_BOX, VpnProfileKind.CLASH)) {
+                addView(bottomSheetActionRow("◷", "Real delay", "Run Xray-core proxy delay before VPN connect") {
+                    dialog.dismiss()
+                    runRealDelayForProfile(profile)
+                })
+            }
+            addView(bottomSheetActionRow("‹", "Back", "Return to profile actions") {
+                dialog.dismiss()
+                showProfileActionsSheet(profile)
+            })
+        }
+    }
+
+    private fun profileRuntimeDetailLines(
+        profile: VpnProfile,
+        compatibility: ProfileRuntimeCompatibility
+    ): List<String> = buildList {
+        add("Status: ${compatibility.detail} (${compatibility.badge})")
+        add("Profile type: ${profile.kind.displayName}")
+        add("Connect path: ${profileConnectPath(profile, compatibility)}")
+        profileTransportLabel(profile)?.takeIf { it.isNotBlank() }?.let { add("Transport: $it") }
+        profile.endpoints.firstOrNull()?.let { endpoint ->
+            add("Endpoint: ${endpoint.host.shortHost()}:${endpoint.port}")
+            endpoint.verifyHost?.takeIf { it.isNotBlank() }?.let { add("Verify host: ${it.shortHost()}") }
+        }
+        profile.lastVerifiedLatencyMs?.let { add("Last verified: ${it}ms") }
+            ?: profile.lastTestLatencyMs?.let { add("Last test: ${it}ms") }
+        if (!compatibility.connectReady) add("Next step: ${runtimeFixHint(compatibility, profile)}")
+    }
+
+    private fun profileConnectPath(
+        profile: VpnProfile,
+        compatibility: ProfileRuntimeCompatibility
+    ): String = when {
+        compatibility.connectReady && profile.kind == VpnProfileKind.XRAY -> "Embedded Xray direct"
+        compatibility.connectReady && profile.kind == VpnProfileKind.SING_BOX -> "Mapped through embedded Xray"
+        compatibility.connectReady && profile.kind == VpnProfileKind.CLASH -> "Mapped through embedded Xray"
+        compatibility.connectReady && profile.kind == VpnProfileKind.WIREGUARD -> "WireGuard advanced fallback"
+        profile.kind == VpnProfileKind.OPENVPN -> "External OpenVPN handoff"
+        profile.kind == VpnProfileKind.CLASH && compatibility.badge == "Engine" -> "Needs full Clash-compatible engine"
+        profile.kind == VpnProfileKind.SING_BOX && compatibility.badge == "Engine" -> "Needs full sing-box runtime"
+        else -> "Not start-ready in this build"
+    }
+
+    private fun runtimeFixHint(
+        compatibility: ProfileRuntimeCompatibility,
+        profile: VpnProfile
+    ): String = when (compatibility.badge) {
+        "Key" -> if (compatibility.detail.contains("Reality", ignoreCase = true)) {
+            "Ask the provider for the full REALITY link including pbk/publicKey."
+        } else {
+            "Import the complete user-owned profile including uuid/password."
+        }
+        "UDP" -> "Prefer provider profiles using TCP, WebSocket, gRPC, H2, HTTPUpgrade, or XHTTP."
+        "Engine" -> when (profile.kind) {
+            VpnProfileKind.CLASH -> "Use an Xray-compatible Clash proxy or wait for a native Clash engine."
+            VpnProfileKind.SING_BOX -> "Use an Xray-compatible outbound or wait for a native sing-box runtime."
+            else -> "Use a profile supported by the embedded runtime."
+        }
+        "Map" -> "This profile needs an additional mapper before Connect can start it."
+        "Sec" -> "Use none, TLS, or REALITY security when importing for embedded Xray."
+        "Handoff" -> "Export/use this config in an external OpenVPN client for now."
+        else -> "Try another provider profile or re-import the full config."
     }
 
     private fun showBottomSheet(
