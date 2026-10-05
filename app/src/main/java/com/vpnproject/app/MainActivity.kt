@@ -2892,7 +2892,7 @@ class MainActivity : Activity() {
         val health = profileLatencyMiniLabel(profile)
         val network = profileLatencyNetworkTag(profile)
         val runtime = if (compatibility.connectReady && health != null) null else compatibility.detail
-        return listOfNotNull(subtitle, runtime, health, network).joinToString(" • ").ifBlank { "Ready" }.shortUi(34)
+        return listOfNotNull(subtitle, health, runtime, network).joinToString(" • ").ifBlank { "Ready" }.shortUi(34)
     }
 
     private fun compactProfileTitle(profile: VpnProfile?, fallback: String): String =
@@ -3042,7 +3042,7 @@ class MainActivity : Activity() {
         val runtime = compatibility.detail.shortUi(18)
         val health = profileLatencyMiniLabel(profile)
         val network = profileLatencyNetworkTag(profile)
-        return listOfNotNull(transport, runtime, detail, health, network?.shortUi(11)).joinToString(" • ").ifBlank { "Saved config" }
+        return listOfNotNull(transport, health, runtime, detail, network?.shortUi(11)).joinToString(" • ").ifBlank { "Saved config" }
     }
 
     private fun profileLatencyStates(profile: VpnProfile): List<ProfileLatencyState> = buildList {
@@ -3190,6 +3190,22 @@ class MainActivity : Activity() {
         state.latencyMs?.let { "${it}ms" } ?: "OK"
     } else {
         "failed"
+    }
+
+    private fun profileLatencyBadgeLabel(state: ProfileLatencyState, stale: Boolean): String {
+        val suffix = if (stale) " old" else ""
+        if (state.success == false) return if (stale) "Fail old" else "Fail"
+        state.latencyMs?.let { latency ->
+            val kind = when (state.label) {
+                "Verified" -> "V"
+                "Connect" -> "Conn"
+                "Real" -> "Real"
+                "Quick" -> "Quick"
+                else -> state.label.shortUi(4)
+            }
+            return "$kind ${latency}ms$suffix"
+        }
+        return if (stale) "${state.label} old" else state.label
     }
 
     private fun testKindForLabel(label: String): String =
@@ -3908,14 +3924,12 @@ class MainActivity : Activity() {
         val stale = signal != null && !isLatencyFresh(signal.checkedAtEpochMs)
         return when {
             !compatibility.connectReady -> compatibility.badge
-            signal?.success == false -> if (stale) "Fail old" else "Fail"
-            signal?.latencyMs != null -> if (stale) "${signal.latencyMs}ms old" else "${signal.latencyMs}ms"
+            signal != null -> profileLatencyBadgeLabel(signal, stale)
             profile.id == selectedProfileId -> "Selected"
-            signal?.success == true -> if (stale) "Good old" else signal.label
             profile.favorite -> "Fav"
             compatibility.badge.isNotBlank() -> compatibility.badge
             else -> "New"
-        }.shortUi(10)
+        }.shortUi(13)
     }
 
     private fun profileStatusFillColor(profile: VpnProfile): Int {
