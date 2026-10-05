@@ -19,23 +19,23 @@ class EngineRegistryTest {
     }
 
     @Test
-    fun mapsSingBoxToExperimentalImportOnlyEngine() {
+    fun mapsSingBoxToExperimentalXrayMapper() {
         val engine = EngineRegistry.engineFor(ConfigKind.SING_BOX)
 
         assertEquals(VpnEngineId.SING_BOX_EXPERIMENTAL, engine.id)
         assertEquals(EngineKind.SING_BOX_EXPERIMENTAL, engine.engineKind)
-        assertFalse(engine.embedded)
-        assertFalse(engine.startableInApp)
+        assertTrue(engine.embedded)
+        assertTrue(engine.startableInApp)
     }
 
     @Test
-    fun mapsClashToExperimentalImportOnlyEngine() {
+    fun mapsClashToExperimentalXrayMapper() {
         val engine = EngineRegistry.engineFor(ConfigKind.CLASH)
 
         assertEquals(VpnEngineId.CLASH_IMPORT, engine.id)
         assertEquals(EngineKind.CLASH_IMPORT, engine.engineKind)
-        assertFalse(engine.embedded)
-        assertFalse(engine.startableInApp)
+        assertTrue(engine.embedded)
+        assertTrue(engine.startableInApp)
     }
 
     @Test

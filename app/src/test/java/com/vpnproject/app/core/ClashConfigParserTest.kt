@@ -2,6 +2,7 @@ package com.vpnproject.app.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -56,6 +57,34 @@ class ClashConfigParserTest {
         assertEquals(VpnProtocol.CLASH_TLS, config.endpoints.single().protocol)
         assertEquals("front.example.net", config.endpoints.single().verifyHost)
         assertTrue(config.warnings.any { it.contains("WS/TLS") })
+    }
+
+
+    @Test
+    fun exposesXrayShareLinkForSupportedProxy() {
+        val yaml = """
+            proxies:
+              - name: Germany WS
+                type: trojan
+                server: cdn.example.net
+                port: 443
+                password: secret
+                network: ws
+                tls: true
+                sni: front.example.net
+                ws-opts:
+                  path: /ws
+                  headers:
+                    Host: front.example.net
+        """.trimIndent()
+
+        val link = ClashConfigParser.firstXrayShareLink(yaml)
+
+        assertNotNull(link)
+        assertTrue(link!!.startsWith("trojan://secret@cdn.example.net:443?"))
+        assertTrue(link.contains("security=tls"))
+        assertTrue(link.contains("type=ws"))
+        assertTrue(link.contains("sni=front.example.net"))
     }
 
     @Test

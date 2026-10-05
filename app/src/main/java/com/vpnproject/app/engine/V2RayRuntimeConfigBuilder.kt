@@ -1,8 +1,10 @@
 package com.vpnproject.app.engine
 
+import com.vpnproject.app.core.ClashConfigParser
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
+import com.vpnproject.app.core.SingBoxConfigParser
 import com.vpnproject.app.core.V2RaySubscriptionParser
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -10,15 +12,24 @@ import java.util.Base64
 
 object V2RayRuntimeConfigBuilder {
     fun build(config: ImportedConfig): V2RayRuntimeConfig {
-        require(config.kind == ConfigKind.V2RAY) { "Only V2Ray/Xray configs can be prepared for the Xray engine." }
-        val link = firstShareLink(config.originalText)
-            ?: throw ConfigParseException("No V2Ray/Xray share link found for runtime start.")
+        val source = when (config.kind) {
+            ConfigKind.V2RAY -> "V2Ray/Xray"
+            ConfigKind.SING_BOX -> "sing-box"
+            ConfigKind.CLASH -> "Clash"
+            else -> throw ConfigParseException("Only V2Ray/Xray, sing-box, or Clash-compatible configs can be prepared for the Xray engine.")
+        }
+        val link = when (config.kind) {
+            ConfigKind.V2RAY -> firstShareLink(config.originalText)
+            ConfigKind.SING_BOX -> SingBoxConfigParser.firstXrayShareLink(config.originalText)
+            ConfigKind.CLASH -> ClashConfigParser.firstXrayShareLink(config.originalText)
+            else -> null
+        } ?: throw ConfigParseException("No Xray-compatible outbound found in this $source config. It stays saved for diagnostics, but Connect needs an additional runtime mapper or embedded engine for its unsupported features.")
         val profile = parseLink(link)
         validateRuntimeSupport(profile)
         return V2RayRuntimeConfig(
             configJson = buildXrayConfig(profile),
-            profileName = profile.name ?: config.name ?: "v2ray-import",
-            note = "Prepared ${profile.scheme.uppercase()} ${profile.address}:${profile.port} via ${profile.network}/${profile.security.ifBlank { "none" }} for embedded Xray."
+            profileName = profile.name ?: config.name ?: "${source.lowercase(java.util.Locale.US)}-import",
+            note = "Prepared $source ${profile.scheme.uppercase()} ${profile.address}:${profile.port} via ${profile.network}/${profile.security.ifBlank { "none" }} for embedded Xray."
         )
     }
 

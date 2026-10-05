@@ -109,6 +109,76 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(json, "\"wsSettings\"")
     }
 
+
+    @Test
+    fun buildsFromSingBoxVlessRealityOutbound() {
+        val singBox = """
+            {
+              "outbounds": [{
+                "type": "vless",
+                "tag": "sing-box reality",
+                "server": "edge.example.com",
+                "server_port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "flow": "xtls-rprx-vision",
+                "tls": {
+                  "enabled": true,
+                  "server_name": "www.microsoft.com",
+                  "utls": { "fingerprint": "chrome" },
+                  "reality": { "enabled": true, "public_key": "PUBLICKEY", "short_id": "abc123" }
+                }
+              }]
+            }
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.SING_BOX, singBox)
+
+        assertContains(runtime.note, "Prepared sing-box VLESS edge.example.com:443")
+        assertContains(runtime.configJson, "\"security\": \"reality\"")
+        assertContains(runtime.configJson, "\"publicKey\": \"PUBLICKEY\"")
+        assertContains(runtime.configJson, "\"serverName\": \"www.microsoft.com\"")
+        assertContains(runtime.configJson, "\"flow\": \"xtls-rprx-vision\"")
+    }
+
+    @Test
+    fun buildsFromClashTrojanWebSocketTlsProxy() {
+        val clash = """
+            proxies:
+              - name: Germany WS
+                type: trojan
+                server: cdn.example.net
+                port: 443
+                password: secret
+                network: ws
+                tls: true
+                sni: front.example.net
+                ws-opts:
+                  path: /ws
+                  headers:
+                    Host: front.example.net
+        """.trimIndent()
+        val runtime = buildRuntime(ConfigKind.CLASH, clash)
+
+        assertContains(runtime.note, "Prepared Clash TROJAN cdn.example.net:443")
+        assertContains(runtime.configJson, "\"network\": \"ws\"")
+        assertContains(runtime.configJson, "\"wsSettings\"")
+        assertContains(runtime.configJson, "\"path\": \"/ws\"")
+        assertContains(runtime.configJson, "\"serverName\": \"front.example.net\"")
+    }
+
+    @Test
+    fun unsupportedSingBoxMapperFailsClearlyWithoutSecret() {
+        val singBox = """
+            { "outbounds": [{ "type": "vless", "server": "edge.example.com", "server_port": 443, "uuid": "11111111-1111-1111-1111-111111111111", "transport": { "type": "quic" } }] }
+        """.trimIndent()
+
+        val error = assertThrows(ConfigParseException::class.java) {
+            buildRuntime(ConfigKind.SING_BOX, singBox)
+        }
+
+        assertContains(error.message.orEmpty(), "Unsupported V2Ray/Xray transport quic")
+        assertTrue("Secret UUID leaked in error: ${error.message}", !error.message.orEmpty().contains("11111111-1111-1111-1111-111111111111"))
+    }
+
     @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
@@ -133,13 +203,15 @@ class V2RayRuntimeConfigBuilderTest {
         assertContains(error.message.orEmpty(), "REALITY link is missing public key")
     }
 
-    private fun buildJson(link: String): String = V2RayRuntimeConfigBuilder.build(
+    private fun buildJson(link: String): String = buildRuntime(ConfigKind.V2RAY, link).configJson
+
+    private fun buildRuntime(kind: ConfigKind, text: String): V2RayRuntimeConfig = V2RayRuntimeConfigBuilder.build(
         ImportedConfig(
-            kind = ConfigKind.V2RAY,
-            originalText = link,
+            kind = kind,
+            originalText = text,
             endpoints = emptyList()
         )
-    ).configJson
+    )
 
     private fun assertContains(text: String, expected: String) {
         assertTrue("Expected <$expected> in:\n$text", text.contains(expected))

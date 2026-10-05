@@ -21,20 +21,20 @@ object EngineRegistry {
         RegisteredEngine(
             id = VpnEngineId.SING_BOX_EXPERIMENTAL,
             engineKind = EngineKind.SING_BOX_EXPERIMENTAL,
-            displayName = "sing-box import",
-            embedded = false,
-            startableInApp = false,
+            displayName = "sing-box mapper",
+            embedded = true,
+            startableInApp = true,
             priority = 20,
-            description = "Experimental: import user-owned sing-box JSON for grouping and diagnostics; embedded engine comes next."
+            description = "Experimental: maps supported user-owned sing-box JSON outbounds to embedded Xray; unsupported features stay diagnostics-only."
         ),
         RegisteredEngine(
             id = VpnEngineId.CLASH_IMPORT,
             engineKind = EngineKind.CLASH_IMPORT,
-            displayName = "Clash import",
-            embedded = false,
-            startableInApp = false,
+            displayName = "Clash mapper",
+            embedded = true,
+            startableInApp = true,
             priority = 25,
-            description = "Experimental: import Clash/Clash.Meta YAML for grouping and diagnostics; runtime mapping comes next."
+            description = "Experimental: maps supported Clash/Clash.Meta YAML proxies to embedded Xray; unsupported features stay diagnostics-only."
         ),
         RegisteredEngine(
             id = VpnEngineId.WIREGUARD_GO,

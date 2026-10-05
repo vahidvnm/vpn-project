@@ -1,11 +1,16 @@
 package com.vpnproject.app.core
 
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+
 /**
  * Experimental parser for user-owned sing-box JSON configs.
  *
  * This does not execute sing-box yet. It extracts safe endpoint metadata from
  * common outbound objects so the hub can save, group, search, and quick-probe
- * sing-box profiles while the embedded engine decision is still pending.
+ * sing-box profiles. Supported vless/vmess/trojan/ss outbounds can also be
+ * synthesized as Xray share links for the embedded Xray runtime mapper.
  */
 object SingBoxConfigParser {
     private val supportedOutboundTypes = setOf("vless", "vmess", "trojan", "shadowsocks", "ss")
@@ -21,6 +26,10 @@ object SingBoxConfigParser {
         }
     }
 
+    fun firstXrayShareLink(text: String): String? = outboundObjects(text.replace("\uFEFF", "").trim())
+        .mapNotNull { objectText -> parseOutbound(objectText)?.runtimeLink }
+        .firstOrNull()
+
     fun parse(text: String, name: String? = null): ImportedConfig {
         val normalized = text.replace("\uFEFF", "").trim()
         val parsed = outboundObjects(normalized).mapNotNull { objectText -> parseOutbound(objectText) }
@@ -34,10 +43,11 @@ object SingBoxConfigParser {
             .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
             .joinToString(", ") { (label, count) -> "$label $count" }
         val warnings = buildList {
-            add("sing-box JSON import is experimental: endpoints are saved for grouping, search, and no-VPN diagnostics, but an embedded sing-box engine is not bundled yet.")
+            add("sing-box JSON import is experimental: supported vless/vmess/trojan/ss outbounds can be mapped to embedded Xray; unsupported sing-box features stay saved for grouping, search, and no-VPN diagnostics.")
             add("Detected sing-box outbounds: $labels. Secrets stay encrypted locally and are not shown in UI labels.")
             parsed.filter { it.unsupportedTransport }.take(4).forEach { outbound ->
-                add("sing-box outbound ${outbound.tag ?: outbound.endpoint.host} uses transport ${outbound.transport}; endpoint probe can run, but runtime support needs a future sing-box/Xray mapper.")
+                val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
+                add("sing-box outbound $safeName uses transport ${outbound.transport}; endpoint probe can run, but runtime support needs a future sing-box/Xray mapper.")
             }
         }
 
@@ -57,7 +67,8 @@ object SingBoxConfigParser {
         val server = topLevelStringField(objectText, "server")?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val port = topLevelPortField(objectText)?.takeIf { it in 1..65535 } ?: return null
         val tag = topLevelStringField(objectText, "tag")
-        val transport = topLevelObjectField(objectText, "transport")
+        val transportObject = topLevelObjectField(objectText, "transport")
+        val transport = transportObject
             ?.let { topLevelStringField(it, "type") }
             ?.lowercase()
             ?.takeIf { it.isNotBlank() }
@@ -71,13 +82,49 @@ object SingBoxConfigParser {
             tlsEnabled -> "tls"
             else -> "none"
         }
+        val transportHeaders = transportObject?.let { topLevelObjectField(it, "headers") }
+        val hostHeader = firstNonBlank(
+            transportHeaders?.let { topLevelStringField(it, "Host") },
+            transportHeaders?.let { topLevelStringField(it, "host") },
+            transportObject?.let { topLevelStringField(it, "host") }
+        )
+        val path = transportObject?.let { topLevelStringField(it, "path") }
+        val serviceName = firstNonBlank(
+            transportObject?.let { topLevelStringField(it, "service_name") },
+            transportObject?.let { topLevelStringField(it, "serviceName") }
+        )
+        val fingerprint = firstNonBlank(
+            tls?.let { topLevelObjectField(it, "utls") }?.let { topLevelStringField(it, "fingerprint") },
+            tls?.let { topLevelStringField(it, "fingerprint") }
+        )
         val verifyHost = firstNonBlank(
             tls?.let { topLevelStringField(it, "server_name") },
             topLevelStringField(objectText, "server_name"),
-            topLevelObjectField(objectText, "transport")
-                ?.let { topLevelObjectField(it, "headers") }
-                ?.let { topLevelStringField(it, "Host") },
+            hostHeader,
             server.takeUnless { IpClassifier.isIpv4Literal(it) || IpClassifier.isIpv6Literal(it) }
+        )
+        val publicKey = reality?.let { topLevelStringField(it, "public_key") }
+        val shortId = reality?.let { topLevelStringField(it, "short_id") }
+        val allowInsecure = tls?.let { topLevelBooleanField(it, "insecure") } == true
+        val runtimeLink = buildRuntimeLink(
+            type = rawType,
+            server = server,
+            port = port,
+            credential = firstNonBlank(topLevelStringField(objectText, "uuid"), topLevelStringField(objectText, "password")),
+            method = topLevelStringField(objectText, "method"),
+            alterId = topLevelIntField(objectText, "alter_id") ?: topLevelIntField(objectText, "alterId"),
+            flow = topLevelStringField(objectText, "flow"),
+            security = security,
+            transport = transport,
+            hostHeader = hostHeader,
+            path = path,
+            sni = verifyHost,
+            fingerprint = fingerprint,
+            publicKey = publicKey,
+            shortId = shortId,
+            serviceName = serviceName,
+            allowInsecure = allowInsecure,
+            name = tag
         )
         val protocol = when (security) {
             "reality" -> VpnProtocol.SING_BOX_REALITY
@@ -90,6 +137,7 @@ object SingBoxConfigParser {
             transport = transport,
             label = displayLabel(rawType, transport, security),
             unsupportedTransport = transport !in setOf("tcp", "ws", "grpc", "http", "httpupgrade"),
+            runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
                 port = port,
@@ -99,6 +147,87 @@ object SingBoxConfigParser {
             )
         )
     }
+
+    private fun buildRuntimeLink(
+        type: String,
+        server: String,
+        port: Int,
+        credential: String?,
+        method: String?,
+        alterId: Int?,
+        flow: String?,
+        security: String,
+        transport: String,
+        hostHeader: String?,
+        path: String?,
+        sni: String?,
+        fingerprint: String?,
+        publicKey: String?,
+        shortId: String?,
+        serviceName: String?,
+        allowInsecure: Boolean,
+        name: String?
+    ): String? {
+        val secret = credential?.takeIf { it.isNotBlank() } ?: return null
+        val safeName = V2RayLinkInspector.safeDisplayName(name)
+        val shareHost = server.toShareAuthorityHost()
+        val query = buildQuery(security, transport, hostHeader, path, sni, fingerprint, publicKey, shortId, serviceName, allowInsecure, flow)
+        val fragment = safeName?.takeIf { it.isNotBlank() }?.let { "#${it.urlEncode()}" }.orEmpty()
+        return when (type) {
+            "vless" -> "vless://${secret.urlEncode()}@$shareHost:$port?$query$fragment"
+            "trojan" -> "trojan://${secret.urlEncode()}@$shareHost:$port?$query$fragment"
+            "vmess" -> {
+                val vmessJson = listOf(
+                    "\"v\":\"2\"",
+                    "\"ps\":${(safeName ?: "sing-box").jsonQuote()}",
+                    "\"add\":${server.jsonQuote()}",
+                    "\"port\":${port.toString().jsonQuote()}",
+                    "\"id\":${secret.jsonQuote()}",
+                    "\"aid\":${(alterId ?: 0).toString().jsonQuote()}",
+                    "\"scy\":${(method ?: "auto").jsonQuote()}",
+                    "\"net\":${transport.jsonQuote()}",
+                    "\"type\":${"none".jsonQuote()}",
+                    "\"host\":${hostHeader.orEmpty().jsonQuote()}",
+                    "\"path\":${(serviceName ?: path).orEmpty().jsonQuote()}",
+                    "\"tls\":${if (security == "none") "".jsonQuote() else security.jsonQuote()}",
+                    "\"sni\":${sni.orEmpty().jsonQuote()}"
+                ).joinToString(",", prefix = "{", postfix = "}")
+                "vmess://${Base64.getEncoder().encodeToString(vmessJson.toByteArray(StandardCharsets.UTF_8))}"
+            }
+            "shadowsocks", "ss" -> {
+                val userInfo = "${method ?: "aes-128-gcm"}:$secret"
+                val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(userInfo.toByteArray(StandardCharsets.UTF_8))
+                "ss://$encoded@$shareHost:$port$fragment"
+            }
+            else -> null
+        }
+    }
+
+    private fun buildQuery(
+        security: String,
+        transport: String,
+        hostHeader: String?,
+        path: String?,
+        sni: String?,
+        fingerprint: String?,
+        publicKey: String?,
+        shortId: String?,
+        serviceName: String?,
+        allowInsecure: Boolean,
+        flow: String?
+    ): String = buildList {
+        add("security=${security.urlEncode()}")
+        add("type=${transport.urlEncode()}")
+        hostHeader?.takeIf { it.isNotBlank() }?.let { add("host=${it.urlEncode()}") }
+        path?.takeIf { it.isNotBlank() }?.let { add("path=${it.urlEncode()}") }
+        sni?.takeIf { it.isNotBlank() }?.let { add("sni=${it.urlEncode()}") }
+        fingerprint?.takeIf { it.isNotBlank() }?.let { add("fp=${it.urlEncode()}") }
+        publicKey?.takeIf { it.isNotBlank() }?.let { add("pbk=${it.urlEncode()}") }
+        shortId?.takeIf { it.isNotBlank() }?.let { add("sid=${it.urlEncode()}") }
+        serviceName?.takeIf { it.isNotBlank() }?.let { add("serviceName=${it.urlEncode()}") }
+        if (allowInsecure) add("allowInsecure=1")
+        flow?.takeIf { it.isNotBlank() }?.let { add("flow=${it.urlEncode()}") }
+    }.joinToString("&")
 
     private fun displayLabel(type: String, transport: String, security: String): String = when {
         security == "reality" -> "Reality"
@@ -227,6 +356,29 @@ object SingBoxConfigParser {
 
     private fun firstNonBlank(vararg values: String?): String? = values.firstOrNull { !it.isNullOrBlank() }?.trim()
 
+    private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
+
+    private fun String.toShareAuthorityHost(): String = when {
+        startsWith("[") && endsWith("]") -> this
+        IpClassifier.isIpv6Literal(this) -> "[$this]"
+        else -> this
+    }
+
+    private fun String.jsonQuote(): String = buildString {
+        append('\"')
+        for (ch in this@jsonQuote) {
+            when (ch) {
+                '\\' -> append("\\\\")
+                '\"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(ch)
+            }
+        }
+        append('\"')
+    }
+
     private fun String.unescapeJsonString(): String = replace("\\/", "/")
         .replace("\\\"", "\"")
         .replace("\\\\", "\\")
@@ -236,6 +388,7 @@ object SingBoxConfigParser {
         val transport: String,
         val label: String,
         val unsupportedTransport: Boolean,
+        val runtimeLink: String?,
         val endpoint: EndpointCandidate
     )
 }

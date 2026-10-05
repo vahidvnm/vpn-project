@@ -2711,17 +2711,9 @@ class MainActivity : Activity() {
         lastRecordedVerificationKey = null
         when (config.kind) {
             ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
-            ConfigKind.V2RAY -> prepareAndStartXrayEngine(config)
-            ConfigKind.SING_BOX -> {
-                status.text = "sing-box import is saved for grouping and no-VPN diagnostics. Embedded sing-box engine is the next implementation step; use Advanced diagnostics for now."
-                hubStatusTitle.text = "Import only"
-                hubStatusDetail.text = "sing-box engine is not bundled yet; this profile is ready for the experimental engine stage."
-            }
-            ConfigKind.CLASH -> {
-                status.text = "Clash import is saved for grouping and no-VPN diagnostics. Runtime mapping to Xray/sing-box comes next; use Advanced diagnostics for now."
-                hubStatusTitle.text = "Import only"
-                hubStatusDetail.text = "Clash/Hiddify/NekoBox-style profiles are ready for the import pipeline; embedded runtime mapping is pending."
-            }
+            ConfigKind.V2RAY,
+            ConfigKind.SING_BOX,
+            ConfigKind.CLASH -> prepareAndStartXrayEngine(config)
             ConfigKind.OPENVPN -> status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
             ConfigKind.UNKNOWN -> status.text = "Unknown config kind cannot be started."
         }
@@ -2761,9 +2753,9 @@ class MainActivity : Activity() {
     }
 
     private fun prepareAndStartXrayEngine(config: ImportedConfig) {
-        status.text = "Preparing embedded Xray/V2Ray runtime config from the imported link..."
+        status.text = "Preparing embedded Xray runtime config from the selected profile..."
         hubStatusTitle.text = "Preparing"
-        hubStatusDetail.text = "Embedded Xray is preparing its runtime config."
+        hubStatusDetail.text = "Embedded Xray is preparing a runtime config. V2Ray links start directly; supported sing-box/Clash proxies are mapped to Xray."
         Thread {
             val result = runCatching { V2RayRuntimeConfigBuilder.build(config) }
             runOnUiThread {
@@ -3352,9 +3344,9 @@ class MainActivity : Activity() {
                 ConfigKind.V2RAY ->
                     "\n\nNext: tap Connect. Advanced endpoint probe is optional."
                 ConfigKind.SING_BOX ->
-                    "\n\nNext: sing-box import is experimental. Use Advanced diagnostics now; embedded sing-box engine is the next stage."
+                    "\n\nNext: tap Connect to try the first Xray-compatible sing-box outbound. Unsupported sing-box features stay saved for diagnostics until the embedded sing-box engine lands."
                 ConfigKind.CLASH ->
-                    "\n\nNext: Clash import is experimental. Use Advanced diagnostics now; mapping these profiles to Xray/sing-box runtime comes next."
+                    "\n\nNext: tap Connect to try the first Xray-compatible Clash proxy. Unsupported Clash features stay saved for diagnostics until the full mapper lands."
                 else -> ""
             }
             status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
