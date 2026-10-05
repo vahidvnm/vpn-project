@@ -576,6 +576,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 - [x] شروع Clash/Hiddify/NekoBox-style بعد از sing-box: import آزمایشی Clash/Clash.Meta YAML اضافه شد؛ proxyهای `vless`, `vmess`, `trojan`, `ss/shadowsocks` endpoint/name/TLS/REALITY/network را امن استخراج می‌کنند و profile جدا می‌سازند.
 - [x] runtime mapper مرحله اول برای sing-box/Clash: outbound/proxyهای قابل‌تبدیل `vless`, `vmess`, `trojan`, `ss/shadowsocks` به share-link سازگار با Xray synthesize می‌شوند و مسیر Connect برای آن‌ها از embedded Xray استفاده می‌کند؛ transportهای unsupported همچنان ذخیره/diagnostics-only می‌مانند و خطای امن می‌دهند.
 - [x] اصلاح Clash subscription URL: فایل‌های YAML مثل `clash.yaml` که به‌جای share-link دارای بخش `proxies:` هستند، هنگام refresh به proxyهای جدا تقسیم می‌شوند و تا سقف امن فعلی در subscription group ذخیره می‌شوند.
+- [x] polish بعد از تست گوشی Clash: نام‌های Clash که escape هشت‌رقمی YAML مثل `\U0001F1FA` دارند به emoji/flag واقعی decode می‌شوند، نام subscription از raw GitHub به عنوان قابل‌فهم‌تری مثل `Clash` تبدیل می‌شود، و refresh گروه‌های generic مثل `Raw` هم آن‌ها را rename می‌کند.
 - [ ] طراحی Settings/Drawer و polish گرافیکی بعد از تثبیت dashboard.
 - [ ] hardening runtime config generator برای transportهای واقعی بیشتر که در تست گوشی fail می‌شوند.
 - [ ] test matrix گوشی برای `ws/tls`, `tcp/none`, `tcp+http header`, `grpc/tls`, `reality`, `vmess`, `trojan`, `ss`.

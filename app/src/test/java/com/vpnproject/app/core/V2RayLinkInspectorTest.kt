@@ -54,6 +54,14 @@ class V2RayLinkInspectorTest {
     }
 
     @Test
+    fun decodesClashUppercaseEscapedFlagsInDisplayNames() {
+        assertEquals(
+            "US 🇺🇸 / @Raydikalx",
+            V2RayLinkInspector.safeDisplayName("US \\U0001F1FA\\U0001F1F8 | @Raydikalx | C1F61F")
+        )
+    }
+
+    @Test
     fun rejectsRawLinkOrSecretLikeDisplayNames() {
         assertNull(V2RayLinkInspector.safeDisplayName("vless://uuid@example.com:443?security=reality"))
         assertNull(V2RayLinkInspector.safeDisplayName("11111111-1111-1111-1111-111111111111"))

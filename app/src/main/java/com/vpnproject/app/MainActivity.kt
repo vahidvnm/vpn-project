@@ -3088,7 +3088,13 @@ class MainActivity : Activity() {
         existingGroup: SubscriptionGroup?
     ): SubscriptionSyncResult {
         val subscriptionText = fetchSubscriptionText(url)
-        val storedGroup = profileStore.saveSubscriptionGroup(existingGroup?.displayName ?: name, url)
+        val existingName = existingGroup?.displayName?.cleanProfileLabel()
+        val savedName = when {
+            existingName.isNullOrBlank() -> name
+            existingName.equals("Raw", ignoreCase = true) || existingName.equals("Subscription", ignoreCase = true) -> subscriptionNameFromUrl(url)
+            else -> existingName
+        }
+        val storedGroup = profileStore.saveSubscriptionGroup(savedName, url)
         return syncSubscriptionTextIntoGroup(storedGroup, subscriptionText, resultVerb = "Synced")
     }
 
@@ -3340,12 +3346,30 @@ class MainActivity : Activity() {
     }
 
     private fun subscriptionNameFromUrl(text: String): String = runCatching {
-        val host = URL(text.trim()).host
-            ?.removePrefix("www.")
-            ?.takeIf { it.isNotBlank() }
-        host?.substringBefore('.')?.replaceFirstChar { if (it.isLowerCase()) it.uppercaseChar() else it }
-            ?: "Clipboard subscription"
+        val url = URL(text.trim())
+        val host = url.host.removePrefix("www.").takeIf { it.isNotBlank() }
+        val pathParts = url.path.split('/').filter { it.isNotBlank() }
+        val fileName = pathParts.lastOrNull()
+            ?.substringBeforeLast('.', missingDelimiterValue = pathParts.lastOrNull().orEmpty())
+            ?.humanizeSubscriptionToken()
+        val isRawGithub = host?.equals("raw.githubusercontent.com", ignoreCase = true) == true
+        when {
+            isRawGithub && fileName?.equals("Clash", ignoreCase = true) == true -> "Clash"
+            isRawGithub && !fileName.isNullOrBlank() -> fileName
+            isRawGithub -> pathParts.getOrNull(1)?.humanizeSubscriptionToken()
+            !fileName.isNullOrBlank() && fileName.length in 4..24 -> fileName
+            else -> host?.substringBefore('.')?.humanizeSubscriptionToken()
+        } ?: "Clipboard subscription"
     }.getOrDefault("Clipboard subscription")
+
+    private fun String.humanizeSubscriptionToken(): String = replace('-', ' ')
+        .replace('_', ' ')
+        .substringBefore('?')
+        .collapseLabelWhitespace()
+        .split(' ')
+        .filter { it.isNotBlank() && it.lowercase(java.util.Locale.US) !in setOf("main", "master", "verified", "raw") }
+        .joinToString(" ") { part -> part.replaceFirstChar { if (it.isLowerCase()) it.uppercaseChar() else it } }
+        .ifBlank { this.replaceFirstChar { if (it.isLowerCase()) it.uppercaseChar() else it } }
 
     private fun startsWithSingleV2RayLink(text: String): Boolean {
         val normalized = text.trim()
@@ -4258,6 +4282,10 @@ class MainActivity : Activity() {
         var index = 0
         while (index < length) {
             val current = this[index]
+            if (current == '\\' && index + 2 < length && this[index + 1] == '\\' && (this[index + 2] == 'u' || this[index + 2] == 'U')) {
+                index++
+                continue
+            }
             if (current == '\\' && index + 1 < length) {
                 when (this[index + 1]) {
                     'u' -> {
@@ -4273,6 +4301,25 @@ class MainActivity : Activity() {
                         }
                         var skip = hexStart
                         while (skip < length && skip < hexStart + 4 && Character.digit(this[skip], 16) >= 0) skip++
+                        index = skip
+                        continue
+                    }
+                    'U' -> {
+                        val hexStart = index + 2
+                        val hexEnd = hexStart + 8
+                        if (hexEnd <= length) {
+                            val hex = substring(hexStart, hexEnd)
+                            if (hex.all { Character.digit(it, 16) >= 0 }) {
+                                val codePoint = hex.toInt(16)
+                                if (Character.isValidCodePoint(codePoint)) {
+                                    decoded.append(String(Character.toChars(codePoint)))
+                                    index = hexEnd
+                                    continue
+                                }
+                            }
+                        }
+                        var skip = hexStart
+                        while (skip < length && skip < hexStart + 8 && Character.digit(this[skip], 16) >= 0) skip++
                         index = skip
                         continue
                     }

@@ -238,12 +238,39 @@ object V2RayLinkInspector {
         val decoded = StringBuilder(length)
         var index = 0
         while (index < length) {
-            if (this[index] == '\\' && index + 5 < length && this[index + 1] == 'u') {
-                val hex = substring(index + 2, index + 6)
-                if (hex.all { Character.digit(it, 16) >= 0 }) {
-                    decoded.append(hex.toInt(16).toChar())
-                    index += 6
-                    continue
+            if (this[index] == '\\' && index + 2 < length && this[index + 1] == '\\' && (this[index + 2] == 'u' || this[index + 2] == 'U')) {
+                index++
+                continue
+            }
+            if (this[index] == '\\' && index + 1 < length) {
+                when (this[index + 1]) {
+                    'u' -> {
+                        val hexStart = index + 2
+                        val hexEnd = hexStart + 4
+                        if (hexEnd <= length) {
+                            val hex = substring(hexStart, hexEnd)
+                            if (hex.all { Character.digit(it, 16) >= 0 }) {
+                                decoded.append(hex.toInt(16).toChar())
+                                index = hexEnd
+                                continue
+                            }
+                        }
+                    }
+                    'U' -> {
+                        val hexStart = index + 2
+                        val hexEnd = hexStart + 8
+                        if (hexEnd <= length) {
+                            val hex = substring(hexStart, hexEnd)
+                            if (hex.all { Character.digit(it, 16) >= 0 }) {
+                                val codePoint = hex.toInt(16)
+                                if (Character.isValidCodePoint(codePoint)) {
+                                    decoded.append(String(Character.toChars(codePoint)))
+                                    index = hexEnd
+                                    continue
+                                }
+                            }
+                        }
+                    }
                 }
             }
             decoded.append(if (this[index].isISOControl()) ' ' else this[index])

@@ -61,6 +61,23 @@ class ClashConfigParserTest {
 
 
     @Test
+    fun decodesUppercaseEscapedUnicodeNames() {
+        val yaml = """
+            proxies:
+            - name: "US \\U0001F1FA\\U0001F1F8 | @Raydikalx | C1F61F"
+              server: 66.23.204.210
+              port: 16995
+              type: ss
+              cipher: aes-128-gcm
+              password: secret-one
+        """.trimIndent()
+
+        val config = ClashConfigParser.parse(yaml)
+
+        assertEquals("US 🇺🇸 / @Raydikalx", config.name)
+    }
+
+    @Test
     fun exposesXrayShareLinkForSupportedProxy() {
         val yaml = """
             proxies:
