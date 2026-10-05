@@ -104,6 +104,12 @@ private object PearlPalette {
     val CHAMPAGNE = 0xFFD9DEEF.toInt()
     val CHAMPAGNE_DARK = 0xFF56627D.toInt()
     val CHAMPAGNE_SOFT = 0xFFE9ECFF.toInt()
+    val ACCENT_BLUE = 0xFF52699C.toInt()
+    val ACCENT_LILAC = 0xFFA8B7FF.toInt()
+    val ACCENT_CORAL = 0xFFE27A61.toInt()
+    val ACCENT_MINT = 0xFFA5C96B.toInt()
+    val ACCENT_SOFT = 0xFFE8ECFF.toInt()
+    val ACCENT_WARM_SOFT = 0xFFFFEEE9.toInt()
     val CHAMPAGNE_GLOW = 0x22A8B7FF
     val CHAMPAGNE_RING = 0x55A8B0C8
     val CHAMPAGNE_RING_STRONG = 0x778D96B4
@@ -728,8 +734,8 @@ class MainActivity : Activity() {
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(PearlPalette.INK)
-            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
+            setTextColor(PearlPalette.ACCENT_BLUE)
+            background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
             setPadding(dp(12), dp(8), dp(12), dp(8))
         })
         setOnClickListener { showSection(AppSection.PROFILES) }
@@ -1699,8 +1705,8 @@ class MainActivity : Activity() {
             textSize = 17f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(PearlPalette.INK)
-            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 16)
+            setTextColor(PearlPalette.ACCENT_BLUE)
+            background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 16)
             layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
                 setMargins(0, 0, dp(10), 0)
             }
@@ -2457,8 +2463,8 @@ class MainActivity : Activity() {
                 textSize = 18f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(PearlPalette.INK)
-                background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 15)
+                setTextColor(PearlPalette.ACCENT_BLUE)
+                background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 15)
                 layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
                     setMargins(0, 0, dp(10), 0)
                 }
@@ -4156,8 +4162,8 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         maxLines = 1
         includeFontPadding = false
-        setTextColor(PearlPalette.INK)
-        background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.PEARL_MID, radiusDp = 17)
+        setTextColor(PearlPalette.ACCENT_BLUE)
+        background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 17)
         layoutParams = LinearLayout.LayoutParams(dp(36), dp(34)).apply {
             setMargins(dp(5), 0, 0, 0)
         }
@@ -4225,10 +4231,10 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        setTextColor(if (selected) PearlPalette.PEARL_WHITE else PearlPalette.INK)
+        setTextColor(if (selected) PearlPalette.ACCENT_BLUE else PearlPalette.INK)
         background = roundedBackground(
-            fillColor = if (selected) PearlPalette.INK else PearlPalette.PEARL_WHITE,
-            strokeColor = if (selected) PearlPalette.BORDER else PearlPalette.HAIRLINE,
+            fillColor = if (selected) PearlPalette.ACCENT_SOFT else PearlPalette.PEARL_WHITE,
+            strokeColor = if (selected) PearlPalette.ACCENT_LILAC else PearlPalette.HAIRLINE,
             radiusDp = 18
         )
         setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -4246,7 +4252,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
+            background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -4261,7 +4267,7 @@ class MainActivity : Activity() {
                 textSize = 17f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(PearlPalette.INK)
+                setTextColor(PearlPalette.ACCENT_BLUE)
                 background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 14)
                 layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { setMargins(0, 0, dp(8), 0) }
             })
@@ -4889,12 +4895,12 @@ private class PowerRingButton(context: Context) : View(context) {
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeWidth = size * 0.060f
-        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(PearlPalette.BORDER, PearlPalette.TEXT_FAINT, PearlPalette.SHELL_DARK), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(cx - radius, cy + radius, cx + radius, cy - radius, intArrayOf(PearlPalette.ACCENT_BLUE, PearlPalette.ACCENT_LILAC, PearlPalette.ACCENT_CORAL), null, Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, radius, paint)
         paint.shader = null
 
         paint.strokeWidth = size * 0.014f
-        paint.color = if (active) PearlPalette.BORDER else PearlPalette.SHELL_DARK
+        paint.color = if (active) PearlPalette.ACCENT_CORAL else PearlPalette.ACCENT_LILAC
         canvas.drawCircle(cx, cy, radius * 1.11f, paint)
 
         paint.style = Paint.Style.FILL
@@ -4929,7 +4935,7 @@ private class MiniChartView(context: Context) : View(context) {
             cubicTo(w * 0.55f, h * 0.22f, w * 0.60f, h * 0.82f, w * 0.72f, h * 0.56f)
             cubicTo(w * 0.82f, h * 0.35f, w * 0.88f, h * 0.18f, w * 0.96f, h * 0.36f)
         }
-        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(PearlPalette.TEXT_FAINT, PearlPalette.INK, PearlPalette.CHAMPAGNE_DARK), null, Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(PearlPalette.ACCENT_BLUE, PearlPalette.INK, PearlPalette.ACCENT_CORAL), null, Shader.TileMode.CLAMP)
         canvas.drawPath(path, paint)
         paint.shader = null
     }
