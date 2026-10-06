@@ -3005,6 +3005,7 @@ class MainActivity : Activity() {
             actual != null -> "Connected faster tested: ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
             else -> "Faster tested config verified: ${compactProfileTitle(profile).shortUi(26)}"
         }
+        if (previous != null && actual != null && actual < previous) saveFasterSwitchImprovement(profile, previous, actual)
         fasterSwitchResultText = message
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
         status.text = message
@@ -3018,6 +3019,28 @@ class MainActivity : Activity() {
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
         status.text = message
         clearPendingFasterSwitch()
+    }
+
+    private fun saveFasterSwitchImprovement(profile: VpnProfile, previousLatencyMs: Long, actualLatencyMs: Long) {
+        val network = currentNetworkLabel().orEmpty()
+        appSettings.edit()
+            .putString(KEY_LAST_FAST_SWITCH_PROFILE_ID, profile.id)
+            .putString(KEY_LAST_FAST_SWITCH_NETWORK, network)
+            .putLong(KEY_LAST_FAST_SWITCH_PREVIOUS_MS, previousLatencyMs)
+            .putLong(KEY_LAST_FAST_SWITCH_ACTUAL_MS, actualLatencyMs)
+            .putLong(KEY_LAST_FAST_SWITCH_EPOCH_MS, System.currentTimeMillis())
+            .apply()
+    }
+
+    private fun lastFasterSwitchImprovementLine(profile: VpnProfile): String? {
+        if (appSettings.getString(KEY_LAST_FAST_SWITCH_PROFILE_ID, null) != profile.id) return null
+        val previous = appSettings.getLong(KEY_LAST_FAST_SWITCH_PREVIOUS_MS, -1L).takeIf { it >= 0L } ?: return null
+        val actual = appSettings.getLong(KEY_LAST_FAST_SWITCH_ACTUAL_MS, -1L).takeIf { it >= 0L } ?: return null
+        val epoch = appSettings.getLong(KEY_LAST_FAST_SWITCH_EPOCH_MS, 0L).takeIf { it > 0L }
+        val network = compactNetworkLabel(appSettings.getString(KEY_LAST_FAST_SWITCH_NETWORK, null).orEmpty())
+            ?.let { " • $it" }.orEmpty()
+        val age = if (isLatencyFresh(epoch)) "fresh" else "old"
+        return "Last improvement: ${previous}ms → ${actual}ms • $age$network"
     }
 
     private fun scheduleFasterSwitchRefreshes() {
@@ -3039,6 +3062,7 @@ class MainActivity : Activity() {
             .mapNotNull { profile ->
                 val signal = profileRankingState(profile, network)
                     ?.takeIf { it.success == true && it.latencyMs != null && isLatencyFresh(it.checkedAtEpochMs) }
+                    ?.takeIf { it.label == "Real" || it.label == "Verified" }
                     ?.takeIf { isSameNetworkLabel(it.network, network) || normalizeNetworkLabel(it.network) == null }
                     ?: return@mapNotNull null
                 FasterProfileSuggestion(profile, signal, activeLatency)
@@ -3881,6 +3905,7 @@ class MainActivity : Activity() {
         }
         currentNetworkLabel()?.let { compactNetworkLabel(it) }?.let { add("Current network: $it") }
         profileLatencyDetailLine(profile)?.let { add(it) }
+        lastFasterSwitchImprovementLine(profile)?.let { add(it) }
         profileLatencyMemoryLines(profile).forEach { add(it) }
         if (!compatibility.connectReady) add("Next step: ${runtimeFixHint(compatibility, profile)}")
     }
@@ -6739,6 +6764,11 @@ class MainActivity : Activity() {
         const val KEY_LOCATION_GROUP_FILTER = "location_group_filter"
         const val KEY_LOCATION_RUNTIME_FILTER = "location_runtime_filter"
         const val KEY_LOCATION_SORT_MODE = "location_sort_mode"
+        const val KEY_LAST_FAST_SWITCH_PROFILE_ID = "last_fast_switch_profile_id"
+        const val KEY_LAST_FAST_SWITCH_NETWORK = "last_fast_switch_network"
+        const val KEY_LAST_FAST_SWITCH_PREVIOUS_MS = "last_fast_switch_previous_ms"
+        const val KEY_LAST_FAST_SWITCH_ACTUAL_MS = "last_fast_switch_actual_ms"
+        const val KEY_LAST_FAST_SWITCH_EPOCH_MS = "last_fast_switch_epoch_ms"
         const val DEFAULT_XRAY_MUX_CONCURRENCY = 8
         const val MIN_XRAY_MUX_CONCURRENCY = 1
         const val MAX_XRAY_MUX_CONCURRENCY = 32
