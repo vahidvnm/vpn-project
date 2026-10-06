@@ -71,6 +71,7 @@ import com.vpnproject.app.engine.EnginePreparationRequest
 import com.vpnproject.app.engine.PreparedEngineStart
 import com.vpnproject.app.engine.EngineRegistry
 import com.vpnproject.app.engine.VpnEngineCoordinator
+import com.vpnproject.app.engine.VpnEngineAdapter
 import com.vpnproject.app.engine.EngineRuntimeOptions
 import com.vpnproject.app.engine.EngineRuntimeSnapshot
 import com.vpnproject.app.engine.EngineStatus
@@ -4742,7 +4743,7 @@ class MainActivity : Activity() {
 
     private fun prepareAndStartEngine(
         route: com.vpnproject.app.engine.ProfileExecutionRoute,
-        adapter: com.vpnproject.app.vpn.VpnEngineAdapter,
+        adapter: VpnEngineAdapter,
         request: EnginePreparationRequest,
         operationToken: EngineOperationToken
     ) {
