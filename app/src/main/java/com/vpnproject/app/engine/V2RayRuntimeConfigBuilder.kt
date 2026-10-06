@@ -6,6 +6,7 @@ import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
 import com.vpnproject.app.core.SingBoxConfigParser
 import com.vpnproject.app.core.V2RaySubscriptionParser
+import com.vpnproject.app.core.VpnRoutingInputParser
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -245,11 +246,10 @@ object V2RayRuntimeConfigBuilder {
         localHttpProxyPort: Int?
     ): String {
         val outbound = buildOutbound(profile, muxEnabled, muxConcurrency)
-        val dnsJson = dnsServers
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
+        val safeDnsServers = VpnRoutingInputParser.parseDnsServers(dnsServers.joinToString("\n")).servers
             .ifEmpty { DEFAULT_DNS_SERVERS }
+        val dnsJson = safeDnsServers.joinToString(prefix = "[", postfix = "]") { it.json() }
+        val lanBypassJson = XrayRoutePolicy.LAN_BYPASS_CIDRS
             .joinToString(prefix = "[", postfix = "]") { it.json() }
         val sniffingJson = if (sniffingEnabled) {
             "\"sniffing\": { \"enabled\": true, \"destOverride\": [\"http\", \"tls\", \"quic\"] }"
@@ -304,7 +304,7 @@ object V2RayRuntimeConfigBuilder {
               "routing": {
                 "domainStrategy": "AsIs",
                 "rules": [
-                  { "type": "field", "ip": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"], "outboundTag": "direct" }
+                  { "type": "field", "ip": $lanBypassJson, "outboundTag": "direct" }
                 ]
               },
               "dns": { "servers": $dnsJson }
@@ -641,7 +641,7 @@ object V2RayRuntimeConfigBuilder {
     private const val MAX_MUX_CONCURRENCY = 32
     private const val MIN_LOCAL_HTTP_PROXY_PORT = 1024
     private const val MAX_LOCAL_HTTP_PROXY_PORT = 65535
-    private val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
+    private val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
 }
 
 data class V2RayRuntimeConfig(

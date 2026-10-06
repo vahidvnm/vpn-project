@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -31,6 +32,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -60,28 +62,35 @@ import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.V2RaySubscriptionParser
 import com.vpnproject.app.core.V2RayLinkInspector
 import com.vpnproject.app.core.VpnProtocol
+import com.vpnproject.app.core.VpnRoutingInputParser
+import com.vpnproject.app.engine.EngineExecutionMode
+import com.vpnproject.app.engine.EngineOperationPhase
+import com.vpnproject.app.engine.EngineOperationToken
+import com.vpnproject.app.engine.EngineStartHandoffState
+import com.vpnproject.app.engine.EnginePreparationRequest
+import com.vpnproject.app.engine.PreparedEngineStart
 import com.vpnproject.app.engine.EngineRegistry
+import com.vpnproject.app.engine.VpnEngineCoordinator
+import com.vpnproject.app.engine.EngineRuntimeOptions
+import com.vpnproject.app.engine.EngineRuntimeSnapshot
 import com.vpnproject.app.engine.EngineStatus
+import com.vpnproject.app.engine.VpnEngineId
 import com.vpnproject.app.engine.RuntimeConfigPreparer
 import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
 import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.XrayRealDelayTester
 import com.vpnproject.app.engine.VpnHubStatusMapper
-import com.vpnproject.app.engine.V2RayRuntimeConfig
 import com.vpnproject.app.profile.FasterSwitchRecommendationPolicy
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.SubscriptionGroup
 import com.vpnproject.app.profile.VpnProfile
 import com.vpnproject.app.profile.VpnProfileKind
 import com.vpnproject.app.profile.VpnProfileEndpoint
+import com.vpnproject.app.vpn.AndroidVpnEngineAdapterRegistry
 import com.vpnproject.app.vpn.AutoVpnService
-import com.vpnproject.app.vpn.WireGuardVpnService
-import com.vpnproject.app.vpn.XrayVpnService
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
-import java.net.InetAddress
-import java.net.ServerSocket
 import java.net.URL
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -131,6 +140,13 @@ private object PearlPalette {
     val SHINE_FAINT = 0x22FFFFFF
     val PEARL_WASH = 0xCCEEEFF6.toInt()
 }
+
+private data class PendingEngineStartHandoff(
+    val operationToken: EngineOperationToken,
+    val prepared: PreparedEngineStart,
+    val engineName: String,
+    val deadlineUptimeMs: Long
+)
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -200,7 +216,6 @@ class MainActivity : Activity() {
     private var importedConfig: ImportedConfig? = null
     private var selectedProfileId: String? = null
     private var selectedProfile: VpnProfile? = null
-    private var activeConnectionProfileId: String? = null
     private var pendingFasterSwitchProfileId: String? = null
     private var pendingFasterSwitchText: String? = null
     private var pendingFasterSwitchNetwork: String? = null
@@ -214,7 +229,25 @@ class MainActivity : Activity() {
     private lateinit var subscriptionGroupContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
     private var pendingVpnProfileId: String? = null
-    private var engineRequestGeneration = 0
+    private var pendingVpnOperationToken: EngineOperationToken? = null
+    private var pendingEngineStartHandoff: PendingEngineStartHandoff? = null
+    private val engineHandoffPollRunnable = object : Runnable {
+        override fun run() {
+            val pending = pendingEngineStartHandoff ?: return
+            val statuses = readInAppEngineStatuses()
+            reconcileEngineOperationStatuses(statuses.first, statuses.second)
+            val stillPending = pendingEngineStartHandoff ?: return
+            if (stillPending.operationToken != pending.operationToken) return
+            if (SystemClock.uptimeMillis() >= stillPending.deadlineUptimeMs) {
+                failPendingEngineStartHandoff(stillPending, timedOut = true)
+            } else {
+                mainHandler.postDelayed(this, ENGINE_HANDOFF_POLL_INTERVAL_MS)
+            }
+        }
+    }
+    private val engineOperationCoordinator = VpnEngineCoordinator()
+    private val trackedConnectionProfileId: String?
+        get() = engineOperationCoordinator.snapshot().requestedProfileId
     private var fileImportGeneration = 0
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
@@ -222,6 +255,7 @@ class MainActivity : Activity() {
     private val endpointHealthChecker by lazy { EndpointHealthChecker() }
     private val xrayRealDelayTester by lazy { XrayRealDelayTester(this) }
     private val runtimeConfigPreparer by lazy { RuntimeConfigPreparer(endpointDiscovery) }
+    private val engineAdapters by lazy { AndroidVpnEngineAdapterRegistry(applicationContext, runtimeConfigPreparer) }
     private val profileStore by lazy { SecureProfileStore(this) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -425,6 +459,12 @@ class MainActivity : Activity() {
     override fun onPause() {
         stopLiveDashboardRefresh()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        pendingEngineStartHandoff?.let { engineOperationCoordinator.cancel(it.operationToken) }
+        clearPendingEngineStartHandoff()
+        super.onDestroy()
     }
 
     private fun createTopBar(): LinearLayout = LinearLayout(this).apply {
@@ -1278,7 +1318,6 @@ class MainActivity : Activity() {
         importedConfig = config
         selectedProfileId = refreshed.id
         selectedProfile = refreshed
-        activeConnectionProfileId = null
         return true
     }
 
@@ -1407,7 +1446,7 @@ class MainActivity : Activity() {
             val result = xrayRealDelayTester.measure(
                 config = config,
                 verifyUrls = realDelayVerifyUrls(),
-                dnsServers = vpnDnsServers(includeLocalhost = true),
+                dnsServers = vpnDnsServers(),
                 muxEnabled = xrayMuxEnabled(),
                 muxConcurrency = xrayMuxConcurrency(),
                 logLevel = xrayLogLevel()
@@ -1480,7 +1519,7 @@ class MainActivity : Activity() {
                 val delayResult = if (config != null) xrayRealDelayTester.measure(
                     config = config,
                     verifyUrls = realDelayVerifyUrls(),
-                    dnsServers = vpnDnsServers(includeLocalhost = true),
+                    dnsServers = vpnDnsServers(),
                     muxEnabled = xrayMuxEnabled(),
                     muxConcurrency = xrayMuxConcurrency(),
                     logLevel = xrayLogLevel()
@@ -1532,7 +1571,7 @@ class MainActivity : Activity() {
     private fun runRealLatencyTestForProfile(profile: VpnProfile) {
         val hubBeforeSelection = currentHubStatus()
         val selectedBefore = selectedProfileId
-        val activeBefore = activeConnectionProfileId
+        val activeBefore = trackedConnectionProfileId
         val sameActiveProfile = activeBefore == profile.id || (activeBefore == null && selectedBefore == profile.id)
         if (isLiveState(hubBeforeSelection.state) && !sameActiveProfile) {
             status.text = "Stop the current VPN first, then run real latency for ${compactProfileTitle(profile)}."
@@ -2007,7 +2046,7 @@ class MainActivity : Activity() {
             subtitle = "Xray/VPN routing controls without cluttering Home."
         ) { dialog ->
             addView(settingsHintText("These settings apply to embedded Xray connections. WireGuard/OpenVPN fallback behavior depends on their own configs/clients."))
-            addView(bottomSheetActionRow("DNS", "VPN DNS", vpnDnsServers(includeLocalhost = false).joinToString(", ")) {
+            addView(bottomSheetActionRow("DNS", "VPN DNS", vpnDnsServers().joinToString(", ")) {
                 dialog.dismiss()
                 showDnsSettingsSheet()
             })
@@ -2039,9 +2078,9 @@ class MainActivity : Activity() {
             title = "VPN DNS",
             subtitle = "Used by Android VPN interface and Xray core DNS."
         ) { dialog ->
-            addView(settingsHintText("Enter public IPv4 DNS servers, one per line. Defaults are 1.1.1.1 and 8.8.8.8. Xray also keeps localhost internally for fallback."))
+            addView(settingsHintText("Enter public IPv4 DNS server addresses, one per line. Defaults are 1.1.1.1 and 8.8.8.8. Android/system DNS fallback is disabled until its routing can be verified; if these resolvers fail, connections may fail rather than silently using an unverified resolver."))
             val input = EditText(this@MainActivity).apply {
-                setText(vpnDnsServers(includeLocalhost = false).joinToString("\n"))
+                setText(vpnDnsServers().joinToString("\n"))
                 textSize = 15f
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                 minLines = 2
@@ -2056,9 +2095,21 @@ class MainActivity : Activity() {
             }
             addView(input)
             addView(bottomSheetActionRow("✓", "Save DNS", "Apply to future Xray connects and Real delay probes") {
-                val dns = parseDnsServers(input.text?.toString().orEmpty())
+                val parsed = VpnRoutingInputParser.parseDnsServers(
+                    input.text?.toString().orEmpty(),
+                    maxServers = MAX_VPN_DNS_SERVERS
+                )
+                if (parsed.rejectedEntries.isNotEmpty()) {
+                    setActionStatus("Not saved: VPN DNS accepts public IPv4 literals only; remove invalid or private addresses first.")
+                    return@bottomSheetActionRow
+                }
+                if (parsed.omittedCount > 0) {
+                    setActionStatus("Not saved: choose at most $MAX_VPN_DNS_SERVERS distinct public IPv4 DNS servers.")
+                    return@bottomSheetActionRow
+                }
+                val dns = parsed.servers
                 if (dns.isEmpty()) {
-                    setActionStatus("Add at least one IPv4 DNS server, e.g. 1.1.1.1")
+                    setActionStatus("Add at least one public IPv4 DNS server, e.g. 1.1.1.1")
                     return@bottomSheetActionRow
                 }
                 dialog.dismiss()
@@ -2096,7 +2147,24 @@ class MainActivity : Activity() {
             }
             addView(input)
             addView(bottomSheetActionRow("✓", "Save bypass list", "Reconnect Xray to apply") {
-                val packages = parsePackageNameList(input.text?.toString().orEmpty())
+                val parsed = VpnRoutingInputParser.parseBypassPackages(
+                    input.text?.toString().orEmpty(),
+                    ownPackageName = packageName,
+                    maxPackages = MAX_BYPASS_PACKAGES
+                )
+                if (parsed.invalidEntries.isNotEmpty()) {
+                    setActionStatus("Not saved: fix invalid package names; use names like com.example.app.")
+                    return@bottomSheetActionRow
+                }
+                if (parsed.selfPackageEntries > 0) {
+                    setActionStatus("Not saved: this VPN app is always excluded from its own tunnel to prevent a network loop.")
+                    return@bottomSheetActionRow
+                }
+                if (parsed.omittedCount > 0) {
+                    setActionStatus("Not saved: keep the bypass list to at most $MAX_BYPASS_PACKAGES distinct package names.")
+                    return@bottomSheetActionRow
+                }
+                val packages = parsed.packages
                 dialog.dismiss()
                 appSettings.edit().putString(KEY_BYPASS_PACKAGES, packages.joinToString("\n")).apply()
                 setActionStatus(if (packages.isEmpty()) "Bypass app list cleared. Reconnect to apply." else "${packages.size} bypass app package${if (packages.size == 1) "" else "s"} saved. Reconnect to apply.")
@@ -2342,46 +2410,19 @@ class MainActivity : Activity() {
         .removePrefix("http://")
         .substringBefore('/')
 
-    private fun vpnDnsServers(includeLocalhost: Boolean): List<String> {
+    private fun vpnDnsServers(): List<String> {
         val saved = appSettings.getString(KEY_VPN_DNS_SERVERS, null).orEmpty()
-        val base = parseDnsServers(saved).ifEmpty { DEFAULT_VPN_DNS_SERVERS }
-        return if (includeLocalhost) (base + "localhost").distinct() else base
+        return parseDnsServers(saved).ifEmpty { DEFAULT_VPN_DNS_SERVERS }
     }
 
-    private fun parseDnsServers(raw: String): List<String> = raw
-        .lineSequence()
-        .flatMap { it.split(',', ';', ' ').asSequence() }
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .filter { it == "localhost" || isIpv4Address(it) }
-        .filter { it != "0.0.0.0" }
-        .filterNot { it == "localhost" }
-        .distinct()
-        .take(MAX_VPN_DNS_SERVERS)
-        .toList()
+    private fun parseDnsServers(raw: String): List<String> =
+        VpnRoutingInputParser.parseDnsServers(raw, maxServers = MAX_VPN_DNS_SERVERS).servers
 
-    private fun isIpv4Address(value: String): Boolean {
-        val parts = value.split('.')
-        if (parts.size != 4) return false
-        return parts.all { part ->
-            part.isNotBlank() && part.length <= 3 && part.all { it.isDigit() } && (part.toIntOrNull() ?: -1) in 0..255
-        }
-    }
-
-    private fun bypassAppPackages(): List<String> = parsePackageNameList(
-        appSettings.getString(KEY_BYPASS_PACKAGES, null).orEmpty()
-    )
-
-    private fun parsePackageNameList(raw: String): List<String> = raw
-        .lineSequence()
-        .flatMap { it.split(',', ';', ' ').asSequence() }
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .filter { PACKAGE_NAME_REGEX.matches(it) }
-        .filterNot { it == packageName }
-        .distinct()
-        .take(MAX_BYPASS_PACKAGES)
-        .toList()
+    private fun bypassAppPackages(): List<String> = VpnRoutingInputParser.parseBypassPackages(
+        raw = appSettings.getString(KEY_BYPASS_PACKAGES, null).orEmpty(),
+        ownPackageName = packageName,
+        maxPackages = MAX_BYPASS_PACKAGES
+    ).packages
 
     private fun xraySniffingEnabled(): Boolean = appSettings.getBoolean(KEY_XRAY_SNIFFING, true)
 
@@ -2436,13 +2477,13 @@ class MainActivity : Activity() {
             appendLine("Real delay limit: ${realDelayProfileLimit()}")
             appendLine("Smart fallback: ${smartFallbackEnabled} (max $MAX_SMART_FALLBACK_ATTEMPTS)")
             appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
-            appendLine("VPN DNS: ${vpnDnsServers(includeLocalhost = false).joinToString(", ")}")
+            appendLine("VPN DNS: ${vpnDnsServers().joinToString(", ")}")
             appendLine("Bypass app packages: ${bypassAppPackages().size}")
             appendLine("Xray sniffing: ${xraySniffingEnabled()}")
             appendLine("Xray mux: ${xrayMuxEnabled()} concurrency ${xrayMuxConcurrency()}")
             appendLine("Xray log level: ${xrayLogLevel()}")
             appendLine()
-            appendLine(engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus))
+            appendLine(engineDiagnosticsText(engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO), engineAdapters.snapshot(VpnEngineId.XRAY_CORE)))
         }
         (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("VPN Hub safe diagnostics", report))
@@ -2543,12 +2584,16 @@ class MainActivity : Activity() {
 
     private fun refreshDashboardLive() {
         if (!::hubStatusTitle.isInitialized) return
+        reconcileEngineOperationStatuses(
+            wireGuard = engineAdapters.status(VpnEngineId.WIREGUARD_GO),
+            xray = engineAdapters.status(VpnEngineId.XRAY_CORE)
+        )
         val hub = currentHubStatus()
         recordVerifiedProfileIfNeeded(hub)
         recordConnectionFailureIfNeeded(hub)
         updateDashboardSummary()
         if (::advancedDiagnostics.isInitialized && advancedVisible && ::toolsSection.isInitialized && toolsSection.visibility == View.VISIBLE) {
-            advancedDiagnostics.text = engineDiagnosticsText(WireGuardVpnService.lastStatus, XrayVpnService.lastStatus)
+            advancedDiagnostics.text = engineDiagnosticsText(engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO), engineAdapters.snapshot(VpnEngineId.XRAY_CORE))
         }
     }
 
@@ -2566,9 +2611,9 @@ class MainActivity : Activity() {
         refreshProfiles: Boolean = true
     ) {
         if (!hub.verified || hub.state != VpnHubConnectionState.CONNECTED) return
-        val profileId = hub.profileId ?: activeConnectionProfileId ?: selectedProfileId ?: return
-        if (activeConnectionProfileId != null && hub.profileId != activeConnectionProfileId) return
-        if (pendingFasterSwitchProfileId == profileId && activeConnectionProfileId != profileId) return
+        val profileId = hub.profileId ?: trackedConnectionProfileId ?: selectedProfileId ?: return
+        if (trackedConnectionProfileId != null && hub.profileId != trackedConnectionProfileId) return
+        if (pendingFasterSwitchProfileId == profileId && trackedConnectionProfileId != profileId) return
         val network = fasterSwitchNetworkLabel(profileId)
         val key = "$profileId:${hub.activeEngine}:${hub.latencyMs ?: -1}:${network.orEmpty()}:${hub.verified}"
         if (lastRecordedVerificationKey == key) return
@@ -2594,7 +2639,6 @@ class MainActivity : Activity() {
             lastRecordedFailureKey = null
             clearSmartFallbackSession()
             if (selectedProfileId == updated.id) selectedProfile = updated
-            activeConnectionProfileId = updated.id
             recordFasterSwitchSuccessIfNeeded(updated, hub.latencyMs, hub.verificationScope)
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
@@ -2606,9 +2650,9 @@ class MainActivity : Activity() {
     ) {
         if (hub.state != VpnHubConnectionState.FAILED) return
         if (smartFallbackInFlight || System.currentTimeMillis() < smartFallbackSuppressFailureUntilMs) return
-        val profileId = hub.profileId ?: activeConnectionProfileId ?: selectedProfileId ?: return
-        if (activeConnectionProfileId != null && hub.profileId != activeConnectionProfileId) return
-        if (pendingFasterSwitchProfileId == profileId && activeConnectionProfileId != profileId) return
+        val profileId = hub.profileId ?: trackedConnectionProfileId ?: selectedProfileId ?: return
+        if (trackedConnectionProfileId != null && hub.profileId != trackedConnectionProfileId) return
+        if (pendingFasterSwitchProfileId == profileId && trackedConnectionProfileId != profileId) return
         val network = fasterSwitchNetworkLabel(profileId)
         val key = "$profileId:${hub.activeEngine}:${hub.title}:${hub.detail.shortUi(72)}:${network.orEmpty()}"
         if (lastRecordedFailureKey == key) return
@@ -2626,7 +2670,6 @@ class MainActivity : Activity() {
         if (updated != null) {
             lastRecordedFailureKey = key
             if (selectedProfileId == updated.id) selectedProfile = updated
-            activeConnectionProfileId = updated.id
             recordFasterSwitchFailureIfNeeded(updated, hub.detail)
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
@@ -2687,7 +2730,6 @@ class MainActivity : Activity() {
             importedConfig = config
             selectedProfileId = profile.id
             selectedProfile = profile
-            activeConnectionProfileId = null
             lastRecordedVerificationKey = null
             lastRecordedFailureKey = null
             val delayMs = SMART_FALLBACK_BASE_DELAY_MS * smartFallbackAttemptCount
@@ -2760,10 +2802,10 @@ class MainActivity : Activity() {
     }
 
     private fun currentHubStatus() = VpnHubStatusMapper.from(
-        wireGuard = WireGuardVpnService.lastStatus,
-        xray = XrayVpnService.lastStatus,
-        selectedProfile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile,
-        activeProfileId = activeConnectionProfileId ?: selectedProfileId
+        wireGuard = engineAdapters.status(VpnEngineId.WIREGUARD_GO),
+        xray = engineAdapters.status(VpnEngineId.XRAY_CORE),
+        selectedProfile = trackedConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile,
+        activeProfileId = trackedConnectionProfileId ?: selectedProfileId
     )
 
     private fun updateDashboardSummary() {
@@ -2840,7 +2882,7 @@ class MainActivity : Activity() {
     }
 
     private fun dashboardDetail(hub: com.vpnproject.app.engine.VpnHubStatus): String {
-        val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
+        val profile = trackedConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val profileName = profile?.displayName?.shortUi(28)
         val engine = hub.activeEngine?.let { engineLabel(it) }
         val evidence = when (hub.verificationScope) {
@@ -2890,10 +2932,7 @@ class MainActivity : Activity() {
 
     private fun engineLabel(kind: com.vpnproject.app.engine.EngineKind): String = when (kind) {
         com.vpnproject.app.engine.EngineKind.XRAY_CORE -> "Xray"
-        com.vpnproject.app.engine.EngineKind.SING_BOX_EXPERIMENTAL -> "sing-box"
-        com.vpnproject.app.engine.EngineKind.CLASH_IMPORT -> "Clash"
         com.vpnproject.app.engine.EngineKind.WIREGUARD_GO -> "WireGuard"
-        com.vpnproject.app.engine.EngineKind.OPENVPN_UNAVAILABLE -> "OpenVPN handoff"
     }
 
     private enum class ProfileRuntimeTone {
@@ -2938,7 +2977,7 @@ class MainActivity : Activity() {
     )
 
     private fun updateSelectedProfileSummary() {
-        val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
+        val profile = trackedConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
             "◎  No config • tap +"
         } else {
@@ -2965,7 +3004,7 @@ class MainActivity : Activity() {
         if (!::fasterSuggestionButton.isInitialized) return
         if (updateFasterSwitchResult()) return
         if (updatePendingFasterSwitch(hub)) return
-        val activeProfile = activeConnectionProfileId?.let { runCatching { profileStore.profile(it) }.getOrNull() }
+        val activeProfile = trackedConnectionProfileId?.let { runCatching { profileStore.profile(it) }.getOrNull() }
             ?: selectedProfile
         val suggestion = if (hub.state == VpnHubConnectionState.CONNECTED && hub.verified && activeProfile != null) {
             fasterTestedSuggestion(activeProfile, hub.latencyMs)
@@ -3005,7 +3044,7 @@ class MainActivity : Activity() {
         }
         val active = isLiveState(hub.state)
         fasterSuggestionButton.visibility = View.VISIBLE
-        if (activeConnectionProfileId == pendingId && active) {
+        if (trackedConnectionProfileId == pendingId && active) {
             fasterSuggestionButton.text = "Connecting faster tested… ${pendingFasterSwitchText.orEmpty().shortUi(44)}"
             fasterSuggestionButton.setOnClickListener {
                 status.text = "Connecting faster tested config. Waiting for verification."
@@ -3217,7 +3256,7 @@ class MainActivity : Activity() {
 
     private fun topProfileSummary(profile: VpnProfile): String {
         val hub = currentHubStatus()
-        val liveForProfile = activeConnectionProfileId == profile.id && isLiveState(hub.state)
+        val liveForProfile = trackedConnectionProfileId == profile.id && isLiveState(hub.state)
         val compatibility = profileRuntimeCompatibility(profile)
         val savedHealth = profileLatencyMiniLabel(profile)
         val health = when {
@@ -4463,22 +4502,22 @@ class MainActivity : Activity() {
         return "${String.format(java.util.Locale.US, "%.1f", mb)} MB"
     }
 
-    private fun engineDiagnosticsText(wireGuard: EngineStatus, xray: EngineStatus): String {
+    private fun engineDiagnosticsText(wireGuard: EngineRuntimeSnapshot, xray: EngineRuntimeSnapshot): String {
+        fun formatEngine(name: String, snapshot: EngineRuntimeSnapshot): String = buildString {
+            val current = snapshot.status
+            appendLine("$name status: ${current.state}")
+            appendLine("Verified: ${if (snapshot.verification.verified) "yes" else "no"}")
+            appendLine("Verification scope: ${snapshot.verification.scope}")
+            appendLine("Profile ID: ${current.profileId ?: "unknown"}")
+            appendLine("Message: ${current.message}")
+            current.detail?.let { appendLine("Detail: $it") }
+            current.egressIp?.let { appendLine("Egress IP: $it") }
+            appendLine("RX/TX: ${snapshot.stats.rxBytes ?: 0} / ${snapshot.stats.txBytes ?: 0} bytes")
+            snapshot.failure?.let { appendLine("Failure explanation: ${it.detail}") }
+        }
         return "Advanced engine diagnostics:\n" +
-            "WireGuard status: ${wireGuard.state}\n" +
-            "Verified: ${if (wireGuard.verified) "yes" else "no"}\n" +
-            "Verification scope: ${wireGuard.verificationScope}\n" +
-            "Profile ID: ${wireGuard.profileId ?: "unknown"}\n" +
-            "Message: ${wireGuard.message}" +
-            (wireGuard.detail?.let { "\nDetail: $it" } ?: "") +
-            (wireGuard.egressIp?.let { "\nEgress IP: $it" } ?: "") +
-            "\nRX/TX: ${wireGuard.rxBytes ?: 0} / ${wireGuard.txBytes ?: 0} bytes" +
-            "\n\nXray status: ${xray.state}\n" +
-            "Verified: ${if (xray.verified) "yes" else "no"}\n" +
-            "Verification scope: ${xray.verificationScope}\n" +
-            "Profile ID: ${xray.profileId ?: "unknown"}\n" +
-            "Message: ${xray.message}" +
-            (xray.detail?.let { "\nDetail: $it" } ?: "")
+            formatEngine("WireGuard", wireGuard) + "\n" +
+            formatEngine("Xray", xray)
     }
 
     @Deprecated("Deprecated in Android framework, acceptable for this no-AndroidX skeleton.")
@@ -4488,11 +4527,14 @@ class MainActivity : Activity() {
             VPN_PERMISSION_REQUEST -> {
                 val action = pendingVpnAction
                 val profileId = pendingVpnProfileId
+                val operationToken = pendingVpnOperationToken
                 pendingVpnAction = PendingVpnAction.NONE
                 pendingVpnProfileId = null
+                pendingVpnOperationToken = null
                 if (resultCode == RESULT_OK) {
-                    runVpnAction(action, profileId)
+                    runVpnAction(action, profileId, operationToken)
                 } else {
+                    operationToken?.let { engineOperationCoordinator.cancel(it) }
                     status.text = "VPN permission was not granted."
                 }
             }
@@ -4521,21 +4563,42 @@ class MainActivity : Activity() {
         } else {
             null
         }
+        val operationToken = if (action == PendingVpnAction.IMPORTED_ENGINE) {
+            engineOperationCoordinator.beginPending(
+                profileId = requestedProfileId,
+                phase = EngineOperationPhase.AWAITING_PERMISSION
+            )
+        } else {
+            engineOperationCoordinator.cancelPending()
+            null
+        }
+        clearPendingEngineStartHandoff()
         val intent = VpnService.prepare(this)
         if (intent != null) {
             pendingVpnAction = action
             pendingVpnProfileId = requestedProfileId
+            pendingVpnOperationToken = operationToken
             startActivityForResult(intent, VPN_PERMISSION_REQUEST)
         } else {
-            runVpnAction(action, requestedProfileId)
+            pendingVpnAction = PendingVpnAction.NONE
+            pendingVpnProfileId = null
+            pendingVpnOperationToken = null
+            runVpnAction(action, requestedProfileId, operationToken)
         }
     }
 
-    private fun runVpnAction(action: PendingVpnAction, requestedProfileId: String? = null) {
+    private fun runVpnAction(
+        action: PendingVpnAction,
+        requestedProfileId: String? = null,
+        operationToken: EngineOperationToken? = null
+    ) {
         when (action) {
             PendingVpnAction.NONE -> status.text = "VPN permission is granted."
             PendingVpnAction.BOOTSTRAP -> startBootstrapVpnService()
-            PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine(requestedProfileId = requestedProfileId)
+            PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine(
+                requestedProfileId = requestedProfileId,
+                operationToken = operationToken
+            )
         }
     }
 
@@ -4612,9 +4675,13 @@ class MainActivity : Activity() {
 
     private fun prepareAndStartImportedEngine(
         isSmartFallbackAttempt: Boolean = false,
-        requestedProfileId: String? = selectedProfileId ?: selectedProfile?.id
+        requestedProfileId: String? = selectedProfileId ?: selectedProfile?.id,
+        operationToken: EngineOperationToken? = null
     ) {
-        val requestGeneration = ++engineRequestGeneration
+        val requestToken = operationToken ?: engineOperationCoordinator.beginPending(requestedProfileId)
+        if (!engineOperationCoordinator.isCurrent(requestToken)) return
+        if (pendingEngineStartHandoff?.operationToken != requestToken) clearPendingEngineStartHandoff()
+        engineOperationCoordinator.setPhase(requestToken, EngineOperationPhase.PREPARING)
         val requestedProfile = requestedProfileId
             ?.let { id -> runCatching { profileStore.profile(id) }.getOrNull() }
         val canUseCurrentSelection = requestedProfileId == null || requestedProfileId == selectedProfileId
@@ -4625,8 +4692,8 @@ class MainActivity : Activity() {
         }
         val config = requestedProfile?.let(::loadProfileConfigQuiet) ?: currentSelectionConfig
         if (config == null) {
-            activeConnectionProfileId = null
-            status.text = "Import or pick a saved V2Ray/Xray profile first. WireGuard/OpenVPN remain advanced fallback imports only."
+            engineOperationCoordinator.fail(requestToken)
+            status.text = "Import or pick a saved VPN profile first."
             updateDashboardSummary()
             return
         }
@@ -4637,34 +4704,101 @@ class MainActivity : Activity() {
         }
         if (!isSmartFallbackAttempt) beginSmartFallbackSession()
         lastRecordedVerificationKey = null
-        when (config.kind) {
-            ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config, requestedProfileId, requestGeneration)
-            ConfigKind.V2RAY,
-            ConfigKind.SING_BOX,
-            ConfigKind.CLASH -> prepareAndStartXrayEngine(config, requestedProfileId, requestGeneration)
-            ConfigKind.OPENVPN -> status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
-            ConfigKind.UNKNOWN -> status.text = "Unknown config kind cannot be started."
+        val route = EngineRegistry.routeFor(config.kind)
+        when (route.executionMode) {
+            EngineExecutionMode.EMBEDDED_ENGINE,
+            EngineExecutionMode.MAPPED_TO_XRAY -> {
+                if (!engineOperationCoordinator.bindEngine(requestToken, route.runtimeEngineId, requestedProfileId)) return
+                val adapter = engineAdapters.adapterFor(route.runtimeEngineId)
+                if (adapter == null) {
+                    engineOperationCoordinator.fail(requestToken)
+                    status.text = "No runnable in-app engine is registered for ${route.adapterId.displayName}."
+                } else {
+                    val request = EnginePreparationRequest(
+                        config = config,
+                        profileId = requestedProfileId,
+                        options = EngineRuntimeOptions(
+                            dnsServers = vpnDnsServers(),
+                            bypassPackages = bypassAppPackages(),
+                            sniffingEnabled = xraySniffingEnabled(),
+                            muxEnabled = xrayMuxEnabled(),
+                            muxConcurrency = xrayMuxConcurrency(),
+                            logLevel = xrayLogLevel()
+                        )
+                    )
+                    prepareAndStartEngine(route, adapter, request, requestToken)
+                }
+            }
+            EngineExecutionMode.EXTERNAL_HANDOFF -> {
+                engineOperationCoordinator.fail(requestToken)
+                status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
+            }
+            EngineExecutionMode.UNAVAILABLE -> {
+                engineOperationCoordinator.fail(requestToken)
+                status.text = route.description
+            }
         }
     }
 
-    private fun prepareAndStartWireGuardEngine(
-        config: ImportedConfig,
-        profileId: String?,
-        requestGeneration: Int
+    private fun prepareAndStartEngine(
+        route: com.vpnproject.app.engine.ProfileExecutionRoute,
+        adapter: com.vpnproject.app.vpn.VpnEngineAdapter,
+        request: EnginePreparationRequest,
+        operationToken: EngineOperationToken
     ) {
-        status.text = "Preparing WireGuard runtime config: resolving endpoint and pinning a public IPv4 candidate..."
+        val engineName = EngineRegistry.engine(route.runtimeEngineId).displayName
+        status.text = "Preparing $engineName runtime config..."
         hubStatusTitle.text = "Preparing"
-        hubStatusDetail.text = "WireGuard is preparing its runtime config."
+        hubStatusDetail.text = when (route.executionMode) {
+            EngineExecutionMode.MAPPED_TO_XRAY -> "${route.adapterId.displayName} is preparing a supported-subset mapping to Xray."
+            else -> "$engineName is preparing the selected profile."
+        }
         Thread {
-            val result = runCatching { runtimeConfigPreparer.prepareWireGuard(config) }
+            val result = runCatching { adapter.prepare(request) }
             runOnUiThread {
-                if (requestGeneration != engineRequestGeneration) return@runOnUiThread
+                if (!engineOperationCoordinator.isCurrent(operationToken)) return@runOnUiThread
                 result.fold(
-                    onSuccess = { selection -> startWireGuardEngine(selection, config, profileId, requestGeneration) },
+                    onSuccess = { prepared ->
+                        if (!engineOperationCoordinator.setPhase(operationToken, EngineOperationPhase.STARTING)) return@fold
+                        val serviceStatuses = readInAppEngineStatuses()
+                        val stopTargets = engineOperationCoordinator.beginStartHandoff(
+                            operationToken,
+                            listOf(serviceStatuses.first, serviceStatuses.second)
+                        ) ?: return@fold
+                        if (stopTargets.isEmpty()) {
+                            requestPreparedEngineStart(operationToken, prepared, engineName)
+                        } else {
+                            val pending = PendingEngineStartHandoff(
+                                operationToken = operationToken,
+                                prepared = prepared,
+                                engineName = engineName,
+                                deadlineUptimeMs = SystemClock.uptimeMillis() + ENGINE_HANDOFF_TIMEOUT_MS
+                            )
+                            pendingEngineStartHandoff = pending
+                            status.text = "Stopping the previous engine before starting $engineName."
+                            hubStatusTitle.text = "Switching engines"
+                            hubStatusDetail.text = "Waiting for ${stopTargets.joinToString { EngineRegistry.engine(it).displayName }} to report stopped."
+                            val stopFailure = stopTargets
+                                .mapNotNull { engineId -> runCatching { engineAdapters.stop(engineId) }.exceptionOrNull() }
+                                .firstOrNull()
+                            if (stopFailure != null) {
+                                failPendingEngineStartHandoff(pending, timedOut = false, failure = stopFailure)
+                            } else {
+                                mainHandler.removeCallbacks(engineHandoffPollRunnable)
+                                mainHandler.post(engineHandoffPollRunnable)
+                            }
+                        }
+                    },
                     onFailure = { error ->
-                        activeConnectionProfileId = null
-                        val message = "WireGuard runtime config failed: ${error.message ?: error.javaClass.simpleName}"
+                        engineOperationCoordinator.fail(operationToken)
+                        val message = "$engineName runtime config failed: ${error.message ?: error.javaClass.simpleName}"
                         status.text = message
+                        hubStatusTitle.text = if (route.runtimeEngineId == VpnEngineId.XRAY_CORE) "Needs mapper" else "Connection failed"
+                        hubStatusDetail.text = if (route.runtimeEngineId == VpnEngineId.XRAY_CORE) {
+                            "This profile stayed saved, but Xray could not prepare a supported runtime config."
+                        } else {
+                            "The selected profile could not be prepared for $engineName."
+                        }
                         maybeStartSmartFallback(message)
                     }
                 )
@@ -4672,100 +4806,97 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun startWireGuardEngine(
-        selection: RuntimeConfigSelection,
-        config: ImportedConfig,
-        profileId: String?,
-        requestGeneration: Int
+    private fun requestPreparedEngineStart(
+        operationToken: EngineOperationToken,
+        prepared: PreparedEngineStart,
+        engineName: String
     ) {
-        if (requestGeneration != engineRequestGeneration) return
-        activeConnectionProfileId = profileId
-        startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
-        val intent = Intent(this, WireGuardVpnService::class.java).apply {
-            action = WireGuardVpnService.ACTION_START
-            putExtra(WireGuardVpnService.EXTRA_CONFIG_TEXT, selection.configText)
-            putExtra(WireGuardVpnService.EXTRA_TUNNEL_NAME, safeTunnelName(config.name))
-            putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
-            profileId?.let { putExtra(WireGuardVpnService.EXTRA_PROFILE_ID, it) }
+        if (engineOperationCoordinator.startHandoffState(operationToken) != EngineStartHandoffState.READY) return
+        val baselineStatus = engineAdapters.status(prepared.engineId)
+        val startResult = runCatching { engineAdapters.start(prepared) }
+        if (startResult.isSuccess) {
+            if (!engineOperationCoordinator.markStartRequested(operationToken, baselineStatus)) return
+            status.text = "Starting $engineName engine. Verification will refresh automatically."
+            hubStatusTitle.text = "Connecting"
+            hubStatusDetail.text = "$engineName engine is starting. ${prepared.note}"
+            scheduleEngineStatusRefreshes()
+        } else {
+            val error = startResult.exceptionOrNull()
+            engineOperationCoordinator.fail(operationToken, clearRequestedEngine = true)
+            val message = "$engineName start failed: ${error?.message ?: error?.javaClass?.simpleName ?: "unknown error"}"
+            status.text = message
+            hubStatusTitle.text = "Connection failed"
+            hubStatusDetail.text = message
+            maybeStartSmartFallback(message)
         }
-        startForegroundServiceCompat(intent)
-        status.text = "Starting WireGuard engine. Verification will refresh automatically."
-        hubStatusTitle.text = "Connecting"
-        hubStatusDetail.text = "WireGuard engine is starting. ${selection.note}"
-        scheduleEngineStatusRefreshes()
     }
 
-    private fun prepareAndStartXrayEngine(
-        config: ImportedConfig,
-        profileId: String?,
-        requestGeneration: Int
+    private fun resolvePendingEngineStartHandoff() {
+        val pending = pendingEngineStartHandoff ?: return
+        when (engineOperationCoordinator.startHandoffState(pending.operationToken)) {
+            EngineStartHandoffState.WAITING -> Unit
+            EngineStartHandoffState.READY -> {
+                pendingEngineStartHandoff = null
+                mainHandler.removeCallbacks(engineHandoffPollRunnable)
+                requestPreparedEngineStart(pending.operationToken, pending.prepared, pending.engineName)
+            }
+            EngineStartHandoffState.FAILED -> {
+                pendingEngineStartHandoff = null
+                mainHandler.removeCallbacks(engineHandoffPollRunnable)
+                val message = "The previous engine did not stop cleanly; ${pending.engineName} was not started."
+                status.text = message
+                hubStatusTitle.text = "Connection failed"
+                hubStatusDetail.text = message
+                updateDashboardSummary()
+            }
+            EngineStartHandoffState.STALE -> {
+                pendingEngineStartHandoff = null
+                mainHandler.removeCallbacks(engineHandoffPollRunnable)
+            }
+        }
+    }
+
+    private fun failPendingEngineStartHandoff(
+        pending: PendingEngineStartHandoff,
+        timedOut: Boolean,
+        failure: Throwable? = null
     ) {
-        status.text = "Preparing embedded Xray runtime config from the selected profile..."
-        hubStatusTitle.text = "Preparing"
-        hubStatusDetail.text = "Embedded Xray is preparing a runtime config. V2Ray links start directly; supported sing-box/Clash proxies are mapped to Xray."
-        Thread {
-            val result = runCatching {
-                V2RayRuntimeConfigBuilder.build(
-                    config = config,
-                    dnsServers = vpnDnsServers(includeLocalhost = true),
-                    sniffingEnabled = xraySniffingEnabled(),
-                    muxEnabled = xrayMuxEnabled(),
-                    muxConcurrency = xrayMuxConcurrency(),
-                    logLevel = xrayLogLevel(),
-                    localHttpProxyPort = allocateXrayLocalProxyPort()
-                )
-            }
-            runOnUiThread {
-                if (requestGeneration != engineRequestGeneration) return@runOnUiThread
-                result.fold(
-                    onSuccess = { runtime -> startXrayEngine(runtime, profileId, requestGeneration) },
-                    onFailure = { error ->
-                        activeConnectionProfileId = null
-                        val message = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
-                        status.text = message
-                        hubStatusTitle.text = "Needs mapper"
-                        hubStatusDetail.text = "This config stayed saved, but embedded Xray cannot start it until the unsupported field is mapped."
-                        maybeStartSmartFallback(message)
-                    }
-                )
-            }
-        }.start()
+        if (pendingEngineStartHandoff?.operationToken != pending.operationToken) return
+        pendingEngineStartHandoff = null
+        mainHandler.removeCallbacks(engineHandoffPollRunnable)
+        engineOperationCoordinator.cancel(pending.operationToken)
+        val message = if (timedOut) {
+            "The previous engine did not confirm it stopped; ${pending.engineName} was not started."
+        } else {
+            "Could not request the previous engine to stop; ${pending.engineName} was not started. ${failure?.message ?: failure?.javaClass?.simpleName ?: "Unknown error."}"
+        }
+        status.text = message
+        hubStatusTitle.text = "Connection failed"
+        hubStatusDetail.text = message
+        updateDashboardSummary()
     }
 
-    private fun allocateXrayLocalProxyPort(): Int? = runCatching {
-        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
-            socket.localPort.takeIf { it in 1024..65535 }
-        }
-    }.getOrNull()
-
-    private fun startXrayEngine(runtime: V2RayRuntimeConfig, profileId: String?, requestGeneration: Int) {
-        if (requestGeneration != engineRequestGeneration) return
-        activeConnectionProfileId = profileId
-        startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
-        val intent = Intent(this, XrayVpnService::class.java).apply {
-            action = XrayVpnService.ACTION_START
-            putExtra(XrayVpnService.EXTRA_CONFIG_JSON, runtime.configJson)
-            putExtra(XrayVpnService.EXTRA_PROFILE_NAME, safeTunnelName(runtime.profileName))
-            putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
-            profileId?.let { putExtra(XrayVpnService.EXTRA_PROFILE_ID, it) }
-            runtime.localHttpProxyPort?.let { putExtra(XrayVpnService.EXTRA_LOCAL_HTTP_PROXY_PORT, it) }
-            putStringArrayListExtra(XrayVpnService.EXTRA_DNS_SERVERS, ArrayList(vpnDnsServers(includeLocalhost = false)))
-            putStringArrayListExtra(XrayVpnService.EXTRA_BYPASS_PACKAGES, ArrayList(bypassAppPackages()))
-        }
-        startForegroundServiceCompat(intent)
-        status.text = "Starting embedded Xray engine. Verification will refresh automatically."
-        hubStatusTitle.text = "Connecting"
-        hubStatusDetail.text = "Embedded Xray is starting. ${runtime.note}"
-        scheduleEngineStatusRefreshes()
+    private fun clearPendingEngineStartHandoff() {
+        pendingEngineStartHandoff = null
+        mainHandler.removeCallbacks(engineHandoffPollRunnable)
     }
+
+    private fun readInAppEngineStatuses(): Pair<EngineStatus, EngineStatus> =
+        engineAdapters.status(VpnEngineId.WIREGUARD_GO) to engineAdapters.status(VpnEngineId.XRAY_CORE)
 
     private fun stopImportedEngines() {
-        engineRequestGeneration += 1
+        clearPendingEngineStartHandoff()
+        val serviceStatuses = listOf(
+            engineAdapters.status(VpnEngineId.WIREGUARD_GO),
+            engineAdapters.status(VpnEngineId.XRAY_CORE)
+        )
+        engineOperationCoordinator.stopRequested(serviceStatuses)
+        pendingVpnAction = PendingVpnAction.NONE
+        pendingVpnProfileId = null
+        pendingVpnOperationToken = null
         clearSmartFallbackSession()
-        startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
-        startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
+        engineAdapters.stopAll()
         status.text = "Disconnect requested for active engines."
-        activeConnectionProfileId = null
         lastRecordedVerificationKey = null
         lastRecordedFailureKey = null
         hubStatusTitle.text = "Disconnecting"
@@ -4780,9 +4911,16 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun reconcileEngineOperationStatuses(wireGuard: EngineStatus, xray: EngineStatus) {
+        engineOperationCoordinator.observeServiceStatus(wireGuard)
+        engineOperationCoordinator.observeServiceStatus(xray)
+        resolvePendingEngineStartHandoff()
+    }
+
     private fun showEngineStatus() {
-        val wg = WireGuardVpnService.lastStatus
-        val xray = XrayVpnService.lastStatus
+        val wg = engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO)
+        val xray = engineAdapters.snapshot(VpnEngineId.XRAY_CORE)
+        reconcileEngineOperationStatuses(wg.status, xray.status)
         val hub = currentHubStatus()
         recordVerifiedProfileIfNeeded(hub)
         recordConnectionFailureIfNeeded(hub)
@@ -4848,6 +4986,11 @@ class MainActivity : Activity() {
                 textSize = 13f
                 setTextColor(PearlPalette.INK_SOFT)
                 setPadding(dp(8), dp(12), dp(8), dp(8))
+            })
+            addView(bottomSheetActionRow("↗", "Open Android VPN settings", "Select VPN Project, then enable Always-on VPN and Block connections without VPN") {
+                dialog.dismiss()
+                runCatching { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
+                    .onFailure { setActionStatus("Could not open Android VPN settings. Open Settings → Network & internet → VPN manually.") }
             })
             addView(bottomSheetActionRow("✓", "Got it", "Keep settings honest and enforceable") {
                 dialog.dismiss()
@@ -5659,8 +5802,9 @@ class MainActivity : Activity() {
                 selectedProfileId = profile.id
                 selectedProfile = profile
                 refreshProfileButtons()
-                val engine = EngineRegistry.engineFor(profile.kind)
-                "\n\nSaved local profile: ${profile.displayName}\nEngine: ${engine.displayName}${if (engine.startableInApp) "" else " (handoff)"}"
+                val route = EngineRegistry.routeFor(profile.kind)
+                val runtime = EngineRegistry.engineFor(profile.kind)
+                "\n\nSaved local profile: ${profile.displayName}\nConnection path: ${route.pathLabel(runtime)}"
             },
             onFailure = { error ->
                 "\n\nProfile store warning: config imported for this session, but saving failed (${error.message ?: error.javaClass.simpleName})."
@@ -5799,7 +5943,9 @@ class MainActivity : Activity() {
         }
         status.text = "Saved VPN Hub profiles:\n" + profiles.joinToString("\n") { profile ->
             val marker = if (profile.id == selectedProfileId) "*" else "•"
-            "$marker ${profile.summary()} — engine ${EngineRegistry.engineFor(profile.kind).displayName}"
+            val route = EngineRegistry.routeFor(profile.kind)
+            val runtime = EngineRegistry.engineFor(profile.kind)
+            "$marker ${profile.summary()} — ${route.pathLabel(runtime)}"
         } + "\n\nTap a profile button, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
     }
 
@@ -6689,13 +6835,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun safeTunnelName(name: String?): String = name
-        ?.substringBeforeLast('.')
-        ?.replace(Regex("[^A-Za-z0-9_=+.-]"), "-")
-        ?.take(30)
-        ?.takeIf { it.isNotBlank() }
-        ?: "vpn-project-wg"
-
     private fun safeOpenVpnExportName(name: String?): String {
         val base = name
             ?.substringBeforeLast('.')
@@ -6957,6 +7096,8 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
+        const val ENGINE_HANDOFF_POLL_INTERVAL_MS = 250L
+        const val ENGINE_HANDOFF_TIMEOUT_MS = 15_000L
         const val PROFILE_TEST_FRESH_MS = 6 * 60 * 60 * 1000L
         const val TEST_KIND_QUICK = "quick"
         const val TEST_KIND_REAL = "real"
@@ -6989,7 +7130,6 @@ class MainActivity : Activity() {
         const val DEFAULT_XRAY_LOG_LEVEL = "warning"
         val XRAY_LOG_LEVELS = listOf("warning", "error", "info", "debug", "none")
         val DEFAULT_VPN_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
-        val PACKAGE_NAME_REGEX = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
         val DEFAULT_REAL_DELAY_URLS = listOf(
             "https://www.gstatic.com/generate_204",
             "https://www.google.com/generate_204",

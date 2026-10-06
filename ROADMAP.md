@@ -1,6 +1,6 @@
 # نقشه راه پروژه VPN Hub / Auto-Connector چندموتوره
 
-> این فایل «نقشه راه زنده» پروژه است. هر وقت در مسیر تصمیم مهم، تغییر فاز، یا کشف محدودیت جدید داشتیم، همین فایل را به‌روزرسانی می‌کنیم تا پروژه شلوغ و گیج‌کننده نشود.
+> این فایل «نقشه راه زنده» پروژه است. هر وقت در مسیر تصمیم مهم، تغییر فاز، یا کشف محدودیت جدید داشتیم، همین فایل را به‌روزرسانی می‌کنیم تا پروژه شلوغ و گیج‌کننده نشود. فهرست اجراییِ اولویت‌بندی‌شده و معیار پایان هر کار در [`docs/implementation-plan-fa.md`](docs/implementation-plan-fa.md) است.
 
 ## هدف محصول
 
@@ -146,6 +146,25 @@ Android App
 - [x] مسیر embedded Xray core با AndroidLibXrayLite اضافه و با تست گوشی تأیید شد: لینک V2Ray/Xray به config JSON با TUN inbound تبدیل می‌شود، Android `VpnService` بالا می‌آید، core با همان TUN fd شروع می‌شود، و VLESS `httpupgrade/none` کاربر تا وضعیت `VERIFIED` رسید. برای کنترل حجم APK تستی، فعلاً native ABI روی `arm64-v8a` محدود شده است. این مسیر هنوز برای transportهای بیشتر، UX، storage امن و review license نیاز به hardening دارد.
 - [x] جهت محصول بعد از تست موفق Xray بازتعریف شد: اسکلت باید به یک VPN Hub چندموتوره و همه‌کاره تبدیل شود؛ MVP عملی برای ایران Xray/V2Ray-first است، اما معماری باید OpenVPN، WireGuard و underlay/proxyهای آینده را هم تمیز پشتیبانی کند.
 
+## اولویت اجرایی جاری
+
+> برنامهٔ کامل نیمه‌تمام‌ها، موارد ضروری، ترتیب وابستگی و معیار پذیرش در [`docs/implementation-plan-fa.md`](docs/implementation-plan-fa.md) نگهداری می‌شود.
+
+- [x] ثبت واقعیت runtimeها: Xray و WireGuard engineهای داخل اپ‌اند؛ sing-box/Clash فقط parser/mapper به Xray هستند؛ OpenVPN مسیر handoff است.
+- [x] آغاز Connect dispatch براساس runtime target در `EngineRegistry`، به‌جای switch مستقیم روی نوع فایل.
+- [ ] تست unit refactor `EngineRegistry` و رفع regressions؛ این محیط Java/Gradle ندارد و اجرای محلی فعلاً ممکن نشد.
+- [x] hardening کد مرحلهٔ ۳: اعتبارسنجی DNS public IPv4 در UI/service/runtime، حذف fallback ضمنی `localhost`، full-route دوخانوادهٔ IP و LAN-bypass policy دوگانه؛ unit-testها نوشته شدند اما در این محیط اجرا نشدند.
+- [x] راهنمای Android Always-on/Lockdown به bottom sheet وصل شد؛ خود اپ ادعای kill switch مستقل نمی‌کند.
+- [x] شروع مرحلهٔ ۴: قرارداد `VpnEngineAdapter` و adapterهای Xray/WireGuard؛ service intents و prepare/start/status/stats/verification snapshot از `MainActivity` منتقل شدند و UI از یک dispatch مشترک استفاده می‌کند.
+- [x] coordinator pure Kotlin برای generation، callbackهای stale، cancellation مجوز و invalidation هنگام Stop اضافه شد؛ probe تازه یا fallback خودکار ایجاد نمی‌کند.
+- [x] Stop صریح، service targetهای غیرترمینال را track می‌کند تا statusهای واقعی `STOPPED`/`IDLE`/`FAILED` دیده شوند؛ service death/revoke هم با status فعال یا تغییر از baseline همان engine/profile reconcile می‌شود.
+- [x] هنگام تعویض engine، start جدید پشت stop barrier می‌ماند و فقط پس از status ترمینال engine قبلی انجام می‌شود؛ timeout/stop failure مانع start می‌شود.
+- [x] state تکراری `activeConnectionProfileId` از Activity حذف و به snapshot coordinator متصل شد.
+- [x] smoke instrumentation tests برای stop intent سرویس‌های Xray/WireGuard با config خالی و بدون TUN اضافه شد؛ هنوز اجرا نشده است.
+- [ ] تکمیل مرحلهٔ ۴: تست instrumentation برای crash/revoke/switch barrier و اجرای suite روی emulator/دستگاه.
+- [ ] گیت P0 هنوز نیازمند اقدام کاربر روی گوشی است: اثبات مستقل ترافیک یک اپ Android عادی از مسیر app-to-TUN با کانفیگ مجاز.
+- [ ] سپس ماتریس دستگاه Xray، تست authoritative DNS leak/IPv6 و kill-switch lifecycle، و بعد lifecycle/reconnect مشترک.
+
 ## فازها
 
 ### فاز 0 — تصمیم‌های پایه و آماده‌سازی repo
@@ -253,9 +272,11 @@ score = latency + recentFailurePenalty - lastSuccessBonus
 - [x] ساخت foreground service و notification با دکمه Stop.
 - [x] ایجاد TUN interface.
 - [x] route کامل `0.0.0.0/0` برای IPv4.
+- [x] route کامل `::/0` و آدرس TUN برای IPv6 در Xray service؛ حمل واقعی IPv6 و fail-closed هنوز نیازمند تست دستگاه است.
 - [x] DNS کنترل‌شده پایه با DNSهای public ثابت.
 - [x] split tunneling پایه در policy/code، هنوز بدون UI انتخاب اپ‌ها.
-- [ ] kill switch behavior کامل؛ بخش Android Always-on/Lockdown باید در UX و مستندات اضافه شود و بعد از engine واقعی verify شود.
+- [x] راهنمای Android Always-on/Lockdown در UX اضافه شد؛ اپ کاربر را به تنظیمات سیستم می‌برد و toggle جعلی ندارد.
+- [ ] رفتار kill switch پس از crash/force-stop، قطع شبکه و reboot باید روی دستگاه واقعی verify شود.
 - [x] protect کردن socketهای خود اپ برای جلوگیری از loop؛ HealthChecker حالا `SocketProtector` می‌پذیرد و `VpnServiceSocketProtector` اضافه شد.
 - [x] packet pump موقت برای drain کردن TUN؛ تا قبل از engine واقعی packetها عمداً forward نمی‌شوند.
 
@@ -399,7 +420,7 @@ Failed
 ```text
 Connected through your V2Ray/Xray config
 Endpoint reachable but credentials/transport failed
-DNS-over-HTTPS blocked; using Android DNS fallback
+Configured DNS unavailable; Android/system DNS fallback is disabled
 No working path for this config
 This network likely blocks UDP/WireGuard
 ```
@@ -417,7 +438,7 @@ This network likely blocks UDP/WireGuard
 ```text
 1. last verified profile/route on this network
 2. V2Ray/Xray direct original endpoint with full transport metadata
-3. Android/system DNS fallback when DoH is blocked or poisoned
+3. Android/system DNS fallback only after explicit policy + leak-safe routing/device verification (disabled by default)
 4. direct pinned IP only when protocol safely allows it
 5. fresh pinned IPs for OpenVPN/WireGuard style endpoints
 6. alternate port/proto from config/provider
@@ -652,7 +673,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 - پس از status `VERIFIED` روی گوشی، مسیر محصول برای MVP ایران به Xray/V2Ray-first تغییر کرد: import/clipboard config کاربر، حفظ metadata transport، شروع embedded Xray، و verification واقعی. WireGuard برای شبکه‌های غیرایران/UDP-friendly و OpenVPN TCP برای handoff یا engine آینده باقی می‌ماند.
 - تصمیم محصولی جدید: اسکلت باید به VPN Hub همه‌کاره/چندموتوره تبدیل شود. یعنی engineها و profileها پشت abstraction مشترک قرار می‌گیرند و UI نهایی فقط یک تجربه ساده Connect/Disconnect نشان می‌دهد؛ diagnostics و جزئیات پروتکل پشت Advanced می‌روند.
-- برای V2Ray/Xray نباید IP pinning کور انجام شود؛ فقط وقتی امن است. SNI/Host/path/ALPN/fingerprint/REALITY/httpupgrade باید کامل حفظ شود و در بسیاری از موارد direct Android/system DNS fallback از DoH عملی‌تر است.
+- برای V2Ray/Xray نباید IP pinning کور انجام شود؛ فقط وقتی امن است. SNI/Host/path/ALPN/fingerprint/REALITY/httpupgrade باید کامل حفظ شود. system DNS در Real-delay/تشخیصِ صریح کاربر ممکن است عملی‌تر از DoH باشد، اما در runtime VPN به‌طور ضمنی fallback نمی‌شود تا مسیر DNS leak روی دستگاه اثبات شود.
 
 ## تصمیم‌های باز
 

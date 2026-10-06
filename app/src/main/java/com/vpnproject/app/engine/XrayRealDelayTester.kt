@@ -123,7 +123,7 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             "https://www.google.com/generate_204",
             "https://cp.cloudflare.com/generate_204"
         )
-        val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "localhost")
+        val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
         const val DEFAULT_MUX_CONCURRENCY = 8
         const val DEFAULT_LOG_LEVEL = "warning"
     }

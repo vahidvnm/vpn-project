@@ -4,6 +4,7 @@ import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
 import com.vpnproject.app.core.ImportedConfig
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -468,17 +469,52 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
-    fun customDnsServersAreAppliedToRuntimeConfig() {
+    fun runtimeDnsUsesOnlyPublicIpv4ResolversAndNeverSystemFallback() {
         val runtime = V2RayRuntimeConfigBuilder.build(
             ImportedConfig(
                 kind = ConfigKind.V2RAY,
                 originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Dns",
                 endpoints = emptyList()
             ),
-            dnsServers = listOf("9.9.9.9", "223.5.5.5", "localhost")
+            dnsServers = listOf("9.9.9.9", "223.5.5.5", "localhost", "192.168.1.1")
         )
 
-        assertContains(runtime.configJson, "\"dns\": { \"servers\": [\"9.9.9.9\", \"223.5.5.5\", \"localhost\"] }")
+        assertContains(runtime.configJson, "\"dns\": { \"servers\": [\"9.9.9.9\", \"223.5.5.5\"] }")
+        assertFalse(runtime.configJson.contains("localhost"))
+        assertFalse(runtime.configJson.contains("192.168.1.1"))
+    }
+
+    @Test
+    fun invalidDnsInputFallsBackOnlyToSafePublicDnsAddresses() {
+        val runtime = V2RayRuntimeConfigBuilder.build(
+            ImportedConfig(
+                kind = ConfigKind.V2RAY,
+                originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#Dns",
+                endpoints = emptyList()
+            ),
+            dnsServers = listOf("10.0.0.1", "localhost")
+        )
+
+        assertContains(runtime.configJson, "\"dns\": { \"servers\": [\"1.1.1.1\", \"8.8.8.8\"] }")
+        assertFalse(runtime.configJson.contains("localhost"))
+        assertFalse(runtime.configJson.contains("10.0.0.1"))
+    }
+
+    @Test
+    fun lanBypassRoutingCoversPrivateIpv4AndLocalIpv6Ranges() {
+        val json = buildJson(
+            "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=tcp&security=none#Routes"
+        )
+
+        listOf(
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "fc00::/7",
+            "fe80::/10",
+            "::1/128"
+        ).forEach { cidr -> assertContains(json, cidr) }
     }
 
     @Test

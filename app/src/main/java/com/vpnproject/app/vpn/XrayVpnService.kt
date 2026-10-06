@@ -17,7 +17,9 @@ import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.util.Base64
 import com.vpnproject.app.core.IpClassifier
+import com.vpnproject.app.core.VpnRoutingInputParser
 import com.vpnproject.app.engine.EngineKind
+import com.vpnproject.app.engine.XrayRoutePolicy
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
 import com.vpnproject.app.engine.NetworkRebindPolicy
@@ -373,23 +375,27 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             .setSession("VPN Project Xray - $profileName")
             .setMtu(1500)
             .setBlocking(false)
-            .addAddress("172.19.0.1", 30)
-            .addAddress(XRAY_IPV6_TUN_ADDRESS, 128)
-            .addRoute("0.0.0.0", 0)
-            // Capture IPv6 so an Xray core that cannot proxy it fails closed instead of bypassing the VPN.
-            .addRoute("::", 0)
+            .addAddress(XrayRoutePolicy.TUN_IPV4_ADDRESS, XrayRoutePolicy.TUN_IPV4_PREFIX)
+            .addAddress(XrayRoutePolicy.TUN_IPV6_ADDRESS, XrayRoutePolicy.TUN_IPV6_PREFIX)
 
-        dnsServers.filter { it.isNotBlank() }.distinct().forEach { dns ->
-            builder.addDnsServer(dns)
+        // A full IPv6 route intentionally fails closed if Xray cannot handle the traffic.
+        XrayRoutePolicy.FULL_TUNNEL_ROUTES.forEach { route ->
+            builder.addRoute(route.address, route.prefixLength)
         }
+
+        val safeDnsServers = VpnRoutingInputParser.parseDnsServers(dnsServers.joinToString("\n")).servers
+            .ifEmpty { DEFAULT_DNS_SERVERS }
+        safeDnsServers.forEach { dns -> builder.addDnsServer(dns) }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
 
-        (listOf(packageName) + bypassPackages)
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        val safeBypassPackages = VpnRoutingInputParser.parseBypassPackages(
+            bypassPackages.joinToString("\n"),
+            ownPackageName = packageName
+        ).packages
+        (listOf(packageName) + safeBypassPackages)
             .distinct()
             .forEach { packageToBypass ->
                 try {
@@ -1121,7 +1127,6 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val CHANNEL_ID = "xray_engine_status"
         private const val NOTIFICATION_ID = 61
         private const val STOP_REQUEST_CODE = 62
-        private const val XRAY_IPV6_TUN_ADDRESS = "fd00:1111:2222:3333::1"
         private const val VERIFY_START_DELAY_MS = 3_000L
         private const val VERIFY_URL_TIMEOUT_MS = 15_000L
         private const val POST_CONNECT_CHECK_TIMEOUT_MS = 5_000
