@@ -200,6 +200,8 @@ class MainActivity : Activity() {
     private var selectedProfileId: String? = null
     private var selectedProfile: VpnProfile? = null
     private var activeConnectionProfileId: String? = null
+    private var pendingFasterSwitchProfileId: String? = null
+    private var pendingFasterSwitchText: String? = null
     private var lastRecordedVerificationKey: String? = null
     private var lastRecordedFailureKey: String? = null
     private lateinit var profileListContainer: LinearLayout
@@ -2726,18 +2728,22 @@ class MainActivity : Activity() {
             hub.state == VpnHubConnectionState.CONNECTING ||
             hub.state == VpnHubConnectionState.RUNNING_UNVERIFIED
 
-        hubStatusTitle.text = dashboardTitleFor(hub.state)
+        val pendingSwitchActive = pendingFasterSwitchProfileId != null && selectedProfileId == pendingFasterSwitchProfileId && active
+        hubStatusTitle.text = if (pendingSwitchActive) "Switching" else dashboardTitleFor(hub.state)
         hubStatusTitle.setTextColor(
-            when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> PearlPalette.INK
-                VpnHubConnectionState.CONNECTING,
-                VpnHubConnectionState.RUNNING_UNVERIFIED -> PearlPalette.CHAMPAGNE_DARK
-                VpnHubConnectionState.FAILED -> PearlPalette.ERROR
-                VpnHubConnectionState.IDLE,
-                VpnHubConnectionState.STOPPED -> PearlPalette.INK
+            when {
+                pendingSwitchActive -> PearlPalette.CHAMPAGNE_DARK
+                hub.state == VpnHubConnectionState.CONNECTED -> PearlPalette.INK
+                hub.state == VpnHubConnectionState.CONNECTING || hub.state == VpnHubConnectionState.RUNNING_UNVERIFIED -> PearlPalette.CHAMPAGNE_DARK
+                hub.state == VpnHubConnectionState.FAILED -> PearlPalette.ERROR
+                else -> PearlPalette.INK
             }
         )
-        hubStatusDetail.text = dashboardDetail(hub)
+        hubStatusDetail.text = if (pendingSwitchActive) {
+            "Stopping current tunnel. Connect the faster tested config when ready."
+        } else {
+            dashboardDetail(hub)
+        }
         connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
 
         val down = formatBytes(hub.rxBytes ?: 0)
@@ -2900,6 +2906,7 @@ class MainActivity : Activity() {
 
     private fun updateFasterSuggestion(hub: com.vpnproject.app.engine.VpnHubStatus) {
         if (!::fasterSuggestionButton.isInitialized) return
+        if (updatePendingFasterSwitch(hub)) return
         val activeProfile = activeConnectionProfileId?.let { runCatching { profileStore.profile(it) }.getOrNull() }
             ?: selectedProfile
         val suggestion = if (hub.state == VpnHubConnectionState.CONNECTED && hub.verified && activeProfile != null) {
@@ -2916,6 +2923,53 @@ class MainActivity : Activity() {
         fasterSuggestionButton.visibility = View.VISIBLE
         fasterSuggestionButton.text = "Try faster tested: ${compactProfileTitle(suggestion.profile).shortUi(18)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms • −${gain}ms"
         fasterSuggestionButton.setOnClickListener { showFasterSuggestionSheet(suggestion) }
+    }
+
+    private fun updatePendingFasterSwitch(hub: com.vpnproject.app.engine.VpnHubStatus): Boolean {
+        val pendingId = pendingFasterSwitchProfileId ?: return false
+        val pendingProfile = runCatching { profileStore.profile(pendingId) }.getOrNull()
+        if (pendingProfile == null || selectedProfileId != pendingId) {
+            clearPendingFasterSwitch()
+            return false
+        }
+        val active = isLiveState(hub.state)
+        if (activeConnectionProfileId == pendingId && active) {
+            clearPendingFasterSwitch()
+            return false
+        }
+        fasterSuggestionButton.visibility = View.VISIBLE
+        if (active) {
+            fasterSuggestionButton.text = "Switch pending: stopping current tunnel… ${pendingFasterSwitchText.orEmpty().shortUi(42)}"
+            fasterSuggestionButton.setOnClickListener {
+                status.text = "Stopping current tunnel first. Wait until Home shows Ready, then tap Connect faster."
+                scheduleFasterSwitchRefreshes()
+            }
+        } else {
+            val label = pendingFasterSwitchText ?: compactProfileTitle(pendingProfile)
+            fasterSuggestionButton.text = "Connect faster tested: ${label.shortUi(44)}"
+            fasterSuggestionButton.setOnClickListener {
+                clearPendingFasterSwitch()
+                pauseAutoTestsForConnection("Auto test paused while connecting faster tested config")
+                requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
+            }
+        }
+        return true
+    }
+
+    private fun setPendingFasterSwitch(suggestion: FasterProfileSuggestion) {
+        pendingFasterSwitchProfileId = suggestion.profile.id
+        pendingFasterSwitchText = "${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms"
+    }
+
+    private fun clearPendingFasterSwitch() {
+        pendingFasterSwitchProfileId = null
+        pendingFasterSwitchText = null
+    }
+
+    private fun scheduleFasterSwitchRefreshes() {
+        listOf(900L, 1_800L, 3_200L, 5_000L, 8_000L).forEach { delayMs ->
+            mainHandler.postDelayed({ updateDashboardSummary() }, delayMs)
+        }
     }
 
     private fun fasterTestedSuggestion(activeProfile: VpnProfile, liveLatencyMs: Long?): FasterProfileSuggestion? {
@@ -2950,11 +3004,14 @@ class MainActivity : Activity() {
             subtitle = "${suggestion.signal.label} ${latency}ms vs current ${suggestion.activeLatencyMs}ms on ${compactNetworkLabel(currentNetworkLabel().orEmpty()) ?: "this network"}"
         ) { dialog ->
             addView(settingsHintText("This does not auto-test or auto-switch the queue. It only uses remembered results from this network."))
-            addView(bottomSheetActionRow("⇢", "Stop current + select", "Select ${compactProfileTitle(suggestion.profile).shortUi(24)}; tap Connect when ready") {
+            addView(bottomSheetActionRow("⇢", "Stop current + select", "Select ${compactProfileTitle(suggestion.profile).shortUi(24)}; Home will show Connect faster when ready") {
                 dialog.dismiss()
+                setPendingFasterSwitch(suggestion)
                 stopImportedEngines()
                 loadProfile(suggestion.profile)
-                status.text = "Faster tested config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Tap Connect after the current tunnel stops."
+                status.text = "Faster tested config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Wait for stop, then tap Connect faster."
+                scheduleFasterSwitchRefreshes()
+                updateDashboardSummary()
             })
             addView(bottomSheetActionRow("ⓘ", "Runtime details", "See saved network memory and compatibility") {
                 dialog.dismiss()
