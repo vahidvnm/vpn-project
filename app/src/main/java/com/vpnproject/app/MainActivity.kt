@@ -202,6 +202,10 @@ class MainActivity : Activity() {
     private var activeConnectionProfileId: String? = null
     private var pendingFasterSwitchProfileId: String? = null
     private var pendingFasterSwitchText: String? = null
+    private var pendingFasterSwitchPreviousLatencyMs: Long? = null
+    private var pendingFasterSwitchExpectedLatencyMs: Long? = null
+    private var fasterSwitchResultText: String? = null
+    private var fasterSwitchResultUntilMs = 0L
     private var lastRecordedVerificationKey: String? = null
     private var lastRecordedFailureKey: String? = null
     private lateinit var profileListContainer: LinearLayout
@@ -2567,6 +2571,7 @@ class MainActivity : Activity() {
             clearSmartFallbackSession()
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
+            recordFasterSwitchSuccessIfNeeded(updated, hub.latencyMs)
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
     }
@@ -2596,6 +2601,7 @@ class MainActivity : Activity() {
             lastRecordedFailureKey = key
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
+            recordFasterSwitchFailureIfNeeded(updated, hub.detail)
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
         maybeStartSmartFallback(hub.detail)
@@ -2906,6 +2912,7 @@ class MainActivity : Activity() {
 
     private fun updateFasterSuggestion(hub: com.vpnproject.app.engine.VpnHubStatus) {
         if (!::fasterSuggestionButton.isInitialized) return
+        if (updateFasterSwitchResult()) return
         if (updatePendingFasterSwitch(hub)) return
         val activeProfile = activeConnectionProfileId?.let { runCatching { profileStore.profile(it) }.getOrNull() }
             ?: selectedProfile
@@ -2925,6 +2932,19 @@ class MainActivity : Activity() {
         fasterSuggestionButton.setOnClickListener { showFasterSuggestionSheet(suggestion) }
     }
 
+    private fun updateFasterSwitchResult(): Boolean {
+        val result = fasterSwitchResultText?.takeIf { System.currentTimeMillis() < fasterSwitchResultUntilMs }
+            ?: run {
+                fasterSwitchResultText = null
+                fasterSwitchResultUntilMs = 0L
+                return false
+            }
+        fasterSuggestionButton.visibility = View.VISIBLE
+        fasterSuggestionButton.text = result
+        fasterSuggestionButton.setOnClickListener { status.text = result }
+        return true
+    }
+
     private fun updatePendingFasterSwitch(hub: com.vpnproject.app.engine.VpnHubStatus): Boolean {
         val pendingId = pendingFasterSwitchProfileId ?: return false
         val pendingProfile = runCatching { profileStore.profile(pendingId) }.getOrNull()
@@ -2933,12 +2953,14 @@ class MainActivity : Activity() {
             return false
         }
         val active = isLiveState(hub.state)
-        if (activeConnectionProfileId == pendingId && active) {
-            clearPendingFasterSwitch()
-            return false
-        }
         fasterSuggestionButton.visibility = View.VISIBLE
-        if (active) {
+        if (activeConnectionProfileId == pendingId && active) {
+            fasterSuggestionButton.text = "Connecting faster tested… ${pendingFasterSwitchText.orEmpty().shortUi(44)}"
+            fasterSuggestionButton.setOnClickListener {
+                status.text = "Connecting faster tested config. Waiting for verification."
+                scheduleFasterSwitchRefreshes()
+            }
+        } else if (active) {
             fasterSuggestionButton.text = "Switch pending: stopping current tunnel… ${pendingFasterSwitchText.orEmpty().shortUi(42)}"
             fasterSuggestionButton.setOnClickListener {
                 status.text = "Stopping current tunnel first. Wait until Home shows Ready, then tap Connect faster."
@@ -2948,9 +2970,9 @@ class MainActivity : Activity() {
             val label = pendingFasterSwitchText ?: compactProfileTitle(pendingProfile)
             fasterSuggestionButton.text = "Connect faster tested: ${label.shortUi(44)}"
             fasterSuggestionButton.setOnClickListener {
-                clearPendingFasterSwitch()
                 pauseAutoTestsForConnection("Auto test paused while connecting faster tested config")
                 requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
+                scheduleFasterSwitchRefreshes()
             }
         }
         return true
@@ -2958,16 +2980,48 @@ class MainActivity : Activity() {
 
     private fun setPendingFasterSwitch(suggestion: FasterProfileSuggestion) {
         pendingFasterSwitchProfileId = suggestion.profile.id
+        pendingFasterSwitchPreviousLatencyMs = suggestion.activeLatencyMs
+        pendingFasterSwitchExpectedLatencyMs = suggestion.signal.latencyMs
         pendingFasterSwitchText = "${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms"
+        fasterSwitchResultText = null
+        fasterSwitchResultUntilMs = 0L
     }
 
     private fun clearPendingFasterSwitch() {
         pendingFasterSwitchProfileId = null
         pendingFasterSwitchText = null
+        pendingFasterSwitchPreviousLatencyMs = null
+        pendingFasterSwitchExpectedLatencyMs = null
+    }
+
+    private fun recordFasterSwitchSuccessIfNeeded(profile: VpnProfile, latencyMs: Long?) {
+        if (pendingFasterSwitchProfileId != profile.id) return
+        val previous = pendingFasterSwitchPreviousLatencyMs
+        val expected = pendingFasterSwitchExpectedLatencyMs
+        val actual = latencyMs
+        val message = when {
+            previous != null && actual != null && actual < previous -> "Improved: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            actual != null && expected != null -> "Connected faster tested: ${actual}ms now • expected ${expected}ms"
+            actual != null -> "Connected faster tested: ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            else -> "Faster tested config verified: ${compactProfileTitle(profile).shortUi(26)}"
+        }
+        fasterSwitchResultText = message
+        fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
+        status.text = message
+        clearPendingFasterSwitch()
+    }
+
+    private fun recordFasterSwitchFailureIfNeeded(profile: VpnProfile, reason: String) {
+        if (pendingFasterSwitchProfileId != profile.id) return
+        val message = "Faster tested failed: ${compactProfileTitle(profile).shortUi(20)} • ${reason.shortUi(44)}"
+        fasterSwitchResultText = message
+        fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
+        status.text = message
+        clearPendingFasterSwitch()
     }
 
     private fun scheduleFasterSwitchRefreshes() {
-        listOf(900L, 1_800L, 3_200L, 5_000L, 8_000L).forEach { delayMs ->
+        listOf(900L, 1_800L, 3_200L, 5_000L, 8_000L, 12_000L).forEach { delayMs ->
             mainHandler.postDelayed({ updateDashboardSummary() }, delayMs)
         }
     }
@@ -6650,6 +6704,7 @@ class MainActivity : Activity() {
         const val SLOW_CONNECTION_SUGGESTION_MS = 900L
         const val FASTER_SUGGESTION_MIN_GAIN_MS = 250L
         const val FASTER_SUGGESTION_RATIO_PERCENT = 80L
+        const val FASTER_SWITCH_RESULT_MS = 15_000L
         const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
         const val MAX_REAL_DELAY_SETTING_LIMIT = 32
         const val MAX_REAL_DELAY_URLS = 4
