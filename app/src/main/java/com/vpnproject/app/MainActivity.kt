@@ -144,6 +144,7 @@ class MainActivity : Activity() {
     private lateinit var homeProfileIconText: TextView
     private lateinit var homeProfileNameText: TextView
     private lateinit var homeProfileMetaText: TextView
+    private lateinit var fasterSuggestionButton: TextView
     private lateinit var statLatencyText: TextView
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
@@ -270,6 +271,7 @@ class MainActivity : Activity() {
 
         homeSection.addView(createCompactHomeDashboard())
         homeSection.addView(createSelectedConfigsCard())
+        homeSection.addView(createFasterSuggestionCard())
 
         val profileCard = createCard().apply {
             setPadding(dp(10), dp(4), dp(10), dp(10))
@@ -826,6 +828,28 @@ class MainActivity : Activity() {
             selectedProfile?.let { showProfileActionsSheet(it) } ?: showConfigSelectorSheet()
             true
         }
+    }
+
+    private fun createFasterSuggestionCard(): TextView = TextView(this).apply {
+        fasterSuggestionButton = this
+        text = ""
+        visibility = View.GONE
+        textSize = 12.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 2
+        ellipsize = TextUtils.TruncateAt.END
+        setTextColor(PearlPalette.INK)
+        background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.CHAMPAGNE, radiusDp = 20)
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        layoutParams = LinearLayout.LayoutParams(
+            compactSelectorWidth(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dp(10))
+        }
+        isClickable = true
+        isFocusable = true
     }
 
     private fun createAutoTestCard(): LinearLayout = createCard().apply {
@@ -2750,6 +2774,7 @@ class MainActivity : Activity() {
 
         primaryActionButton.setActive(active)
         updateSelectedProfileSummary()
+        updateFasterSuggestion(hub)
         updateProfileActionButtons()
         refreshAutoTestSummary()
     }
@@ -2843,6 +2868,12 @@ class MainActivity : Activity() {
         val score: Int? = null
     )
 
+    private data class FasterProfileSuggestion(
+        val profile: VpnProfile,
+        val signal: ProfileLatencyState,
+        val activeLatencyMs: Long
+    )
+
     private fun updateSelectedProfileSummary() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val topSummary = if (profile == null) {
@@ -2864,6 +2895,75 @@ class MainActivity : Activity() {
             if (::homeProfileIconText.isInitialized) homeProfileIconText.text = profile?.let { profileFlagOrIcon(it) } ?: "◎"
             homeProfileNameText.text = profile?.let { compactProfileTitle(it).shortUi(24) } ?: "Choose location"
             homeProfileMetaText.text = profile?.let { homeProfileMeta(it) } ?: "Tap to pick"
+        }
+    }
+
+    private fun updateFasterSuggestion(hub: com.vpnproject.app.engine.VpnHubStatus) {
+        if (!::fasterSuggestionButton.isInitialized) return
+        val activeProfile = activeConnectionProfileId?.let { runCatching { profileStore.profile(it) }.getOrNull() }
+            ?: selectedProfile
+        val suggestion = if (hub.state == VpnHubConnectionState.CONNECTED && hub.verified && activeProfile != null) {
+            fasterTestedSuggestion(activeProfile, hub.latencyMs)
+        } else {
+            null
+        }
+        if (suggestion == null) {
+            fasterSuggestionButton.visibility = View.GONE
+            fasterSuggestionButton.setOnClickListener(null)
+            return
+        }
+        val gain = suggestion.activeLatencyMs - (suggestion.signal.latencyMs ?: suggestion.activeLatencyMs)
+        fasterSuggestionButton.visibility = View.VISIBLE
+        fasterSuggestionButton.text = "Try faster tested: ${compactProfileTitle(suggestion.profile).shortUi(18)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms • −${gain}ms"
+        fasterSuggestionButton.setOnClickListener { showFasterSuggestionSheet(suggestion) }
+    }
+
+    private fun fasterTestedSuggestion(activeProfile: VpnProfile, liveLatencyMs: Long?): FasterProfileSuggestion? {
+        val activeLatency = liveLatencyMs
+            ?: profileLatencyState(activeProfile)?.latencyMs
+            ?: return null
+        if (activeLatency < SLOW_CONNECTION_SUGGESTION_MS) return null
+        val network = currentNetworkLabel()
+        return smartFallbackCandidateProfiles(activeProfile.id)
+            .asSequence()
+            .filter { it.id != activeProfile.id }
+            .filter { it.isConnectableByEmbeddedEngines() }
+            .mapNotNull { profile ->
+                val signal = profileRankingState(profile, network)
+                    ?.takeIf { it.success == true && it.latencyMs != null && isLatencyFresh(it.checkedAtEpochMs) }
+                    ?.takeIf { isSameNetworkLabel(it.network, network) || normalizeNetworkLabel(it.network) == null }
+                    ?: return@mapNotNull null
+                FasterProfileSuggestion(profile, signal, activeLatency)
+            }
+            .filter { suggestion ->
+                val latency = suggestion.signal.latencyMs ?: return@filter false
+                latency + FASTER_SUGGESTION_MIN_GAIN_MS < activeLatency && latency * 100 <= activeLatency * FASTER_SUGGESTION_RATIO_PERCENT
+            }
+            .minWithOrNull(compareBy<FasterProfileSuggestion> { it.signal.latencyMs ?: Long.MAX_VALUE }
+                .thenBy { it.signal.kindRank })
+    }
+
+    private fun showFasterSuggestionSheet(suggestion: FasterProfileSuggestion) {
+        val latency = suggestion.signal.latencyMs ?: return
+        showBottomSheet(
+            title = "Faster tested config",
+            subtitle = "${suggestion.signal.label} ${latency}ms vs current ${suggestion.activeLatencyMs}ms on ${compactNetworkLabel(currentNetworkLabel().orEmpty()) ?: "this network"}"
+        ) { dialog ->
+            addView(settingsHintText("This does not auto-test or auto-switch the queue. It only uses remembered results from this network."))
+            addView(bottomSheetActionRow("⇢", "Stop current + select", "Select ${compactProfileTitle(suggestion.profile).shortUi(24)}; tap Connect when ready") {
+                dialog.dismiss()
+                stopImportedEngines()
+                loadProfile(suggestion.profile)
+                status.text = "Faster tested config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Tap Connect after the current tunnel stops."
+            })
+            addView(bottomSheetActionRow("ⓘ", "Runtime details", "See saved network memory and compatibility") {
+                dialog.dismiss()
+                showProfileRuntimeDetailsSheet(suggestion.profile)
+            })
+            addView(bottomSheetActionRow("⌕", "Open Locations", "Review the ranked list manually") {
+                dialog.dismiss()
+                showSection(AppSection.PROFILES)
+            })
         }
     }
 
@@ -6490,6 +6590,9 @@ class MainActivity : Activity() {
         const val MAX_SMART_FALLBACK_CANDIDATES = 24
         const val SMART_FALLBACK_BASE_DELAY_MS = 1_500L
         const val SMART_FALLBACK_SUPPRESS_FAILURE_MS = 5_000L
+        const val SLOW_CONNECTION_SUGGESTION_MS = 900L
+        const val FASTER_SUGGESTION_MIN_GAIN_MS = 250L
+        const val FASTER_SUGGESTION_RATIO_PERCENT = 80L
         const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
         const val MAX_REAL_DELAY_SETTING_LIMIT = 32
         const val MAX_REAL_DELAY_URLS = 4
