@@ -69,6 +69,7 @@ import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.XrayRealDelayTester
 import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.engine.V2RayRuntimeConfig
+import com.vpnproject.app.profile.FasterSwitchRecommendationPolicy
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.SubscriptionGroup
 import com.vpnproject.app.profile.VpnProfile
@@ -202,6 +203,7 @@ class MainActivity : Activity() {
     private var activeConnectionProfileId: String? = null
     private var pendingFasterSwitchProfileId: String? = null
     private var pendingFasterSwitchText: String? = null
+    private var pendingFasterSwitchNetwork: String? = null
     private var pendingFasterSwitchPreviousLatencyMs: Long? = null
     private var pendingFasterSwitchExpectedLatencyMs: Long? = null
     private var fasterSwitchResultText: String? = null
@@ -211,6 +213,9 @@ class MainActivity : Activity() {
     private lateinit var profileListContainer: LinearLayout
     private lateinit var subscriptionGroupContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
+    private var pendingVpnProfileId: String? = null
+    private var engineRequestGeneration = 0
+    private var fileImportGeneration = 0
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
     private val endpointDiscovery by lazy { EndpointDiscovery() }
@@ -1585,13 +1590,20 @@ class MainActivity : Activity() {
             .thenByDescending { it.profile.favorite }
             .thenByDescending { it.profile.lastVerifiedEpochMs ?: 0L }
 
-    private fun profileRankingComparator(network: String? = currentNetworkLabel()): Comparator<VpnProfile> =
-        compareBy<VpnProfile> { profileRecommendationBucket(it, network) }
+    private fun profileRankingComparator(network: String? = currentNetworkLabel()): Comparator<VpnProfile> {
+        val nowEpochMs = System.currentTimeMillis()
+        val penaltyCache = mutableMapOf<String, Int>()
+        fun noImprovementPenalty(profile: VpnProfile): Int = penaltyCache.getOrPut(profile.id) {
+            profileSwitchNoImprovementPenalty(profile, network, nowEpochMs)
+        }
+        return compareBy<VpnProfile> { profileRecommendationBucket(it, network) }
+            .thenBy { noImprovementPenalty(it) }
             .thenBy { profileLatencySortValue(it, network) }
             .thenBy { profileRankingState(it, network)?.score ?: it.lastTestScore ?: Int.MAX_VALUE }
             .thenByDescending { it.favorite }
             .thenByDescending { it.lastVerifiedEpochMs ?: 0L }
             .thenByDescending { it.updatedAtEpochMs }
+    }
 
     private fun locationSortComparator(): Comparator<VpnProfile> {
         val network = currentNetworkLabel()
@@ -1623,7 +1635,7 @@ class MainActivity : Activity() {
         LOCATION_SORT_NEWEST -> "Newest saved/refreshed configs first"
         LOCATION_SORT_LATENCY -> "Fresh same-network Real/Verified latency first; old, Quick, or other-network results are lower"
         LOCATION_SORT_RUNTIME_READY -> "Xray-ready/mapped profiles first, then recommended order"
-        else -> "Fresh same-network Real/Verified latency first, without auto-switching"
+        else -> "Fresh same-network Real/Verified first; recent failures and no-improvement switches rank lower. Sorting never tests."
     }
 
     private fun createLocationSearchCard(): LinearLayout = LinearLayout(this).apply {
@@ -2262,7 +2274,7 @@ class MainActivity : Activity() {
     private fun promptRealDelayUrls() {
         showBottomSheet(
             title = "Real delay URL",
-            subtitle = "One or more HTTP/HTTPS URLs. First successful generate_204-style URL wins."
+            subtitle = "One or more HTTPS URLs. First successful generate_204-style URL wins."
         ) { dialog ->
             val input = EditText(this@MainActivity).apply {
                 setText(realDelayVerifyUrls().joinToString("\n"))
@@ -2283,7 +2295,7 @@ class MainActivity : Activity() {
             addView(bottomSheetActionRow("✓", "Save URLs", "Use these URLs for pre-connect Real delay") {
                 val urls = parseRealDelayUrls(input.text?.toString().orEmpty())
                 if (urls.isEmpty()) {
-                    setActionStatus("Add at least one http:// or https:// URL.")
+                    setActionStatus("Add at least one HTTPS URL. Cleartext HTTP is blocked.")
                     return@bottomSheetActionRow
                 }
                 dialog.dismiss()
@@ -2321,7 +2333,7 @@ class MainActivity : Activity() {
         .lineSequence()
         .flatMap { it.split(',', ';', ' ').asSequence() }
         .map { it.trim() }
-        .filter { it.startsWith("https://") || it.startsWith("http://") }
+        .filter { it.startsWith("https://", ignoreCase = true) }
         .distinct()
         .take(MAX_REAL_DELAY_URLS)
         .toList()
@@ -2554,16 +2566,28 @@ class MainActivity : Activity() {
         refreshProfiles: Boolean = true
     ) {
         if (!hub.verified || hub.state != VpnHubConnectionState.CONNECTED) return
-        val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
-        val network = currentNetworkLabel()
+        val profileId = hub.profileId ?: activeConnectionProfileId ?: selectedProfileId ?: return
+        if (activeConnectionProfileId != null && hub.profileId != activeConnectionProfileId) return
+        if (pendingFasterSwitchProfileId == profileId && activeConnectionProfileId != profileId) return
+        val network = fasterSwitchNetworkLabel(profileId)
         val key = "$profileId:${hub.activeEngine}:${hub.latencyMs ?: -1}:${network.orEmpty()}:${hub.verified}"
         if (lastRecordedVerificationKey == key) return
         val updated = runCatching {
-            profileStore.markVerified(
-                profileId = profileId,
-                network = network,
-                latencyMs = hub.latencyMs
-            )
+            if (hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) {
+                profileStore.markTested(
+                    profileId = profileId,
+                    success = true,
+                    network = network,
+                    latencyMs = hub.latencyMs,
+                    testKind = TEST_KIND_PROXY_EGRESS
+                )
+            } else {
+                profileStore.markVerified(
+                    profileId = profileId,
+                    network = network,
+                    latencyMs = hub.latencyMs
+                )
+            }
         }.getOrNull()
         if (updated != null) {
             lastRecordedVerificationKey = key
@@ -2571,7 +2595,7 @@ class MainActivity : Activity() {
             clearSmartFallbackSession()
             if (selectedProfileId == updated.id) selectedProfile = updated
             activeConnectionProfileId = updated.id
-            recordFasterSwitchSuccessIfNeeded(updated, hub.latencyMs)
+            recordFasterSwitchSuccessIfNeeded(updated, hub.latencyMs, hub.verificationScope)
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
     }
@@ -2582,8 +2606,10 @@ class MainActivity : Activity() {
     ) {
         if (hub.state != VpnHubConnectionState.FAILED) return
         if (smartFallbackInFlight || System.currentTimeMillis() < smartFallbackSuppressFailureUntilMs) return
-        val profileId = activeConnectionProfileId ?: selectedProfileId ?: return
-        val network = currentNetworkLabel()
+        val profileId = hub.profileId ?: activeConnectionProfileId ?: selectedProfileId ?: return
+        if (activeConnectionProfileId != null && hub.profileId != activeConnectionProfileId) return
+        if (pendingFasterSwitchProfileId == profileId && activeConnectionProfileId != profileId) return
+        val network = fasterSwitchNetworkLabel(profileId)
         val key = "$profileId:${hub.activeEngine}:${hub.title}:${hub.detail.shortUi(72)}:${network.orEmpty()}"
         if (lastRecordedFailureKey == key) return
         val updated = runCatching {
@@ -2605,6 +2631,18 @@ class MainActivity : Activity() {
             if (refreshProfiles) refreshProfileButtons(syncVerified = false)
         }
         maybeStartSmartFallback(hub.detail)
+    }
+
+    private fun fasterSwitchNetworkLabel(profileId: String): String? {
+        val capturedNetwork = pendingFasterSwitchNetwork
+            ?.takeIf { pendingFasterSwitchProfileId == profileId }
+            ?: return currentNetworkLabel()
+        val currentNetwork = currentNetworkLabel()
+        return if (normalizeNetworkLabel(currentNetwork) != null && !isSameNetworkLabel(capturedNetwork, currentNetwork)) {
+            currentNetwork
+        } else {
+            capturedNetwork
+        }
     }
 
     private fun beginSmartFallbackSession() {
@@ -2724,7 +2762,8 @@ class MainActivity : Activity() {
     private fun currentHubStatus() = VpnHubStatusMapper.from(
         wireGuard = WireGuardVpnService.lastStatus,
         xray = XrayVpnService.lastStatus,
-        selectedProfile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
+        selectedProfile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile,
+        activeProfileId = activeConnectionProfileId ?: selectedProfileId
     )
 
     private fun updateDashboardSummary() {
@@ -2735,7 +2774,7 @@ class MainActivity : Activity() {
             hub.state == VpnHubConnectionState.RUNNING_UNVERIFIED
 
         val pendingSwitchActive = pendingFasterSwitchProfileId != null && selectedProfileId == pendingFasterSwitchProfileId && active
-        hubStatusTitle.text = if (pendingSwitchActive) "Switching" else dashboardTitleFor(hub.state)
+        hubStatusTitle.text = if (pendingSwitchActive) "Switching" else dashboardTitleFor(hub)
         hubStatusTitle.setTextColor(
             when {
                 pendingSwitchActive -> PearlPalette.CHAMPAGNE_DARK
@@ -2750,7 +2789,7 @@ class MainActivity : Activity() {
         } else {
             dashboardDetail(hub)
         }
-        connectionStatsText.text = buildStatsLine(hub.verified, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
+        connectionStatsText.text = buildStatsLine(hub.verified, hub.verificationScope, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
 
         val down = formatBytes(hub.rxBytes ?: 0)
         val up = formatBytes(hub.txBytes ?: 0)
@@ -2761,7 +2800,7 @@ class MainActivity : Activity() {
 
         if (::protectionBadge.isInitialized) {
             val protectionText = when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> "✓  Protected  ›"
+                VpnHubConnectionState.CONNECTED -> if (hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) "✓  Proxy checked  ›" else "✓  Protected  ›"
                 VpnHubConnectionState.CONNECTING,
                 VpnHubConnectionState.RUNNING_UNVERIFIED -> "✓  Checking  ›"
                 VpnHubConnectionState.FAILED -> "!  Failed  ›"
@@ -2791,8 +2830,8 @@ class MainActivity : Activity() {
         refreshAutoTestSummary()
     }
 
-    private fun dashboardTitleFor(state: VpnHubConnectionState): String = when (state) {
-        VpnHubConnectionState.CONNECTED -> "Protected"
+    private fun dashboardTitleFor(hub: com.vpnproject.app.engine.VpnHubStatus): String = when (hub.state) {
+        VpnHubConnectionState.CONNECTED -> if (hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) "Connected" else "Protected"
         VpnHubConnectionState.CONNECTING -> "Connecting"
         VpnHubConnectionState.RUNNING_UNVERIFIED -> "Checking"
         VpnHubConnectionState.FAILED -> "Failed"
@@ -2804,13 +2843,19 @@ class MainActivity : Activity() {
         val profile = activeConnectionProfileId?.let { profileStore.profile(it) } ?: selectedProfile
         val profileName = profile?.displayName?.shortUi(28)
         val engine = hub.activeEngine?.let { engineLabel(it) }
+        val evidence = when (hub.verificationScope) {
+            com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS -> "Proxy egress checked; app-to-TUN path not tested"
+            com.vpnproject.app.engine.VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS -> "Tunnel traffic + egress checked"
+            com.vpnproject.app.engine.VerificationScope.NONE -> "Verification unavailable"
+        }
         return when (hub.state) {
             VpnHubConnectionState.CONNECTED -> listOfNotNull(
                 profileName,
                 engine,
+                evidence,
                 hub.latencyMs?.let { "${it} ms" },
                 hub.egressIp?.let { "IP $it" }
-            ).joinToString(" • ").ifBlank { "Tunnel verified and traffic is protected." }
+            ).joinToString(" • ").ifBlank { "Connection verification evidence is limited." }
             VpnHubConnectionState.CONNECTING -> "Starting tunnel and verifying internet access."
             VpnHubConnectionState.RUNNING_UNVERIFIED -> "Tunnel is running; waiting for verification."
             VpnHubConnectionState.FAILED -> hub.detail.shortUi(96)
@@ -2821,14 +2866,20 @@ class MainActivity : Activity() {
 
     private fun buildStatsLine(
         verified: Boolean,
+        verificationScope: com.vpnproject.app.engine.VerificationScope,
         rxBytes: Long?,
         txBytes: Long?,
         egressIp: String?,
         engine: com.vpnproject.app.engine.EngineKind?,
         latencyMs: Long?
     ): String {
+        val evidence = when (verificationScope) {
+            com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS -> "Proxy egress checked; app path untested"
+            com.vpnproject.app.engine.VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS -> "Tunnel traffic + egress checked"
+            com.vpnproject.app.engine.VerificationScope.NONE -> if (verified) "Verified (scope unspecified)" else "Not verified"
+        }
         val parts = mutableListOf(
-            "Verified: ${if (verified) "yes" else "no"}",
+            "Verification: $evidence",
             "Traffic: ${formatBytes(rxBytes ?: 0)} down / ${formatBytes(txBytes ?: 0)} up"
         )
         latencyMs?.let { parts += "Latency: ${it}ms" }
@@ -2982,6 +3033,9 @@ class MainActivity : Activity() {
         pendingFasterSwitchProfileId = suggestion.profile.id
         pendingFasterSwitchPreviousLatencyMs = suggestion.activeLatencyMs
         pendingFasterSwitchExpectedLatencyMs = suggestion.signal.latencyMs
+        pendingFasterSwitchNetwork = suggestion.signal.network
+            ?.takeIf { normalizeNetworkLabel(it) != null }
+            ?: currentNetworkLabel()?.takeIf { normalizeNetworkLabel(it) != null }
         pendingFasterSwitchText = "${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms"
         fasterSwitchResultText = null
         fasterSwitchResultUntilMs = 0L
@@ -2990,22 +3044,40 @@ class MainActivity : Activity() {
     private fun clearPendingFasterSwitch() {
         pendingFasterSwitchProfileId = null
         pendingFasterSwitchText = null
+        pendingFasterSwitchNetwork = null
         pendingFasterSwitchPreviousLatencyMs = null
         pendingFasterSwitchExpectedLatencyMs = null
     }
 
-    private fun recordFasterSwitchSuccessIfNeeded(profile: VpnProfile, latencyMs: Long?) {
+    private fun recordFasterSwitchSuccessIfNeeded(
+        profile: VpnProfile,
+        latencyMs: Long?,
+        verificationScope: com.vpnproject.app.engine.VerificationScope
+    ) {
         if (pendingFasterSwitchProfileId != profile.id) return
         val previous = pendingFasterSwitchPreviousLatencyMs
         val expected = pendingFasterSwitchExpectedLatencyMs
         val actual = latencyMs
-        val message = when {
-            previous != null && actual != null && actual < previous -> "Improved: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+        val network = fasterSwitchNetworkLabel(profile.id)
+        val improved = previous != null && actual != null && actual < previous
+        val prefix = if (verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) {
+            "Proxy egress checked (app-to-TUN path untested): "
+        } else {
+            ""
+        }
+        val message = prefix + when {
+            previous != null && actual != null && improved -> "Improved: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            previous != null && actual != null -> "No improvement: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
             actual != null && expected != null -> "Connected faster tested: ${actual}ms now • expected ${expected}ms"
             actual != null -> "Connected faster tested: ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
-            else -> "Faster tested config verified: ${compactProfileTitle(profile).shortUi(26)}"
+            else -> "Faster tested config checked: ${compactProfileTitle(profile).shortUi(26)}"
         }
-        if (previous != null && actual != null && actual < previous) saveFasterSwitchImprovement(profile, previous, actual)
+        if (previous != null && actual != null) {
+            rememberFasterSwitchOutcome(profile, network, improved)
+        }
+        if (improved && previous != null && actual != null) {
+            saveFasterSwitchImprovement(profile, previous, actual, network)
+        }
         fasterSwitchResultText = message
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
         status.text = message
@@ -3021,8 +3093,46 @@ class MainActivity : Activity() {
         clearPendingFasterSwitch()
     }
 
-    private fun saveFasterSwitchImprovement(profile: VpnProfile, previousLatencyMs: Long, actualLatencyMs: Long) {
-        val network = currentNetworkLabel().orEmpty()
+    private fun rememberFasterSwitchOutcome(profile: VpnProfile, network: String?, improved: Boolean) {
+        val key = FasterSwitchRecommendationPolicy.preferenceKey(profile.id, network) ?: return
+        val editor = appSettings.edit()
+        if (improved) {
+            editor.remove(key)
+        } else {
+            editor.putLong(key, System.currentTimeMillis())
+        }
+        editor.apply()
+    }
+
+    private fun profileSwitchNoImprovementPenalty(
+        profile: VpnProfile,
+        network: String?,
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Int {
+        val key = FasterSwitchRecommendationPolicy.preferenceKey(profile.id, network) ?: return 0
+        val lastAttempt = appSettings.getLong(key, 0L).takeIf { it > 0L }
+        return FasterSwitchRecommendationPolicy.noImprovementPenalty(
+            lastAttemptEpochMs = lastAttempt,
+            nowEpochMs = nowEpochMs,
+            freshnessWindowMs = PROFILE_TEST_FRESH_MS
+        )
+    }
+
+    private fun lastFasterSwitchNoImprovementLine(profile: VpnProfile): String? {
+        val network = currentNetworkLabel()?.takeIf { normalizeNetworkLabel(it) != null }
+            ?: profile.lastVerifiedNetwork
+        if (profileSwitchNoImprovementPenalty(profile, network) == 0) return null
+        val networkTag = compactNetworkLabel(network.orEmpty())?.let { " • $it" }.orEmpty()
+        return "Recent switch: no improvement$networkTag"
+    }
+
+    private fun saveFasterSwitchImprovement(
+        profile: VpnProfile,
+        previousLatencyMs: Long,
+        actualLatencyMs: Long,
+        networkLabel: String?
+    ) {
+        val network = networkLabel.orEmpty()
         appSettings.edit()
             .putString(KEY_LAST_FAST_SWITCH_PROFILE_ID, profile.id)
             .putString(KEY_LAST_FAST_SWITCH_NETWORK, network)
@@ -3055,6 +3165,7 @@ class MainActivity : Activity() {
             ?: return null
         if (activeLatency < SLOW_CONNECTION_SUGGESTION_MS) return null
         val network = currentNetworkLabel()
+        val nowEpochMs = System.currentTimeMillis()
         return smartFallbackCandidateProfiles(activeProfile.id)
             .asSequence()
             .filter { it.id != activeProfile.id }
@@ -3071,7 +3182,9 @@ class MainActivity : Activity() {
                 val latency = suggestion.signal.latencyMs ?: return@filter false
                 latency + FASTER_SUGGESTION_MIN_GAIN_MS < activeLatency && latency * 100 <= activeLatency * FASTER_SUGGESTION_RATIO_PERCENT
             }
-            .minWithOrNull(compareBy<FasterProfileSuggestion> { it.signal.latencyMs ?: Long.MAX_VALUE }
+            .minWithOrNull(compareBy<FasterProfileSuggestion> {
+                profileSwitchNoImprovementPenalty(it.profile, network, nowEpochMs)
+            }.thenBy { it.signal.latencyMs ?: Long.MAX_VALUE }
                 .thenBy { it.signal.kindRank })
     }
 
@@ -3481,6 +3594,7 @@ class MainActivity : Activity() {
         state.latencyMs?.let { latency ->
             val kind = when (state.label) {
                 "Verified" -> "V"
+                "Proxy egress" -> "Proxy"
                 "Connect" -> "Conn"
                 "Real" -> "Real"
                 "Quick" -> "Quick"
@@ -3497,6 +3611,7 @@ class MainActivity : Activity() {
     private fun profileTestKindLabel(kind: String?): String = when (kind) {
         TEST_KIND_VERIFIED -> "Verified"
         TEST_KIND_REAL -> "Real"
+        TEST_KIND_PROXY_EGRESS -> "Proxy egress"
         TEST_KIND_CONNECT -> "Connect"
         TEST_KIND_QUICK -> "Quick"
         else -> "Test"
@@ -3505,9 +3620,10 @@ class MainActivity : Activity() {
     private fun profileTestKindRank(kind: String?): Int = when (kind) {
         TEST_KIND_VERIFIED -> 0
         TEST_KIND_REAL -> 1
-        TEST_KIND_QUICK -> 2
-        TEST_KIND_CONNECT -> 3
-        else -> 4
+        TEST_KIND_PROXY_EGRESS -> 2
+        TEST_KIND_QUICK -> 3
+        TEST_KIND_CONNECT -> 4
+        else -> 5
     }
 
     private fun isLatencyFresh(epochMs: Long?): Boolean =
@@ -3906,6 +4022,7 @@ class MainActivity : Activity() {
         currentNetworkLabel()?.let { compactNetworkLabel(it) }?.let { add("Current network: $it") }
         profileLatencyDetailLine(profile)?.let { add(it) }
         lastFasterSwitchImprovementLine(profile)?.let { add(it) }
+        lastFasterSwitchNoImprovementLine(profile)?.let { add(it) }
         profileLatencyMemoryLines(profile).forEach { add(it) }
         if (!compatibility.connectReady) add("Next step: ${runtimeFixHint(compatibility, profile)}")
     }
@@ -4350,12 +4467,16 @@ class MainActivity : Activity() {
         return "Advanced engine diagnostics:\n" +
             "WireGuard status: ${wireGuard.state}\n" +
             "Verified: ${if (wireGuard.verified) "yes" else "no"}\n" +
+            "Verification scope: ${wireGuard.verificationScope}\n" +
+            "Profile ID: ${wireGuard.profileId ?: "unknown"}\n" +
             "Message: ${wireGuard.message}" +
             (wireGuard.detail?.let { "\nDetail: $it" } ?: "") +
             (wireGuard.egressIp?.let { "\nEgress IP: $it" } ?: "") +
             "\nRX/TX: ${wireGuard.rxBytes ?: 0} / ${wireGuard.txBytes ?: 0} bytes" +
             "\n\nXray status: ${xray.state}\n" +
             "Verified: ${if (xray.verified) "yes" else "no"}\n" +
+            "Verification scope: ${xray.verificationScope}\n" +
+            "Profile ID: ${xray.profileId ?: "unknown"}\n" +
             "Message: ${xray.message}" +
             (xray.detail?.let { "\nDetail: $it" } ?: "")
     }
@@ -4366,9 +4487,11 @@ class MainActivity : Activity() {
         when (requestCode) {
             VPN_PERMISSION_REQUEST -> {
                 val action = pendingVpnAction
+                val profileId = pendingVpnProfileId
                 pendingVpnAction = PendingVpnAction.NONE
+                pendingVpnProfileId = null
                 if (resultCode == RESULT_OK) {
-                    runVpnAction(action)
+                    runVpnAction(action, profileId)
                 } else {
                     status.text = "VPN permission was not granted."
                 }
@@ -4393,20 +4516,26 @@ class MainActivity : Activity() {
     }
 
     private fun requestVpnPermission(action: PendingVpnAction) {
+        val requestedProfileId = if (action == PendingVpnAction.IMPORTED_ENGINE) {
+            selectedProfileId ?: selectedProfile?.id
+        } else {
+            null
+        }
         val intent = VpnService.prepare(this)
         if (intent != null) {
             pendingVpnAction = action
+            pendingVpnProfileId = requestedProfileId
             startActivityForResult(intent, VPN_PERMISSION_REQUEST)
         } else {
-            runVpnAction(action)
+            runVpnAction(action, requestedProfileId)
         }
     }
 
-    private fun runVpnAction(action: PendingVpnAction) {
+    private fun runVpnAction(action: PendingVpnAction, requestedProfileId: String? = null) {
         when (action) {
             PendingVpnAction.NONE -> status.text = "VPN permission is granted."
             PendingVpnAction.BOOTSTRAP -> startBootstrapVpnService()
-            PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine()
+            PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine(requestedProfileId = requestedProfileId)
         }
     }
 
@@ -4415,7 +4544,7 @@ class MainActivity : Activity() {
             action = AutoVpnService.ACTION_START
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting TUN bootstrap VPN. Warning: it owns the full IPv4 route but does not forward traffic until an OpenVPN/WireGuard engine is integrated. Use Stop to return to normal networking."
+        status.text = "Starting TUN bootstrap VPN. It captures IPv4 and IPv6 but drops packets until an engine is integrated. Use Stop to return to normal networking."
     }
 
     private fun stopBootstrapVpn() {
@@ -4481,35 +4610,59 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun prepareAndStartImportedEngine(isSmartFallbackAttempt: Boolean = false) {
-        val config = importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
+    private fun prepareAndStartImportedEngine(
+        isSmartFallbackAttempt: Boolean = false,
+        requestedProfileId: String? = selectedProfileId ?: selectedProfile?.id
+    ) {
+        val requestGeneration = ++engineRequestGeneration
+        val requestedProfile = requestedProfileId
+            ?.let { id -> runCatching { profileStore.profile(id) }.getOrNull() }
+        val canUseCurrentSelection = requestedProfileId == null || requestedProfileId == selectedProfileId
+        val currentSelectionConfig = if (canUseCurrentSelection) {
+            importedConfig ?: loadSelectedOrLatestProfileConfigForAction()
+        } else {
+            null
+        }
+        val config = requestedProfile?.let(::loadProfileConfigQuiet) ?: currentSelectionConfig
         if (config == null) {
+            activeConnectionProfileId = null
             status.text = "Import or pick a saved V2Ray/Xray profile first. WireGuard/OpenVPN remain advanced fallback imports only."
             updateDashboardSummary()
             return
         }
+        if (requestedProfile != null) {
+            selectedProfile = requestedProfile
+            selectedProfileId = requestedProfile.id
+            importedConfig = config
+        }
         if (!isSmartFallbackAttempt) beginSmartFallbackSession()
         lastRecordedVerificationKey = null
         when (config.kind) {
-            ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config)
+            ConfigKind.WIREGUARD -> prepareAndStartWireGuardEngine(config, requestedProfileId, requestGeneration)
             ConfigKind.V2RAY,
             ConfigKind.SING_BOX,
-            ConfigKind.CLASH -> prepareAndStartXrayEngine(config)
+            ConfigKind.CLASH -> prepareAndStartXrayEngine(config, requestedProfileId, requestGeneration)
             ConfigKind.OPENVPN -> status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
             ConfigKind.UNKNOWN -> status.text = "Unknown config kind cannot be started."
         }
     }
 
-    private fun prepareAndStartWireGuardEngine(config: ImportedConfig) {
+    private fun prepareAndStartWireGuardEngine(
+        config: ImportedConfig,
+        profileId: String?,
+        requestGeneration: Int
+    ) {
         status.text = "Preparing WireGuard runtime config: resolving endpoint and pinning a public IPv4 candidate..."
         hubStatusTitle.text = "Preparing"
         hubStatusDetail.text = "WireGuard is preparing its runtime config."
         Thread {
             val result = runCatching { runtimeConfigPreparer.prepareWireGuard(config) }
             runOnUiThread {
+                if (requestGeneration != engineRequestGeneration) return@runOnUiThread
                 result.fold(
-                    onSuccess = { selection -> startWireGuardEngine(selection, config) },
+                    onSuccess = { selection -> startWireGuardEngine(selection, config, profileId, requestGeneration) },
                     onFailure = { error ->
+                        activeConnectionProfileId = null
                         val message = "WireGuard runtime config failed: ${error.message ?: error.javaClass.simpleName}"
                         status.text = message
                         maybeStartSmartFallback(message)
@@ -4519,14 +4672,21 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun startWireGuardEngine(selection: RuntimeConfigSelection, config: ImportedConfig) {
-        activeConnectionProfileId = selectedProfileId
+    private fun startWireGuardEngine(
+        selection: RuntimeConfigSelection,
+        config: ImportedConfig,
+        profileId: String?,
+        requestGeneration: Int
+    ) {
+        if (requestGeneration != engineRequestGeneration) return
+        activeConnectionProfileId = profileId
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
         val intent = Intent(this, WireGuardVpnService::class.java).apply {
             action = WireGuardVpnService.ACTION_START
             putExtra(WireGuardVpnService.EXTRA_CONFIG_TEXT, selection.configText)
             putExtra(WireGuardVpnService.EXTRA_TUNNEL_NAME, safeTunnelName(config.name))
             putExtra(WireGuardVpnService.EXTRA_NOTE, selection.note)
+            profileId?.let { putExtra(WireGuardVpnService.EXTRA_PROFILE_ID, it) }
         }
         startForegroundServiceCompat(intent)
         status.text = "Starting WireGuard engine. Verification will refresh automatically."
@@ -4535,7 +4695,11 @@ class MainActivity : Activity() {
         scheduleEngineStatusRefreshes()
     }
 
-    private fun prepareAndStartXrayEngine(config: ImportedConfig) {
+    private fun prepareAndStartXrayEngine(
+        config: ImportedConfig,
+        profileId: String?,
+        requestGeneration: Int
+    ) {
         status.text = "Preparing embedded Xray runtime config from the selected profile..."
         hubStatusTitle.text = "Preparing"
         hubStatusDetail.text = "Embedded Xray is preparing a runtime config. V2Ray links start directly; supported sing-box/Clash proxies are mapped to Xray."
@@ -4552,8 +4716,9 @@ class MainActivity : Activity() {
                 )
             }
             runOnUiThread {
+                if (requestGeneration != engineRequestGeneration) return@runOnUiThread
                 result.fold(
-                    onSuccess = { runtime -> startXrayEngine(runtime) },
+                    onSuccess = { runtime -> startXrayEngine(runtime, profileId, requestGeneration) },
                     onFailure = { error ->
                         activeConnectionProfileId = null
                         val message = "Xray runtime config failed: ${error.message ?: error.javaClass.simpleName}"
@@ -4573,14 +4738,16 @@ class MainActivity : Activity() {
         }
     }.getOrNull()
 
-    private fun startXrayEngine(runtime: V2RayRuntimeConfig) {
-        activeConnectionProfileId = selectedProfileId
+    private fun startXrayEngine(runtime: V2RayRuntimeConfig, profileId: String?, requestGeneration: Int) {
+        if (requestGeneration != engineRequestGeneration) return
+        activeConnectionProfileId = profileId
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         val intent = Intent(this, XrayVpnService::class.java).apply {
             action = XrayVpnService.ACTION_START
             putExtra(XrayVpnService.EXTRA_CONFIG_JSON, runtime.configJson)
             putExtra(XrayVpnService.EXTRA_PROFILE_NAME, safeTunnelName(runtime.profileName))
             putExtra(XrayVpnService.EXTRA_NOTE, runtime.note)
+            profileId?.let { putExtra(XrayVpnService.EXTRA_PROFILE_ID, it) }
             runtime.localHttpProxyPort?.let { putExtra(XrayVpnService.EXTRA_LOCAL_HTTP_PROXY_PORT, it) }
             putStringArrayListExtra(XrayVpnService.EXTRA_DNS_SERVERS, ArrayList(vpnDnsServers(includeLocalhost = false)))
             putStringArrayListExtra(XrayVpnService.EXTRA_BYPASS_PACKAGES, ArrayList(bypassAppPackages()))
@@ -4593,6 +4760,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopImportedEngines() {
+        engineRequestGeneration += 1
         clearSmartFallbackSession()
         startService(Intent(this, WireGuardVpnService::class.java).apply { action = WireGuardVpnService.ACTION_STOP })
         startService(Intent(this, XrayVpnService::class.java).apply { action = XrayVpnService.ACTION_STOP })
@@ -4619,11 +4787,16 @@ class MainActivity : Activity() {
         recordVerifiedProfileIfNeeded(hub)
         recordConnectionFailureIfNeeded(hub)
         updateDashboardSummary()
-        status.text = "Latest status: ${hub.title}. Verified: ${if (hub.verified) "yes" else "no"}."
+        val verificationEvidence = when (hub.verificationScope) {
+            com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS -> "Proxy egress checked; app-to-TUN path untested"
+            com.vpnproject.app.engine.VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS -> "Tunnel traffic and public egress checked"
+            com.vpnproject.app.engine.VerificationScope.NONE -> if (hub.verified) "Verified, scope unspecified" else "Not verified"
+        }
+        status.text = "Latest status: ${hub.title}. Evidence: $verificationEvidence."
         if (::settingsConnectionSummaryText.isInitialized) {
             val parts = listOfNotNull(
                 hub.title,
-                if (hub.verified) "Verified" else "Not verified",
+                verificationEvidence,
                 hub.latencyMs?.let { "${it}ms" },
                 hub.activeEngine?.let { engineLabel(it) }
             )
@@ -5217,42 +5390,58 @@ class MainActivity : Activity() {
         .orEmpty()
 
     private fun fetchSubscriptionText(urlText: String): String {
-        val parsedUrl = URL(urlText.trim())
-        val protocol = parsedUrl.protocol.lowercase()
-        if (protocol != "https" && protocol != "http") {
-            throw ConfigParseException("Subscription URL must start with https:// or http://")
+        var currentUrl = URL(urlText.trim())
+        if (!currentUrl.protocol.equals("https", ignoreCase = true)) {
+            throw ConfigParseException("Subscription URLs must use HTTPS. Cleartext HTTP is not supported.")
         }
-        val connection = (parsedUrl.openConnection() as HttpURLConnection).apply {
-            connectTimeout = SUBSCRIPTION_TIMEOUT_MS
-            readTimeout = SUBSCRIPTION_TIMEOUT_MS
-            instanceFollowRedirects = true
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "VPN-Hub-Android/1.0")
-            setRequestProperty("Accept", "text/plain, application/octet-stream, */*")
-        }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                throw ConfigParseException("Subscription server returned HTTP $code")
+
+        for (redirectCount in 0..MAX_SUBSCRIPTION_REDIRECTS) {
+            val connection = (currentUrl.openConnection() as HttpURLConnection).apply {
+                connectTimeout = SUBSCRIPTION_TIMEOUT_MS
+                readTimeout = SUBSCRIPTION_TIMEOUT_MS
+                instanceFollowRedirects = false
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "VPN-Hub-Android/1.0")
+                setRequestProperty("Accept", "text/plain, application/octet-stream, */*")
             }
-            connection.inputStream.use { input ->
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(8 * 1024)
-                var total = 0
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    total += read
-                    if (total > MAX_SUBSCRIPTION_BYTES) {
-                        throw ConfigParseException("Subscription is too large for this preview build.")
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    if (redirectCount == MAX_SUBSCRIPTION_REDIRECTS) {
+                        throw ConfigParseException("Subscription URL exceeded the redirect limit.")
                     }
-                    output.write(buffer, 0, read)
+                    val location = connection.getHeaderField("Location")
+                        ?: throw ConfigParseException("Subscription server returned a redirect without a Location.")
+                    val nextUrl = URL(currentUrl, location)
+                    if (!nextUrl.protocol.equals("https", ignoreCase = true)) {
+                        throw ConfigParseException("Subscription redirect downgraded to HTTP; cleartext redirects are blocked.")
+                    }
+                    currentUrl = nextUrl
+                    continue
                 }
-                output.toString(Charsets.UTF_8.name())
+                if (code !in 200..299) {
+                    throw ConfigParseException("Subscription server returned HTTP $code")
+                }
+                connection.inputStream.use { input ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(8 * 1024)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        total += read
+                        if (total > MAX_SUBSCRIPTION_BYTES) {
+                            throw ConfigParseException("Subscription is too large for this preview build.")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                    return output.toString(Charsets.UTF_8.name())
+                }
+            } finally {
+                connection.disconnect()
             }
-        } finally {
-            connection.disconnect()
         }
+        throw ConfigParseException("Could not fetch subscription text.")
     }
 
     private fun openConfigPicker() {
@@ -5268,15 +5457,40 @@ class MainActivity : Activity() {
     }
 
     private fun importConfig(uri: Uri) {
-        val text = try {
-            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                ?: throw ConfigParseException("Could not read selected file.")
-        } catch (e: Exception) {
-            importedConfig = null
-            status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
-            return
-        }
-        importConfigText(text, displayName(uri))
+        val generation = ++fileImportGeneration
+        status.text = "Reading and parsing selected config..."
+        Thread({
+            val result = runCatching {
+                val name = displayName(uri)
+                val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(8 * 1024)
+                    var totalBytes = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read == 0) continue
+                        totalBytes += read
+                        if (totalBytes > MAX_CONFIG_FILE_BYTES) {
+                            throw ConfigParseException("Selected config is too large for this preview build.")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                    output.toByteArray()
+                } ?: throw ConfigParseException("Could not open selected file.")
+                val text = String(bytes, Charsets.UTF_8)
+                Triple(text, name, ConfigImporter.parse(text, name))
+            }
+            runOnUiThread {
+                if (generation != fileImportGeneration) return@runOnUiThread
+                result.fold(
+                    onSuccess = { (text, name, config) -> importConfigText(text, name, config) },
+                    onFailure = { error ->
+                        status.text = "Import failed: ${error.message ?: error.javaClass.simpleName}"
+                    }
+                )
+            }
+        }, "vpn-config-file-import").start()
     }
 
     private fun importConfigFromClipboard() {
@@ -5313,10 +5527,10 @@ class MainActivity : Activity() {
     private fun normalizedSubscriptionUrl(text: String): String? {
         val candidate = text.trim()
         if (candidate.isBlank()) return null
-        if (candidate.isHttpUrl()) return candidate
+        if (candidate.isHttpsUrl()) return candidate
         val directLinkSchemes = listOf("vless://", "vmess://", "trojan://", "ss://")
         if (directLinkSchemes.none { candidate.startsWith(it, ignoreCase = true) }) {
-            firstHttpUrlInText(candidate)?.let { return it }
+            firstHttpsUrlInText(candidate)?.let { return it }
         }
         if (candidate.contains(Regex("\\s"))) return null
 
@@ -5328,26 +5542,23 @@ class MainActivity : Activity() {
 
         val queryUrl = runCatching {
             listOf("url", "link", "sub", "subscription", "config")
-                .firstNotNullOfOrNull { key -> uri.getQueryParameter(key)?.takeIf { it.isHttpUrl() } }
+                .firstNotNullOfOrNull { key -> uri.getQueryParameter(key)?.takeIf { it.isHttpsUrl() } }
         }.getOrNull()
         if (queryUrl != null) return queryUrl
 
-        return firstHttpUrlInText(Uri.decode(candidate))
+        return firstHttpsUrlInText(Uri.decode(candidate))
     }
 
-    private fun firstHttpUrlInText(text: String): String? {
-        val httpsIndex = text.indexOf("https://", ignoreCase = true).takeIf { it >= 0 }
-        val httpIndex = text.indexOf("http://", ignoreCase = true).takeIf { it >= 0 }
-        val start = listOfNotNull(httpsIndex, httpIndex).minOrNull() ?: return null
+    private fun firstHttpsUrlInText(text: String): String? {
+        val start = text.indexOf("https://", ignoreCase = true).takeIf { it >= 0 } ?: return null
         val end = text.indexOfFirstFrom(start) { char ->
             char.isWhitespace() || char == '"' || char == '\'' || char == '<' || char == '>'
         }.let { if (it < 0) text.length else it }
-        return text.substring(start, end).trimEnd(',', ';', ')', ']', '}').takeIf { it.isHttpUrl() }
+        return text.substring(start, end).trimEnd(',', ';', ')', ']', '}').takeIf { it.isHttpsUrl() }
     }
 
-    private fun String.isHttpUrl(): Boolean = runCatching {
-        val parsed = URL(trim())
-        parsed.protocol.equals("https", ignoreCase = true) || parsed.protocol.equals("http", ignoreCase = true)
+    private fun String.isHttpsUrl(): Boolean = runCatching {
+        URL(trim()).protocol.equals("https", ignoreCase = true)
     }.getOrDefault(false)
 
     private inline fun String.indexOfFirstFrom(startIndex: Int, predicate: (Char) -> Boolean): Int {
@@ -5390,9 +5601,9 @@ class MainActivity : Activity() {
         } && !normalized.contains(Regex("\\s"))
     }
 
-    private fun importConfigText(text: String, name: String?) {
+    private fun importConfigText(text: String, name: String?, preParsedConfig: ImportedConfig? = null) {
         try {
-            val config = ConfigImporter.parse(text, name)
+            val config = preParsedConfig ?: ConfigImporter.parse(text, name)
             importedConfig = config
             val savedProfileLine = saveImportedProfile(config, importedProfileDisplayName(config, text, name))
             val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
@@ -6741,6 +6952,8 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_LOAD_MORE_STEP = 80
         const val MAX_SUBSCRIPTION_TOTAL_PROFILES = 2_000
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
+        const val MAX_CONFIG_FILE_BYTES = 2 * 1024 * 1024
+        const val MAX_SUBSCRIPTION_REDIRECTS = 5
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
@@ -6748,6 +6961,7 @@ class MainActivity : Activity() {
         const val TEST_KIND_QUICK = "quick"
         const val TEST_KIND_REAL = "real"
         const val TEST_KIND_CONNECT = "connect"
+        const val TEST_KIND_PROXY_EGRESS = "proxy-egress"
         const val TEST_KIND_VERIFIED = "verified"
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"

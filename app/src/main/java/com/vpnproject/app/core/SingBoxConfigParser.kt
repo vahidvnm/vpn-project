@@ -56,6 +56,10 @@ object SingBoxConfigParser {
                 val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
                 add("sing-box REALITY outbound $safeName is missing public_key/pbk; ask the provider for the full REALITY link before Connect.")
             }
+            parsed.filter { it.unsupportedShadowsocksPlugin }.take(3).forEach { outbound ->
+                val safeName = V2RayLinkInspector.safeDisplayName(outbound.tag) ?: outbound.endpoint.host
+                add("sing-box Shadowsocks outbound $safeName uses a plugin that this Xray mapper does not support; it is saved for diagnostics but will not be started with the plugin silently removed.")
+            }
         }
 
         return ImportedConfig(
@@ -153,7 +157,9 @@ object SingBoxConfigParser {
         )
         val missingCredential = credential.isNullOrBlank()
         val missingRealityPublicKey = security == "reality" && publicKey.isNullOrBlank()
-        val runtimeLink = buildRuntimeLink(
+        val unsupportedShadowsocksPlugin = rawType in setOf("ss", "shadowsocks") &&
+            listOf("plugin", "plugin_opts", "plugin-opts").any { topLevelFieldExists(objectText, it) }
+        val runtimeLink = if (unsupportedShadowsocksPlugin) null else buildRuntimeLink(
             type = rawType,
             server = server,
             port = port,
@@ -187,6 +193,7 @@ object SingBoxConfigParser {
             unsupportedTransport = transport !in runtimeSupportedTransports,
             missingCredential = missingCredential,
             missingRealityPublicKey = missingRealityPublicKey,
+            unsupportedShadowsocksPlugin = unsupportedShadowsocksPlugin,
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -235,6 +242,13 @@ object SingBoxConfigParser {
         }
         if (missingCredentialCount > 0) {
             add("${missingCredentialCount.formatCount("supported sing-box outbound is", "supported sing-box outbounds are")} missing uuid/password; secrets are not shown, but Connect needs a complete user-provided outbound.")
+        }
+        val pluginShadowsocksCount = supportedObjects.count { objectText ->
+            topLevelStringField(objectText, "type")?.lowercase() in setOf("ss", "shadowsocks") &&
+                listOf("plugin", "plugin_opts", "plugin-opts").any { topLevelFieldExists(objectText, it) }
+        }
+        if (pluginShadowsocksCount > 0) {
+            add("${pluginShadowsocksCount.formatCount("sing-box Shadowsocks outbound uses", "sing-box Shadowsocks outbounds use")} plugin options that are not mapped by embedded Xray; Connect will not silently strip them.")
         }
         val unsupportedTransports = supportedObjects.map { objectText ->
             normalizeTransport(topLevelObjectField(objectText, "transport")?.let { topLevelStringField(it, "type") })
@@ -392,6 +406,11 @@ object SingBoxConfigParser {
             }
         }
         return objects
+    }
+
+    private fun topLevelFieldExists(json: String, fieldName: String): Boolean {
+        val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:", RegexOption.IGNORE_CASE)
+        return regex.findAll(json).any { match -> isTopLevelField(json, match.range.first) }
     }
 
     private fun topLevelStringField(json: String, fieldName: String): String? {
@@ -627,6 +646,7 @@ object SingBoxConfigParser {
         val unsupportedTransport: Boolean,
         val missingCredential: Boolean,
         val missingRealityPublicKey: Boolean,
+        val unsupportedShadowsocksPlugin: Boolean,
         val runtimeLink: String?,
         val endpoint: EndpointCandidate
     )

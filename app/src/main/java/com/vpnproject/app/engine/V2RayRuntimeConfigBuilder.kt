@@ -179,7 +179,11 @@ object V2RayRuntimeConfigBuilder {
     private fun parseShadowsocks(link: String): V2RayProfile {
         val rest = link.substringAfter("://")
         val (withoutFragment, fragment) = splitOnce(rest, '#')
-        val (withoutQuery, _) = splitOnce(withoutFragment, '?')
+        val (withoutQuery, queryText) = splitOnce(withoutFragment, '?')
+        val query = parseQuery(queryText)
+        if (query.containsKey("plugin") || query.containsKey("plugin_opts") || query.containsKey("plugin-opts")) {
+            throw ConfigParseException("Shadowsocks SIP003 plugins are not supported by embedded Xray in this build. The plugin will not be silently ignored; import a non-plugin Shadowsocks link or use an external compatible client.")
+        }
         val decodedAuthority = if ('@' in withoutQuery) {
             val userInfo = withoutQuery.substringBefore('@')
             val hostPort = withoutQuery.substringAfter('@')

@@ -15,6 +15,29 @@ object WireGuardConfigParser {
         return hasInterface && hasPeer && text.contains("PrivateKey", ignoreCase = true)
     }
 
+    fun hasIpv6DefaultRoute(text: String): Boolean {
+        var section = ""
+        for (line in text.lines()) {
+            val sectionMatch = sectionLine.find(line)
+            if (sectionMatch != null) {
+                section = sectionMatch.groupValues[1].trim().lowercase()
+                continue
+            }
+            if (section != "peer") continue
+            val keyValue = keyValueLine.find(line) ?: continue
+            if (!keyValue.groupValues[1].trim().equals("allowedips", ignoreCase = true)) continue
+            if (keyValue.groupValues[2].split(',').any(::isIpv6DefaultRoute)) return true
+        }
+        return false
+    }
+
+    private fun isIpv6DefaultRoute(route: String): Boolean {
+        val parts = route.trim().split('/', limit = 2)
+        if (parts.size != 2 || parts[1].trim() != "0") return false
+        val address = parts[0].trim()
+        return address.contains(':')
+    }
+
     fun parse(text: String, name: String? = null): ImportedConfig {
         val endpoints = mutableListOf<EndpointCandidate>()
         val warnings = mutableListOf<String>()
@@ -46,6 +69,9 @@ object WireGuardConfigParser {
             )
         }
 
+        if (!hasIpv6DefaultRoute(text)) {
+            warnings += "No IPv6 default route (::/0) was found in peer AllowedIPs. This app will refuse to start this profile because IPv6 could bypass WireGuard; ask the provider for an IPv6-routed config."
+        }
         if (endpoints.isEmpty()) {
             throw ConfigParseException("WireGuard config has no peer Endpoint to test or pin.")
         }

@@ -36,7 +36,7 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             muxConcurrency = muxConcurrency,
             logLevel = logLevel
         )
-        val urls = verifyUrls.filter { it.startsWith("http://") || it.startsWith("https://") }
+        val urls = verifyUrls.filter { it.startsWith("https://", ignoreCase = true) }
             .ifEmpty { DEFAULT_VERIFY_URLS }
         Seq.setContext(context.applicationContext)
         Libv2ray.initCoreEnv(context.filesDir.absolutePath, xudpBaseKey())

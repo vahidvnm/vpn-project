@@ -138,6 +138,29 @@ class ClashConfigParserTest {
     }
 
     @Test
+    fun doesNotSilentlyStripShadowsocksPluginOptions() {
+        val yaml = """
+            proxies:
+              - name: Plugin SS
+                type: ss
+                server: ss.example.net
+                port: 8388
+                cipher: aes-128-gcm
+                password: secret
+                plugin: obfs-local
+                plugin-opts:
+                  mode: http
+                  host: front.example.net
+        """.trimIndent()
+
+        val config = ClashConfigParser.parse(yaml)
+
+        assertEquals("ss.example.net", config.endpoints.single().host)
+        assertTrue(config.warnings.any { it.contains("plugin") && it.contains("not support") })
+        assertEquals(null, ClashConfigParser.firstXrayShareLink(yaml))
+    }
+
+    @Test
     fun ignoresNonClashYaml() {
         assertFalse(ClashConfigParser.looksLikeClash("port: 7890\nproxy-groups: []"))
     }

@@ -128,6 +128,30 @@ class SingBoxConfigParserTest {
     }
 
     @Test
+    fun doesNotSilentlyStripShadowsocksPluginOptions() {
+        val json = """
+            {
+              "outbounds": [{
+                "type": "shadowsocks",
+                "tag": "plugin-ss",
+                "server": "ss.example.net",
+                "server_port": 8388,
+                "method": "aes-128-gcm",
+                "password": "secret",
+                "plugin": "obfs-local",
+                "plugin_opts": "mode=http;host=front.example.net"
+              }]
+            }
+        """.trimIndent()
+
+        val config = SingBoxConfigParser.parse(json)
+
+        assertEquals("ss.example.net", config.endpoints.single().host)
+        assertTrue(config.warnings.any { it.contains("plugin") && it.contains("not support") })
+        assertEquals(null, SingBoxConfigParser.firstXrayShareLink(json))
+    }
+
+    @Test
     fun ignoresNonSingBoxJson() {
         assertFalse(SingBoxConfigParser.looksLikeSingBox("{\"outbounds\":[{\"protocol\":\"vless\"}]}"))
     }

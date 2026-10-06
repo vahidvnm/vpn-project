@@ -556,6 +556,16 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun shadowsocksShareLinkWithPluginIsRejectedInsteadOfStripped() {
+        val error = assertThrows(ConfigParseException::class.java) {
+            buildJson("ss://YWVzLTEyOC1nY206cGFzcw@example.com:8388?plugin=obfs-local%3Bobfs%3Dhttp#SS")
+        }
+
+        assertContains(error.message.orEmpty(), "SIP003 plugins are not supported")
+        assertTrue(!error.message.orEmpty().contains("pass"))
+    }
+
+    @Test
     fun unsupportedTransportFailsClearly() {
         val error = assertThrows(ConfigParseException::class.java) {
             buildJson(

@@ -11,6 +11,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
+import com.vpnproject.app.core.WireGuardConfigParser
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
@@ -21,6 +22,7 @@ import com.vpnproject.app.engine.WireGuardConnectionVerifier
 import com.vpnproject.app.engine.WireGuardTunnelHandle
 import com.vpnproject.app.engine.WireGuardVerificationPolicy
 import com.vpnproject.app.engine.WireGuardVerificationResult
+import com.vpnproject.app.engine.VerificationScope
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
@@ -38,7 +40,12 @@ class WireGuardVpnService : GoBackend.VpnService() {
     private val starting = AtomicBoolean(false)
     private val verificationRunning = AtomicBoolean(false)
     private val verificationGeneration = AtomicInteger(0)
+    private val lifecycleGeneration = AtomicInteger(0)
+    private val lifecycleLock = Any()
     private val rebindRunning = AtomicBoolean(false)
+
+    @Volatile
+    private var startThread: Thread? = null
     private val rebindPolicy = NetworkRebindPolicy(
         minIntervalMs = REBIND_MIN_INTERVAL_MS,
         debounceMs = REBIND_DEBOUNCE_MS
@@ -52,6 +59,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
     @Volatile
     private var currentConfig: Config? = null
+
+    @Volatile
+    private var activeProfileId: String? = null
 
     @Volatile
     private var verificationThread: Thread? = null
@@ -95,19 +105,13 @@ class WireGuardVpnService : GoBackend.VpnService() {
                     ?.takeIf { it.isNotBlank() }
                     ?: DEFAULT_TUNNEL_NAME
                 val note = intent?.getStringExtra(EXTRA_NOTE)
-                if (configText.isNullOrBlank()) {
-                    updateStatus(EngineState.FAILED, "WireGuard config is missing.")
-                    startForegroundNotification("WireGuard config is missing.")
-                    stopSelf()
-                    Service.START_NOT_STICKY
-                } else {
-                    startWireGuardTunnel(configText, tunnelName, note)
-                    Service.START_STICKY
-                }
+                val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
+                startWireGuardTunnel(configText.orEmpty(), tunnelName, note, profileId, startId)
+                Service.START_STICKY
             }
             ACTION_STOP -> {
                 stopWireGuardTunnel()
-                stopSelf()
+                stopSelfResult(startId)
                 Service.START_NOT_STICKY
             }
             else -> Service.START_NOT_STICKY
@@ -130,133 +134,259 @@ class WireGuardVpnService : GoBackend.VpnService() {
         super.onRevoke()
     }
 
-    private fun startWireGuardTunnel(configText: String, tunnelName: String, note: String?) {
+    private fun startWireGuardTunnel(configText: String, tunnelName: String, note: String?, profileId: String?, startId: Int) {
         if (!starting.compareAndSet(false, true)) {
             updateStatus(EngineState.CONNECTING, "WireGuard start is already in progress.", note)
             return
         }
 
-        updateStatus(EngineState.CONNECTING, "Starting WireGuard engine…", note)
+        val generation = lifecycleGeneration.incrementAndGet()
+        synchronized(lifecycleLock) {
+            activeProfileId = profileId
+            updateStatus(EngineState.CONNECTING, "Starting WireGuard engine…", note)
+        }
         startForegroundNotification(note?.let { "Starting WireGuard. $it" } ?: "Starting WireGuard engine…")
 
-        Thread({
+        val worker = Thread({
+            var attemptBackend: GoBackend? = null
+            var attemptTunnel: WireGuardTunnelHandle? = null
+            var attemptIsUp = false
             try {
+                if (!isCurrentLifecycle(generation)) return@Thread
                 stopVerification()
-                stopRebind()
+                stopRebindAndJoin()
+                if (!isCurrentLifecycle(generation)) return@Thread
                 stopExistingTunnelForRestart()
+                if (!isCurrentLifecycle(generation)) return@Thread
+
+                if (configText.isBlank()) {
+                    val message = "WireGuard config is missing."
+                    if (updateStatusIfCurrent(generation, EngineState.FAILED, message, note)) {
+                        startForegroundNotificationIfCurrent(generation, message)
+                        stopSelfResult(startId)
+                    }
+                    return@Thread
+                }
+
+                if (!WireGuardConfigParser.hasIpv6DefaultRoute(configText)) {
+                    val message = "WireGuard was not started: AllowedIPs lacks ::/0, so IPv6 could bypass the tunnel. Ask the provider for an IPv6-routed config."
+                    if (updateStatusIfCurrent(generation, EngineState.FAILED, message, note)) {
+                        startForegroundNotificationIfCurrent(generation, message)
+                        stopSelfResult(startId)
+                    }
+                    return@Thread
+                }
+
                 val parsedConfig = Config.parse(configText.byteInputStream(Charsets.UTF_8))
                 val tunnelHandle = WireGuardTunnelHandle(tunnelName) { state ->
+                    if (!isCurrentLifecycle(generation)) return@WireGuardTunnelHandle
                     when (state) {
                         Tunnel.State.UP -> {
-                            updateStatus(EngineState.RUNNING, "WireGuard tunnel state is UP; verification is pending.", note)
-                            startForegroundNotification("WireGuard tunnel is UP. Verifying traffic and egress…")
+                            val updated = updateStatusIfCurrent(
+                                generation,
+                                EngineState.RUNNING,
+                                "WireGuard tunnel state is UP; verification is pending.",
+                                note
+                            )
+                            if (updated) {
+                                startForegroundNotificationIfCurrent(generation, "WireGuard tunnel is UP. Verifying traffic and egress…")
+                            }
                         }
                         Tunnel.State.DOWN -> {
-                            updateStatus(EngineState.STOPPED, "WireGuard tunnel state is DOWN.")
-                            startForegroundNotification("WireGuard tunnel is stopped.")
+                            val updated = updateStatusIfCurrent(generation, EngineState.STOPPED, "WireGuard tunnel state is DOWN.")
+                            if (updated) {
+                                startForegroundNotificationIfCurrent(generation, "WireGuard tunnel is stopped.")
+                            }
                         }
                         Tunnel.State.TOGGLE -> Unit
                     }
                 }
                 val goBackend = backend ?: GoBackend(this)
+                attemptBackend = goBackend
+                attemptTunnel = tunnelHandle
 
                 setCurrentUnderlyingNetwork()
+                if (!isCurrentLifecycle(generation)) return@Thread
                 val state = goBackend.setState(tunnelHandle, Tunnel.State.UP, parsedConfig)
+                attemptIsUp = state == Tunnel.State.UP
+                if (!isCurrentLifecycle(generation)) return@Thread
 
-                backend = goBackend
-                tunnel = tunnelHandle
-                currentConfig = parsedConfig
-
-                if (state == Tunnel.State.UP) {
-                    registerNetworkCallback()
-                    updateStatus(EngineState.RUNNING, "WireGuard engine started; verification is running.", note)
-                    startForegroundNotification("WireGuard engine started. Verifying handshake traffic and egress IP…")
-                    startVerification(goBackend, tunnelHandle, note)
-                } else {
-                    updateStatus(EngineState.FAILED, "WireGuard did not enter UP state: $state", note)
-                    startForegroundNotification("WireGuard did not enter UP state: $state")
+                if (state != Tunnel.State.UP) {
+                    val updated = updateStatusIfCurrent(
+                        generation,
+                        EngineState.FAILED,
+                        "WireGuard did not enter UP state: $state",
+                        note
+                    )
+                    if (updated) {
+                        startForegroundNotificationIfCurrent(generation, "WireGuard did not enter UP state: $state")
+                        stopSelfResult(startId)
+                    }
+                    return@Thread
                 }
-            } catch (e: Exception) {
-                updateStatus(
-                    EngineState.FAILED,
-                    "WireGuard failed: ${e.message ?: e.javaClass.simpleName}",
-                    note
-                )
-                startForegroundNotification("WireGuard failed: ${e.message ?: e.javaClass.simpleName}")
-                stopSelf()
-            } finally {
-                starting.set(false)
-            }
-        }, "wireguard-engine-start").start()
-    }
 
-    private fun startVerification(goBackend: GoBackend, tunnelHandle: WireGuardTunnelHandle, note: String?) {
-        stopVerification()
-        val generation = verificationGeneration.incrementAndGet()
-        verificationRunning.set(true)
-        val thread = Thread({
-            updateStatus(EngineState.VERIFYING, "Checking WireGuard traffic and public egress IP…", note)
-            startForegroundNotification("Verifying WireGuard tunnel: traffic + egress IP…")
-
-            val verifier = WireGuardConnectionVerifier(
-                statsSource = WireGuardBackendStatsSource(goBackend, tunnelHandle),
-                egressIpResolver = HttpsEgressIpResolver(),
-                policy = WireGuardVerificationPolicy(
-                    maxAttempts = VERIFY_ATTEMPTS,
-                    intervalMs = VERIFY_INTERVAL_MS,
-                    minTrafficDeltaBytes = VERIFY_MIN_TRAFFIC_DELTA_BYTES
-                ),
-                sleeper = { millis ->
-                    if (verificationRunning.get() && verificationGeneration.get() == generation) {
-                        Thread.sleep(millis)
+                val committed = synchronized(lifecycleLock) {
+                    if (generation != lifecycleGeneration.get()) {
+                        false
+                    } else {
+                        backend = goBackend
+                        tunnel = tunnelHandle
+                        currentConfig = parsedConfig
+                        true
                     }
                 }
-            )
-            val result = runCatching { verifier.verify() }.getOrElse { error ->
-                WireGuardVerificationResult(
-                    verified = false,
-                    statsMoved = false,
-                    egressVerified = false,
-                    reason = if (verificationRunning.get()) {
-                        "Verification failed: ${error.message ?: error.javaClass.simpleName}"
-                    } else {
-                        "Verification cancelled."
-                    },
-                    rxBytes = 0L,
-                    txBytes = 0L,
-                    attempts = 0
-                )
-            }
+                if (!committed) return@Thread
 
-            if (!verificationRunning.get() || verificationGeneration.get() != generation) return@Thread
-            updateStatusFromVerification(result, note)
-            startForegroundNotification(notificationTextFor(result))
-        }, "wireguard-engine-verify")
+                synchronized(lifecycleLock) {
+                    if (generation != lifecycleGeneration.get()) return@Thread
+                    registerNetworkCallback()
+                    updateStatus(
+                        EngineState.RUNNING,
+                        "WireGuard engine started; tunnel verification is running.",
+                        note
+                    )
+                    startForegroundNotificationIfCurrent(generation, "WireGuard engine started. Verifying tunnel traffic and egress IP…")
+                    startVerification(goBackend, tunnelHandle, note, generation)
+                }
+            } catch (e: Exception) {
+                if (attemptIsUp) {
+                    val goBackend = attemptBackend
+                    val tunnelHandle = attemptTunnel
+                    if (goBackend != null && tunnelHandle != null) {
+                        runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
+                    }
+                }
+                val message = "WireGuard failed: ${e.message ?: e.javaClass.simpleName}"
+                val updated = updateStatusIfCurrent(generation, EngineState.FAILED, message, note)
+                if (updated) {
+                    startForegroundNotificationIfCurrent(generation, message)
+                    stopSelfResult(startId)
+                }
+            } finally {
+                if (attemptIsUp && !isCurrentLifecycle(generation)) {
+                    val goBackend = attemptBackend
+                    val tunnelHandle = attemptTunnel
+                    if (goBackend != null && tunnelHandle != null) {
+                        runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
+                    }
+                }
+                starting.set(false)
+                if (startThread === Thread.currentThread()) startThread = null
+            }
+        }, "wireguard-engine-start-$generation")
+        startThread = worker
+        worker.start()
+    }
+
+    private fun startVerification(
+        goBackend: GoBackend,
+        tunnelHandle: WireGuardTunnelHandle,
+        note: String?,
+        lifecycle: Int
+    ) {
+        val thread = synchronized(lifecycleLock) {
+            if (lifecycle != lifecycleGeneration.get()) return
+            stopVerification()
+            val verificationId = verificationGeneration.incrementAndGet()
+            verificationRunning.set(true)
+            Thread({
+                try {
+                    val started = updateStatusIfCurrent(
+                        lifecycle,
+                        EngineState.VERIFYING,
+                        "Checking WireGuard tunnel traffic and public egress IP…",
+                        note,
+                        verificationId = verificationId
+                    )
+                    if (!started || !isCurrentVerification(lifecycle, verificationId)) return@Thread
+                    startForegroundNotificationIfCurrent(
+                        lifecycle,
+                        "Verifying WireGuard tunnel: traffic + egress IP…",
+                        verificationId
+                    )
+
+                    val verifier = WireGuardConnectionVerifier(
+                        statsSource = WireGuardBackendStatsSource(goBackend, tunnelHandle),
+                        egressIpResolver = HttpsEgressIpResolver(),
+                        policy = WireGuardVerificationPolicy(
+                            maxAttempts = VERIFY_ATTEMPTS,
+                            intervalMs = VERIFY_INTERVAL_MS,
+                            minTrafficDeltaBytes = VERIFY_MIN_TRAFFIC_DELTA_BYTES
+                        ),
+                        sleeper = { millis ->
+                            if (verificationRunning.get() && isCurrentVerification(lifecycle, verificationId)) {
+                                Thread.sleep(millis)
+                            }
+                        }
+                    )
+                    val result = runCatching { verifier.verify() }.getOrElse { error ->
+                        WireGuardVerificationResult(
+                            verified = false,
+                            statsMoved = false,
+                            egressVerified = false,
+                            reason = if (verificationRunning.get() && isCurrentVerification(lifecycle, verificationId)) {
+                                "Verification failed: ${error.message ?: error.javaClass.simpleName}"
+                            } else {
+                                "Verification cancelled."
+                            },
+                            rxBytes = 0L,
+                            txBytes = 0L,
+                            attempts = 0
+                        )
+                    }
+
+                    if (!verificationRunning.get() || !isCurrentVerification(lifecycle, verificationId)) return@Thread
+                    val updated = updateStatusFromVerification(result, note, lifecycle, verificationId)
+                    if (updated) {
+                        startForegroundNotificationIfCurrent(
+                            lifecycle,
+                            notificationTextFor(result),
+                            verificationId
+                        )
+                    }
+                } finally {
+                    synchronized(lifecycleLock) {
+                        if (verificationGeneration.get() == verificationId && verificationThread === Thread.currentThread()) {
+                            verificationRunning.set(false)
+                            verificationThread = null
+                        }
+                    }
+                }
+            }, "wireguard-engine-verify-$lifecycle-$verificationId").also { verificationThread = it }
+        }
         thread.isDaemon = true
-        verificationThread = thread
         thread.start()
     }
 
-    private fun updateStatusFromVerification(result: WireGuardVerificationResult, note: String?) {
-        if (result.verified) {
-            updateStatus(
+    private fun updateStatusFromVerification(
+        result: WireGuardVerificationResult,
+        note: String?,
+        lifecycle: Int,
+        verificationId: Int
+    ): Boolean {
+        return if (result.verified) {
+            updateStatusIfCurrent(
+                lifecycle,
                 state = EngineState.VERIFIED,
-                message = "WireGuard verified: traffic moved and public egress IP is ${result.egressIp}.",
+                message = "WireGuard verified: tunnel traffic moved and public egress IP was ${result.egressIp}.",
                 detail = note ?: result.reason,
                 rxBytes = result.rxBytes,
                 txBytes = result.txBytes,
                 egressIp = result.egressIp,
-                verified = true
+                verified = true,
+                verificationId = verificationId
             )
         } else {
-            updateStatus(
+            updateStatusIfCurrent(
+                lifecycle,
                 state = EngineState.RUNNING,
                 message = "WireGuard is running but not fully verified: ${result.reason}",
                 detail = note,
                 rxBytes = result.rxBytes,
                 txBytes = result.txBytes,
                 egressIp = result.egressIp,
-                verified = false
+                verified = false,
+                verificationId = verificationId
             )
         }
     }
@@ -270,6 +400,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
     }
 
     private fun scheduleNetworkRebind(reason: String) {
+        val generation = lifecycleGeneration.get()
+        if (!isCurrentLifecycle(generation) || starting.get()) return
+        if (lastStatus.state in setOf(EngineState.STOPPING, EngineState.STOPPED, EngineState.FAILED)) return
         val goBackend = backend ?: return
         val tunnelHandle = tunnel ?: return
         currentConfig ?: return
@@ -287,49 +420,66 @@ class WireGuardVpnService : GoBackend.VpnService() {
         if (!rebindRunning.compareAndSet(false, true)) return
 
         val thread = Thread({
+            var reboundBackend: GoBackend? = null
+            var reboundTunnel: WireGuardTunnelHandle? = null
+            var rebindAttempted = false
             try {
                 if (decision.delayMs > 0L) Thread.sleep(decision.delayMs)
-                if (!rebindRunning.get()) return@Thread
+                if (!rebindRunning.get() || !isCurrentLifecycle(generation)) return@Thread
 
                 val activeBackend = backend ?: return@Thread
                 val activeTunnel = tunnel ?: return@Thread
                 val activeConfig = currentConfig ?: return@Thread
-
-                updateStatus(
+                val reconnecting = updateStatusIfCurrent(
+                    generation,
                     EngineState.RECONNECTING,
                     "Network changed; rebinding WireGuard…",
                     decision.reason
                 )
-                startForegroundNotification("Network changed. Rebinding WireGuard…")
+                if (!reconnecting || !isCurrentLifecycle(generation)) return@Thread
+                startForegroundNotificationIfCurrent(generation, "Network changed. Rebinding WireGuard…")
 
                 setCurrentUnderlyingNetwork()
+                reboundBackend = activeBackend
+                reboundTunnel = activeTunnel
+                rebindAttempted = true
                 val state = activeBackend.setState(activeTunnel, Tunnel.State.UP, activeConfig)
+                if (!isCurrentLifecycle(generation)) return@Thread
                 if (state == Tunnel.State.UP) {
                     val reverifyReason = "Rebound after network change: ${decision.reason}"
-                    updateStatus(EngineState.RUNNING, "WireGuard rebound; verification restarted.", reverifyReason)
-                    startForegroundNotification("WireGuard rebound after network change. Re-verifying…")
-                    startVerification(activeBackend, activeTunnel, reverifyReason)
-                } else {
-                    updateStatus(
-                        EngineState.FAILED,
-                        "WireGuard rebind did not return UP state: $state",
-                        decision.reason
+                    val updated = updateStatusIfCurrent(
+                        generation,
+                        EngineState.RUNNING,
+                        "WireGuard rebound; verification restarted.",
+                        reverifyReason
                     )
-                    startForegroundNotification("WireGuard rebind failed: $state")
+                    if (updated) {
+                        startForegroundNotificationIfCurrent(generation, "WireGuard rebound after network change. Re-verifying…")
+                        startVerification(activeBackend, activeTunnel, reverifyReason, generation)
+                    }
+                } else {
+                    val message = "WireGuard rebind did not return UP state: $state"
+                    val updated = updateStatusIfCurrent(generation, EngineState.FAILED, message, decision.reason)
+                    if (updated) startForegroundNotificationIfCurrent(generation, "WireGuard rebind failed: $state")
                 }
             } catch (_: InterruptedException) {
                 // Expected when stopping or when a newer lifecycle action cancels rebind.
             } catch (e: Exception) {
-                updateStatus(
-                    EngineState.FAILED,
-                    "WireGuard rebind failed: ${e.message ?: e.javaClass.simpleName}",
-                    decision.reason
-                )
-                startForegroundNotification("WireGuard rebind failed: ${e.message ?: e.javaClass.simpleName}")
+                val message = "WireGuard rebind failed: ${e.message ?: e.javaClass.simpleName}"
+                val updated = updateStatusIfCurrent(generation, EngineState.FAILED, message, decision.reason)
+                if (updated) startForegroundNotificationIfCurrent(generation, message)
             } finally {
+                if (rebindAttempted && !isCurrentLifecycle(generation)) {
+                    val oldBackend = reboundBackend
+                    val oldTunnel = reboundTunnel
+                    if (oldBackend != null && oldTunnel != null) {
+                        runCatching { oldBackend.setState(oldTunnel, Tunnel.State.DOWN, null) }
+                    }
+                }
                 rebindRunning.set(false)
+                if (rebindThread === Thread.currentThread()) rebindThread = null
             }
-        }, "wireguard-network-rebind")
+        }, "wireguard-network-rebind-$generation")
         thread.isDaemon = true
         rebindThread = thread
         thread.start()
@@ -337,35 +487,61 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
     private fun stopExistingTunnelForRestart() {
         unregisterNetworkCallback()
-        val goBackend = backend
-        val tunnelHandle = tunnel
-        if (goBackend != null && tunnelHandle != null) {
-            runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
+        val existing = synchronized(lifecycleLock) { backend to tunnel }
+        val goBackend = existing.first
+        val tunnelHandle = existing.second
+        if ((goBackend == null) != (tunnelHandle == null)) {
+            throw IllegalStateException("WireGuard backend and tunnel handles are inconsistent; refusing to start another tunnel.")
         }
-        backend = null
-        tunnel = null
-        currentConfig = null
+        if (goBackend != null && tunnelHandle != null) {
+            val state = try {
+                goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null)
+            } catch (error: Exception) {
+                throw IllegalStateException("Could not stop the previous WireGuard tunnel before restart.", error)
+            }
+            if (state != Tunnel.State.DOWN) {
+                throw IllegalStateException("Previous WireGuard tunnel did not stop cleanly: $state")
+            }
+        }
+        synchronized(lifecycleLock) {
+            if (backend === goBackend && tunnel === tunnelHandle) {
+                backend = null
+                tunnel = null
+                currentConfig = null
+            }
+        }
     }
 
     private fun stopWireGuardTunnel() {
+        val pendingStart = synchronized(lifecycleLock) {
+            lifecycleGeneration.incrementAndGet()
+            val thread = startThread
+            thread?.interrupt()
+            startThread = null
+            updateStatus(EngineState.STOPPING, "Stopping WireGuard engine…")
+            thread
+        }
+        joinUninterruptibly(pendingStart)
         stopVerification()
-        stopRebind()
+        stopRebindAndJoin()
         unregisterNetworkCallback()
-        updateStatus(EngineState.STOPPING, "Stopping WireGuard engine…")
-        try {
-            val goBackend = backend
-            val tunnelHandle = tunnel
-            if (goBackend != null && tunnelHandle != null) {
-                goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null)
-            }
-            updateStatus(EngineState.STOPPED, "WireGuard engine stopped.")
-        } catch (e: Exception) {
-            updateStatus(EngineState.FAILED, "WireGuard stop failed: ${e.message ?: e.javaClass.simpleName}")
-        } finally {
+        val existing = synchronized(lifecycleLock) { Triple(backend, tunnel, currentConfig) }
+        var stopError: Exception? = null
+        val goBackend = existing.first
+        val tunnelHandle = existing.second
+        if (goBackend != null && tunnelHandle != null) {
+            runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
+                .onFailure { stopError = it as? Exception }
+        }
+        synchronized(lifecycleLock) {
             backend = null
             tunnel = null
             currentConfig = null
-            starting.set(false)
+            if (stopError == null) {
+                updateStatus(EngineState.STOPPED, "WireGuard engine stopped.")
+            } else {
+                updateStatus(EngineState.FAILED, "WireGuard stop failed: ${stopError?.message ?: stopError?.javaClass?.simpleName}")
+            }
         }
     }
 
@@ -376,10 +552,25 @@ class WireGuardVpnService : GoBackend.VpnService() {
         verificationThread = null
     }
 
-    private fun stopRebind() {
+    private fun stopRebindAndJoin() {
         rebindRunning.set(false)
-        rebindThread?.interrupt()
+        val thread = rebindThread
         rebindThread = null
+        thread?.interrupt()
+        joinUninterruptibly(thread)
+    }
+
+    private fun joinUninterruptibly(thread: Thread?) {
+        if (thread == null || thread === Thread.currentThread()) return
+        var interrupted = false
+        while (thread.isAlive) {
+            try {
+                thread.join()
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private fun registerNetworkCallback() {
@@ -433,7 +624,12 @@ class WireGuardVpnService : GoBackend.VpnService() {
         rxBytes: Long? = null,
         txBytes: Long? = null,
         egressIp: String? = null,
-        verified: Boolean = false
+        verified: Boolean = false,
+        verificationScope: VerificationScope = if (verified) {
+            VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS
+        } else {
+            VerificationScope.NONE
+        }
     ) {
         lastStatus = EngineStatus(
             kind = EngineKind.WIREGUARD_GO,
@@ -443,8 +639,66 @@ class WireGuardVpnService : GoBackend.VpnService() {
             rxBytes = rxBytes,
             txBytes = txBytes,
             egressIp = egressIp,
-            verified = verified
+            verified = verified,
+            verificationScope = verificationScope,
+            profileId = activeProfileId
         )
+    }
+
+    private fun isCurrentLifecycle(generation: Int): Boolean =
+        lifecycleGeneration.get() == generation
+
+    private fun isCurrentVerification(lifecycle: Int, verificationId: Int): Boolean =
+        isCurrentLifecycle(lifecycle) && verificationGeneration.get() == verificationId
+
+    private fun updateStatusIfCurrent(
+        generation: Int,
+        state: EngineState,
+        message: String,
+        detail: String? = null,
+        rxBytes: Long? = null,
+        txBytes: Long? = null,
+        egressIp: String? = null,
+        verified: Boolean = false,
+        verificationScope: VerificationScope = if (verified) {
+            VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS
+        } else {
+            VerificationScope.NONE
+        },
+        verificationId: Int? = null
+    ): Boolean = synchronized(lifecycleLock) {
+        if (generation != lifecycleGeneration.get() ||
+            (verificationId != null && verificationGeneration.get() != verificationId)
+        ) {
+            false
+        } else {
+            updateStatus(
+                state = state,
+                message = message,
+                detail = detail,
+                rxBytes = rxBytes,
+                txBytes = txBytes,
+                egressIp = egressIp,
+                verified = verified,
+                verificationScope = verificationScope
+            )
+            true
+        }
+    }
+
+    private fun startForegroundNotificationIfCurrent(
+        generation: Int,
+        contentText: String,
+        verificationId: Int? = null
+    ): Boolean = synchronized(lifecycleLock) {
+        if (generation != lifecycleGeneration.get() ||
+            (verificationId != null && verificationGeneration.get() != verificationId)
+        ) {
+            false
+        } else {
+            startForegroundNotification(contentText)
+            true
+        }
     }
 
     private fun startForegroundNotification(contentText: String) {
@@ -512,6 +766,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
         const val EXTRA_CONFIG_TEXT = "com.vpnproject.app.vpn.extra.CONFIG_TEXT"
         const val EXTRA_TUNNEL_NAME = "com.vpnproject.app.vpn.extra.TUNNEL_NAME"
         const val EXTRA_NOTE = "com.vpnproject.app.vpn.extra.NOTE"
+        const val EXTRA_PROFILE_ID = "com.vpnproject.app.vpn.extra.PROFILE_ID"
 
         private const val CHANNEL_ID = "wireguard_engine_status"
         private const val NOTIFICATION_ID = 51

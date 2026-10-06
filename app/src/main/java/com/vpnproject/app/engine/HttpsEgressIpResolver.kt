@@ -18,23 +18,51 @@ class HttpsEgressIpResolver(
     }
 
     private fun fetch(endpoint: String): String {
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = timeoutMs
-            readTimeout = timeoutMs
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", "text/plain, application/json")
-            setRequestProperty("User-Agent", "VPNProject-Android/0.1")
+        var currentUrl = URL(endpoint)
+        if (!currentUrl.protocol.equals("https", ignoreCase = true)) {
+            throw IllegalArgumentException("Egress verification only permits HTTPS URLs.")
         }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) error("HTTP $code")
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                reader.readText().take(MAX_RESPONSE_CHARS)
+
+        for (redirectCount in 0..MAX_REDIRECTS) {
+            val connection = (currentUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                instanceFollowRedirects = false
+                setRequestProperty("Accept", "text/plain, application/json")
+                setRequestProperty("User-Agent", "VPNProject-Android/0.1")
             }
-        } finally {
-            connection.disconnect()
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    if (redirectCount == MAX_REDIRECTS) error("Too many HTTPS redirects.")
+                    val location = connection.getHeaderField("Location")
+                        ?: error("HTTPS endpoint returned a redirect without a Location.")
+                    val nextUrl = URL(currentUrl, location)
+                    if (!nextUrl.protocol.equals("https", ignoreCase = true)) {
+                        error("HTTPS egress verification blocked a redirect to cleartext HTTP.")
+                    }
+                    currentUrl = nextUrl
+                    continue
+                }
+                if (code !in 200..299) error("HTTP $code")
+                return connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val output = StringBuilder()
+                    val buffer = CharArray(512)
+                    while (output.length < MAX_RESPONSE_CHARS) {
+                        val remaining = MAX_RESPONSE_CHARS - output.length
+                        val read = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                        if (read < 0) break
+                        if (read == 0) continue
+                        output.append(buffer, 0, read)
+                    }
+                    output.toString()
+                }
+            } finally {
+                connection.disconnect()
+            }
         }
+        error("Could not fetch public egress IP after HTTPS redirects.")
     }
 
     internal fun extractIpv4(body: String): String? {
@@ -52,6 +80,8 @@ class HttpsEgressIpResolver(
     }
 
     private companion object {
+        const val MAX_REDIRECTS = 3
+        const val MAX_RESPONSE_CHARS = 2_048
         val DEFAULT_ENDPOINTS = listOf(
             "https://1.1.1.1/cdn-cgi/trace",
             "https://api.ipify.org",
@@ -60,7 +90,6 @@ class HttpsEgressIpResolver(
             "https://ifconfig.me/ip",
             "https://www.cloudflare.com/cdn-cgi/trace"
         )
-        const val MAX_RESPONSE_CHARS = 2_048
         val IPV4_REGEX = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
     }
 }

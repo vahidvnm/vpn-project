@@ -28,33 +28,68 @@ class HttpUrlConnectionDohTransport : DohTransport {
 
     private fun queryUrl(endpointUrl: String, provider: DohProvider, hostname: String, timeoutMs: Int): String {
         val encodedName = URLEncoder.encode(hostname, "UTF-8")
-        val url = URL("$endpointUrl?name=$encodedName&type=A")
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = timeoutMs
-            readTimeout = timeoutMs
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", "application/dns-json")
-            setRequestProperty("User-Agent", "VPNProject-Android/0.1")
+        var currentUrl = URL("$endpointUrl?name=$encodedName&type=A")
+        if (!currentUrl.protocol.equals("https", ignoreCase = true)) {
+            throw IOException("DoH providers must use HTTPS.")
         }
 
-        return try {
-            val code = connection.responseCode
-            val body = if (code in 200..299) {
-                connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            } else {
-                connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        for (redirectCount in 0..MAX_REDIRECTS) {
+            val connection = (currentUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                instanceFollowRedirects = false
+                setRequestProperty("Accept", "application/dns-json")
+                setRequestProperty("User-Agent", "VPNProject-Android/0.1")
             }
-            if (code !in 200..299) {
-                throw IOException("HTTP $code from ${provider.displayName}")
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    if (redirectCount == MAX_REDIRECTS) throw IOException("Too many HTTPS redirects from ${provider.displayName}.")
+                    val location = connection.getHeaderField("Location")
+                        ?: throw IOException("HTTPS DoH endpoint redirected without a Location.")
+                    val nextUrl = URL(currentUrl, location)
+                    if (!nextUrl.protocol.equals("https", ignoreCase = true)) {
+                        throw IOException("DoH blocked a redirect to cleartext HTTP.")
+                    }
+                    currentUrl = nextUrl
+                    continue
+                }
+                val body = if (code in 200..299) {
+                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readBounded(MAX_RESPONSE_CHARS) }
+                } else {
+                    connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readBounded(MAX_RESPONSE_CHARS) }.orEmpty()
+                }
+                if (code !in 200..299) {
+                    throw IOException("HTTP $code from ${provider.displayName}")
+                }
+                if (!body.looksLikeJsonDns()) {
+                    throw IOException("unexpected DoH response from ${provider.displayName}")
+                }
+                return body
+            } finally {
+                connection.disconnect()
             }
-            if (!body.looksLikeJsonDns()) {
-                throw IOException("unexpected DoH response from ${provider.displayName}")
-            }
-            body
-        } finally {
-            connection.disconnect()
         }
+        throw IOException("Could not complete HTTPS DoH request to ${provider.displayName}.")
+    }
+
+    private fun java.io.Reader.readBounded(maxChars: Int): String {
+        val reader = this
+        val output = StringBuilder()
+        val buffer = CharArray(2_048)
+        while (output.length < maxChars) {
+            val read = reader.read(buffer, 0, minOf(buffer.size, maxChars - output.length))
+            if (read < 0) break
+            if (read == 0) continue
+            output.append(buffer, 0, read)
+        }
+        return output.toString()
+    }
+
+    private companion object {
+        const val MAX_REDIRECTS = 3
+        const val MAX_RESPONSE_CHARS = 16_384
     }
 
     private fun String.looksLikeJsonDns(): Boolean =

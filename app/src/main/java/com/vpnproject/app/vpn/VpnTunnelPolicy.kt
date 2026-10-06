@@ -19,7 +19,7 @@ data class VpnTunnelPolicy(
     val routes: List<TunRoute>,
     val dnsServers: List<String>,
     val disallowedApplications: Set<String> = emptySet(),
-    val allowIpv6: Boolean = false
+    val blockIpv6OutsideTunnel: Boolean = true
 ) {
     fun validate(): List<String> {
         val errors = mutableListOf<String>()

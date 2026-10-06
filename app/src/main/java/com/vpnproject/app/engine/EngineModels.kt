@@ -21,6 +21,12 @@ enum class EngineState {
     FAILED
 }
 
+enum class VerificationScope {
+    NONE,
+    XRAY_PROXY_EGRESS,
+    WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS
+}
+
 data class EngineStatus(
     val kind: EngineKind,
     val state: EngineState,
@@ -30,5 +36,7 @@ data class EngineStatus(
     val txBytes: Long? = null,
     val egressIp: String? = null,
     val latencyMs: Long? = null,
-    val verified: Boolean = false
+    val verified: Boolean = false,
+    val verificationScope: VerificationScope = VerificationScope.NONE,
+    val profileId: String? = null
 )

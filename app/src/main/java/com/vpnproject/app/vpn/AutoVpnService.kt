@@ -18,8 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Phase-3 bootstrap VpnService.
  *
- * This establishes and owns the Android TUN interface, full IPv4 route, DNS
- * policy, foreground notification, and socket-protection boundary. It does not
+ * This establishes and owns the Android TUN interface, full IPv4 route, an
+ * IPv6 fail-closed route, DNS policy, foreground notification, and socket-protection boundary. It does not
  * yet forward packets to OpenVPN/WireGuard; until an engine is added, the packet
  * pump deliberately drains and drops packets so the service is safe to stop and
  * reason about during development.
@@ -81,6 +81,12 @@ class AutoVpnService : VpnService() {
                 .setBlocking(false)
                 .addAddress(policy.tunAddress.address, policy.tunAddress.prefixLength)
 
+            if (policy.blockIpv6OutsideTunnel) {
+                // This bootstrap engine drops packets; capturing IPv6 here is fail-closed.
+                builder.addAddress(BOOTSTRAP_IPV6_TUN_ADDRESS, 128)
+                    .addRoute("::", 0)
+            }
+
             policy.routes.forEach { route ->
                 builder.addRoute(route.address, route.prefixLength)
             }
@@ -103,7 +109,7 @@ class AutoVpnService : VpnService() {
             running.set(true)
             startPacketPump(established)
             startForegroundNotification(
-                "TUN is active: full IPv4 route + controlled DNS. Packet engine comes next."
+                "TUN captures IPv4 and IPv6; packets are dropped until a packet engine is integrated."
             )
         } catch (e: Exception) {
             stopTunnel()
@@ -227,5 +233,6 @@ class AutoVpnService : VpnService() {
         private const val NOTIFICATION_ID = 41
         private const val STOP_REQUEST_CODE = 42
         private const val PACKET_BUFFER_BYTES = 32 * 1024
+        private const val BOOTSTRAP_IPV6_TUN_ADDRESS = "fd00:1111:2222:3333::2"
     }
 }

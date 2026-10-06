@@ -13,5 +13,6 @@ This project embeds or downloads the following third-party components during And
 - Artifact: `libv2ray.aar`
 - Pinned release: `2dust/AndroidLibXrayLite` `v26.9.9`
 - Downloaded by Gradle from the pinned GitHub release during Android builds; the binary is not committed to this repository.
+- Expected SHA-256: `9ecf4c921568d8f4cb8550d3bafe08ff6f1d1984f45a6ad183dcdf52ee9302de` (verified against the GitHub release asset digest).
 - Purpose: experimental embedded Xray/V2Ray engine for user-supplied VLESS/VMess/Trojan/Shadowsocks share links.
 - License: LGPL-3.0 according to the upstream Go package/release metadata. Before any public production release, review LGPL obligations, provide required notices/source links, and verify whether dynamic/relinking requirements are satisfied by the Android packaging approach.

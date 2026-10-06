@@ -21,6 +21,7 @@ import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
 import com.vpnproject.app.engine.EngineStatus
 import com.vpnproject.app.engine.NetworkRebindPolicy
+import com.vpnproject.app.engine.VerificationScope
 import com.vpnproject.app.engine.XrayTrafficStatsParser
 import go.Seq
 import libv2ray.CoreCallbackHandler
@@ -33,10 +34,21 @@ import java.net.URL
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class XrayVpnService : VpnService(), CoreCallbackHandler {
     private val running = AtomicBoolean(false)
     private val reverifyRunning = AtomicBoolean(false)
+    private val verificationGeneration = AtomicInteger(0)
+    private val lifecycleGeneration = AtomicInteger(0)
+    private val lifecycleLock = Any()
+    private val startOperationLock = Any()
+
+    @Volatile
+    private var runningGeneration: Int? = null
+
+    @Volatile
+    private var startThread: Thread? = null
     private val rebindPolicy = NetworkRebindPolicy(
         minIntervalMs = NETWORK_REVERIFY_MIN_INTERVAL_MS,
         debounceMs = NETWORK_REVERIFY_DEBOUNCE_MS
@@ -86,6 +98,9 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     @Volatile
     private var activeLocalHttpProxyPort: Int = 0
 
+    @Volatile
+    private var activeProfileId: String? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             return if (running.get()) {
@@ -96,7 +111,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                     EngineState.STOPPED,
                     "Xray service was restarted without its encrypted runtime config. Tap Connect again."
                 )
-                stopSelf()
+                stopSelfResult(startId)
                 Service.START_NOT_STICKY
             }
         }
@@ -104,19 +119,33 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         return when (intent.action ?: ACTION_START) {
             ACTION_STOP -> {
                 stopXray("Stop requested for Xray engine.")
-                stopSelf()
+                stopSelfResult(startId)
                 Service.START_NOT_STICKY
             }
             ACTION_START -> {
                 val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
                 val profileName = intent.getStringExtra(EXTRA_PROFILE_NAME).orEmpty().ifBlank { "v2ray-import" }
+                val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)
                 val note = intent.getStringExtra(EXTRA_NOTE).orEmpty()
                 val dnsServers = intent.getStringArrayListExtra(EXTRA_DNS_SERVERS).orEmpty().ifEmpty { DEFAULT_DNS_SERVERS }
                 val bypassPackages = intent.getStringArrayListExtra(EXTRA_BYPASS_PACKAGES).orEmpty()
                 val localHttpProxyPort = intent.getIntExtra(EXTRA_LOCAL_HTTP_PROXY_PORT, 0)
+                val generation = synchronized(lifecycleLock) {
+                    lifecycleGeneration.incrementAndGet().also {
+                        startThread?.interrupt()
+                        activeProfileId = profileId
+                        startThread = null
+                        updateStatus(EngineState.CONNECTING, "Starting embedded Xray engine for $profileName.", note)
+                    }
+                }
                 startForegroundNotification("Starting embedded Xray engine…")
-                updateStatus(EngineState.CONNECTING, "Starting embedded Xray engine for $profileName.", note)
-                Thread({ startXray(configJson, profileName, note, dnsServers, bypassPackages, localHttpProxyPort) }, "xray-start").start()
+                val worker = Thread({
+                    startXray(configJson, profileName, profileId, note, dnsServers, bypassPackages, localHttpProxyPort, generation, startId)
+                }, "xray-start-$generation")
+                synchronized(lifecycleLock) {
+                    if (generation == lifecycleGeneration.get()) startThread = worker
+                }
+                worker.start()
                 Service.START_REDELIVER_INTENT
             }
             else -> Service.START_NOT_STICKY
@@ -127,6 +156,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         // If startup failed, keep the FAILED status visible for the UI instead
         // of overwriting the useful error with a generic service-destroyed state.
         if (lastStatus.kind == EngineKind.XRAY_CORE && lastStatus.state == EngineState.FAILED) {
+            invalidatePendingStart()
             stopCoreOnly()
             stopForegroundCompat()
         } else {
@@ -152,13 +182,26 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
 
     override fun shutdown(): Long = 0L
 
-    override fun onEmitStatus(l: Long, s: String?): Long {
-        if (!s.isNullOrBlank()) {
+    override fun onEmitStatus(l: Long, s: String?): Long =
+        emitCoreStatus(lifecycleGeneration.get(), s)
+
+    private fun callbackHandlerFor(generation: Int): CoreCallbackHandler = object : CoreCallbackHandler {
+        override fun startup(): Long = this@XrayVpnService.startup()
+
+        override fun shutdown(): Long = this@XrayVpnService.shutdown()
+
+        override fun onEmitStatus(l: Long, s: String?): Long = emitCoreStatus(generation, s)
+    }
+
+    private fun emitCoreStatus(generation: Int, message: String?): Long {
+        if (message.isNullOrBlank()) return 0L
+        synchronized(lifecycleLock) {
+            if (generation != lifecycleGeneration.get()) return 0L
             val previous = lastStatus
             updateStatus(
-                previous.state,
-                previous.message,
-                appendDetailLine(previous.detail, "xray: ${s.shortForStatus()}"),
+                state = previous.state,
+                message = previous.message,
+                detail = appendDetailLine(previous.detail, "xray: ${message.shortForStatus()}"),
                 verified = previous.verified,
                 rxBytes = previous.rxBytes,
                 txBytes = previous.txBytes,
@@ -172,67 +215,148 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     private fun startXray(
         configJson: String,
         profileName: String,
+        profileId: String?,
         note: String,
         dnsServers: List<String>,
         bypassPackages: List<String>,
-        localHttpProxyPort: Int
+        localHttpProxyPort: Int,
+        generation: Int,
+        startId: Int
     ) {
+        synchronized(startOperationLock) {
+            startXrayLocked(configJson, profileName, profileId, note, dnsServers, bypassPackages, localHttpProxyPort, generation, startId)
+        }
+    }
+
+    private fun startXrayLocked(
+        configJson: String,
+        profileName: String,
+        profileId: String?,
+        note: String,
+        dnsServers: List<String>,
+        bypassPackages: List<String>,
+        localHttpProxyPort: Int,
+        generation: Int,
+        startId: Int
+    ) {
+        var localTun: ParcelFileDescriptor? = null
+        var localController: CoreController? = null
+        if (!isCurrentLifecycle(generation)) return
         if (configJson.isBlank()) {
-            updateStatus(EngineState.FAILED, "Xray runtime config is empty.", note)
-            startForegroundNotification("Xray failed: runtime config is empty.")
-            stopSelf()
+            if (isCurrentLifecycle(generation)) {
+                stopCoreOnly()
+                val failed = updateStatusIfCurrent(
+                    generation,
+                    EngineState.FAILED,
+                    "Xray runtime config is empty.",
+                    note
+                )
+                if (failed) {
+                    startForegroundNotificationIfCurrent(generation, "Xray failed: runtime config is empty.")
+                    stopSelfResult(startId)
+                }
+            }
             return
         }
 
-        stopCoreOnly()
-        activeNote = note
-        activeLocalHttpProxyPort = localHttpProxyPort
         try {
-            updateStatus(
-                EngineState.CONNECTING,
-                "Establishing Android VPN interface for Xray profile $profileName.",
-                note
-            )
-            startForegroundNotification("Establishing Android VPN interface for Xray…")
-            val tun = establishTunOrThrow(profileName, dnsServers, bypassPackages)
-            updateStatus(
-                EngineState.CONNECTING,
-                "Android VPN interface is established; starting Xray core for $profileName.",
-                note
-            )
-            startForegroundNotification("VPN interface established; starting Xray core…")
+            if (!isCurrentLifecycle(generation)) return
+            stopCoreOnly()
+            val began = synchronized(lifecycleLock) {
+                if (generation != lifecycleGeneration.get()) {
+                    false
+                } else {
+                    activeProfileId = profileId
+                    activeNote = note
+                    activeLocalHttpProxyPort = localHttpProxyPort
+                    updateStatus(
+                        EngineState.CONNECTING,
+                        "Establishing Android VPN interface for Xray profile $profileName.",
+                        note
+                    )
+                    true
+                }
+            }
+            if (!began) return
+            startForegroundNotificationIfCurrent(generation, "Establishing Android VPN interface for Xray…")
+
+            val establishedTun = establishTunOrThrow(profileName, dnsServers, bypassPackages)
+            localTun = establishedTun
+            if (!updateStatusIfCurrent(
+                    generation,
+                    EngineState.CONNECTING,
+                    "Android VPN interface is established; starting Xray core for $profileName.",
+                    note
+                )
+            ) return
+            startForegroundNotificationIfCurrent(generation, "VPN interface established; starting Xray core…")
             setCurrentUnderlyingNetwork()
             Seq.setContext(applicationContext)
             Libv2ray.initCoreEnv(filesDir.absolutePath, xudpBaseKey())
-            val controller = Libv2ray.newCoreController(this)
-            coreController = controller
-            controller.startLoop(configJson, tun.fd)
-            running.set(true)
-            registerNetworkCallback()
-            startForegroundHeartbeat()
-            startStatsPolling(controller)
-            updateStatus(
-                EngineState.VERIFYING,
-                "Xray core started for $profileName; verifying outbound delay through the proxy.",
-                note
-            )
-            startForegroundNotification("Xray core is running; verifying proxy egress…")
-            startVerification(controller, note, localHttpProxyPort)
+
+            val newController = Libv2ray.newCoreController(callbackHandlerFor(generation))
+            localController = newController
+            newController.startLoop(configJson, establishedTun.fd)
+
+            val committed = synchronized(lifecycleLock) {
+                if (generation != lifecycleGeneration.get()) {
+                    false
+                } else {
+                    vpnInterface = establishedTun
+                    coreController = newController
+                    runningGeneration = generation
+                    running.set(true)
+                    true
+                }
+            }
+            if (!committed) return
+
+            synchronized(lifecycleLock) {
+                if (generation != lifecycleGeneration.get()) return
+                registerNetworkCallback()
+                startForegroundHeartbeat(generation)
+                startStatsPolling(newController, generation)
+                updateStatus(
+                    EngineState.VERIFYING,
+                    "Xray core started for $profileName; verifying proxy egress.",
+                    note
+                )
+                startForegroundNotificationIfCurrent(generation, "Xray core is running; verifying proxy egress…")
+                startVerification(newController, note, localHttpProxyPort, generation)
+            }
         } catch (e: Exception) {
-            stopCoreOnly()
             val errorText = e.message ?: e.javaClass.simpleName
-            updateStatus(
-                EngineState.FAILED,
-                "Xray startup failed: $errorText",
-                buildString {
-                    append(note)
-                    append("\nError class: ${e.javaClass.name}")
-                    e.cause?.let { append("\nCause: ${it.message ?: it.javaClass.simpleName}") }
-                },
-                verified = false
-            )
-            startForegroundNotification("Xray failed: $errorText")
-            stopSelf()
+            val failed = if (isCurrentLifecycle(generation)) {
+                stopCoreOnly()
+                synchronized(lifecycleLock) {
+                    if (generation != lifecycleGeneration.get()) {
+                        false
+                    } else {
+                        updateStatus(
+                            EngineState.FAILED,
+                            "Xray startup failed: $errorText",
+                            buildString {
+                                append(note)
+                                append("\nError class: ${e.javaClass.name}")
+                                e.cause?.let { append("\nCause: ${it.message ?: it.javaClass.simpleName}") }
+                            },
+                            verified = false
+                        )
+                        startForegroundNotificationIfCurrent(generation, "Xray failed: $errorText")
+                        true
+                    }
+                }
+            } else {
+                false
+            }
+            if (failed) stopSelfResult(startId)
+        } finally {
+            if (localController != null && coreController !== localController) {
+                runCatching { localController?.stopLoop() }
+            }
+            if (localTun != null && vpnInterface !== localTun) {
+                runCatching { localTun?.close() }
+            }
         }
     }
 
@@ -250,7 +374,10 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             .setMtu(1500)
             .setBlocking(false)
             .addAddress("172.19.0.1", 30)
+            .addAddress(XRAY_IPV6_TUN_ADDRESS, 128)
             .addRoute("0.0.0.0", 0)
+            // Capture IPv6 so an Xray core that cannot proxy it fails closed instead of bypassing the VPN.
+            .addRoute("::", 0)
 
         dnsServers.filter { it.isNotBlank() }.distinct().forEach { dns ->
             builder.addDnsServer(dns)
@@ -273,91 +400,124 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             }
 
         return try {
-            vpnInterface?.close()
             val established = builder.establish()
                 ?: throw IllegalStateException("Android Builder.establish() returned null.")
-            vpnInterface = established
             established
         } catch (e: Exception) {
             throw IllegalStateException("Android VPN interface failed: ${e.message ?: e.javaClass.simpleName}", e)
         }
     }
 
-    private fun startVerification(controller: CoreController, note: String, localHttpProxyPort: Int) {
-        verifierThread?.interrupt()
-        verifierThread = Thread({
-            try {
-                Thread.sleep(VERIFY_START_DELAY_MS)
-                val attempts = mutableListOf<String>()
-                var verifiedDelayMs: Long? = null
-                var verifiedUrl: String? = null
+    private fun startVerification(
+        controller: CoreController,
+        note: String,
+        localHttpProxyPort: Int,
+        generation: Int
+    ) {
+        val thread = synchronized(lifecycleLock) {
+            if (generation != lifecycleGeneration.get() || runningGeneration != generation) return
+            val verificationRunId = verificationGeneration.incrementAndGet()
+            verifierThread?.interrupt()
+            Thread({
+                try {
+                    Thread.sleep(VERIFY_START_DELAY_MS)
+                    if (!isCurrentVerification(generation, verificationRunId)) return@Thread
+                    val attempts = mutableListOf<String>()
+                    var verifiedDelayMs: Long? = null
+                    var verifiedUrl: String? = null
 
-                for (url in VERIFY_URLS) {
-                    if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
-                    val result = measureDelayWithTimeout(controller, url, VERIFY_URL_TIMEOUT_MS)
-                    if (result.delayMs != null && result.delayMs >= 0L) {
-                        verifiedDelayMs = result.delayMs
-                        verifiedUrl = url
-                        attempts += "${url.hostLabel()}: OK ${result.delayMs}ms"
-                        break
+                    for (url in VERIFY_URLS) {
+                        if (!running.get() || !isCurrentVerification(generation, verificationRunId) || Thread.currentThread().isInterrupted) return@Thread
+                        val result = measureDelayWithTimeout(controller, url, VERIFY_URL_TIMEOUT_MS)
+                        if (result.delayMs != null && result.delayMs >= 0L) {
+                            verifiedDelayMs = result.delayMs
+                            verifiedUrl = url
+                            attempts += "${url.hostLabel()}: OK ${result.delayMs}ms"
+                            break
+                        } else {
+                            attempts += "${url.hostLabel()}: ${result.error ?: "returned no delay"}"
+                            if (result.error?.startsWith("timed out") == true) break
+                        }
+                    }
+
+                    if (!running.get() || !isCurrentVerification(generation, verificationRunId) || Thread.currentThread().isInterrupted) return@Thread
+                    val postConnectCheck = runPostConnectChecks(localHttpProxyPort)
+                    if (!running.get() || !isCurrentVerification(generation, verificationRunId) || Thread.currentThread().isInterrupted) return@Thread
+                    val stats = runCatching { controller.queryAllOutboundTrafficStats() }.getOrNull()
+                    val traffic = XrayTrafficStatsParser.parse(stats)
+                    val egressIp = postConnectCheck.egressIp
+                    if (egressIp != null) {
+                        val proofText = buildList {
+                            verifiedDelayMs?.let { add("HTTP delay ${it}ms") }
+                            add("public IP $egressIp")
+                            if (postConnectCheck.dnsRouteOk) add("DoH reachable via Xray proxy")
+                        }.joinToString("; ")
+                        val updated = updateStatusIfCurrent(
+                            generation,
+                            EngineState.VERIFIED,
+                            "Xray proxy egress verified: $proofText. Android app-to-TUN traffic was not independently tested.",
+                            verificationDetail(note, attempts, stats, verifiedUrl, postConnectCheck),
+                            verified = true,
+                            rxBytes = traffic.rxBytes,
+                            txBytes = traffic.txBytes,
+                            egressIp = egressIp,
+                            latencyMs = verifiedDelayMs,
+                            verificationRunId = verificationRunId
+                        )
+                        if (updated) {
+                            startForegroundNotificationIfCurrent(
+                                generation,
+                                "Xray proxy egress verified: IP $egressIp${verifiedDelayMs?.let { delay -> " • ${delay}ms" }.orEmpty()}. TUN app traffic was not independently tested.",
+                                verificationRunId
+                            )
+                        }
                     } else {
-                        attempts += "${url.hostLabel()}: ${result.error ?: "returned no delay"}"
-                        if (result.error?.startsWith("timed out") == true) break
+                        val message = if (verifiedDelayMs != null) {
+                            "Xray proxy delay responded, but public egress IP was not verified; Android app-to-TUN traffic remains unverified."
+                        } else {
+                            "Xray core is running, but proxy egress checks failed; Android app-to-TUN traffic remains unverified."
+                        }
+                        val updated = updateStatusIfCurrent(
+                            generation,
+                            EngineState.RUNNING,
+                            message,
+                            verificationDetail(note, attempts, stats, null, postConnectCheck),
+                            verified = false,
+                            rxBytes = traffic.rxBytes,
+                            txBytes = traffic.txBytes,
+                            latencyMs = verifiedDelayMs,
+                            egressIp = egressIp,
+                            verificationRunId = verificationRunId
+                        )
+                        if (updated) {
+                            startForegroundNotificationIfCurrent(generation, "Xray running; egress is not verified yet.", verificationRunId)
+                        }
+                    }
+                } catch (_: InterruptedException) {
+                    // Expected when stopping or replacing this Xray session.
+                } catch (e: Exception) {
+                    val updated = updateStatusIfCurrent(
+                        generation,
+                        EngineState.RUNNING,
+                        "Xray core is running, but verification failed: ${e.message ?: e.javaClass.simpleName}",
+                        verificationDetail(note, listOf("${e.javaClass.simpleName}: ${e.message.orEmpty()}"), null, null, null),
+                        verified = false,
+                        verificationRunId = verificationRunId
+                    )
+                    if (updated) {
+                        startForegroundNotificationIfCurrent(generation, "Xray running; verification failed.", verificationRunId)
+                    }
+                } finally {
+                    synchronized(lifecycleLock) {
+                        if (verificationGeneration.get() == verificationRunId && verifierThread === Thread.currentThread()) {
+                            verifierThread = null
+                        }
                     }
                 }
-
-                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
-                val postConnectCheck = runPostConnectChecks(localHttpProxyPort)
-                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
-                val stats = runCatching { controller.queryAllOutboundTrafficStats() }.getOrNull()
-                val traffic = XrayTrafficStatsParser.parse(stats)
-                val egressIp = postConnectCheck.egressIp
-                val isVerified = verifiedDelayMs != null || egressIp != null
-                if (isVerified) {
-                    val proofText = buildList {
-                        verifiedDelayMs?.let { add("HTTP delay ${it}ms") }
-                        egressIp?.let { add("public IP $it") }
-                        if (postConnectCheck.dnsRouteOk) add("DNS route checked")
-                    }.joinToString("; ").ifBlank { "proxy egress check passed" }
-                    updateStatus(
-                        EngineState.VERIFIED,
-                        "Xray verified: $proofText.",
-                        verificationDetail(note, attempts, stats, verifiedUrl, postConnectCheck),
-                        verified = true,
-                        rxBytes = traffic.rxBytes,
-                        txBytes = traffic.txBytes,
-                        egressIp = egressIp,
-                        latencyMs = verifiedDelayMs
-                    )
-                    startForegroundNotification(
-                        egressIp?.let { "Xray verified: IP $it${verifiedDelayMs?.let { delay -> " • ${delay}ms" }.orEmpty()}" }
-                            ?: "Xray verified through proxy: ${verifiedDelayMs}ms"
-                    )
-                } else {
-                    updateStatus(
-                        EngineState.RUNNING,
-                        "Xray core is running and the Android VPN is established, but proxy egress verification failed for the test URLs.",
-                        verificationDetail(note, attempts, stats, null, postConnectCheck),
-                        verified = false,
-                        rxBytes = traffic.rxBytes,
-                        txBytes = traffic.txBytes
-                    )
-                    startForegroundNotification("Xray running; egress is not verified yet.")
-                }
-            } catch (e: InterruptedException) {
-                // Stopped.
-            } catch (e: Exception) {
-                updateStatus(
-                    EngineState.RUNNING,
-                    "Xray core is running, but verification failed: ${e.message ?: e.javaClass.simpleName}",
-                    verificationDetail(note, listOf("${e.javaClass.simpleName}: ${e.message.orEmpty()}"), null, null, null),
-                    verified = false
-                )
-                startForegroundNotification("Xray running; verification failed.")
-            }
-        }, "xray-verifier")
-        verifierThread?.isDaemon = true
-        verifierThread?.start()
+            }, "xray-verifier-$generation-$verificationRunId").also { verifierThread = it }
+        }
+        thread.isDaemon = true
+        thread.start()
     }
 
     private fun measureDelayWithTimeout(controller: CoreController, url: String, timeoutMs: Long): DelayProbeResult {
@@ -419,23 +579,51 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     private fun fetchViaProxy(url: String, proxy: Proxy, accept: String): String {
-        val connection = (URL(url).openConnection(proxy) as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
-            readTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", accept)
-            setRequestProperty("User-Agent", "VPNProject-Android/0.1")
+        var currentUrl = URL(url)
+        if (!currentUrl.protocol.equals("https", ignoreCase = true)) {
+            throw IllegalArgumentException("Xray verification only permits HTTPS URLs.")
         }
-        return try {
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText().take(MAX_POST_CHECK_RESPONSE_CHARS) }.orEmpty()
-            if (code !in 200..299) error("HTTP $code")
-            body
-        } finally {
-            connection.disconnect()
+
+        for (redirectCount in 0..MAX_POST_CHECK_REDIRECTS) {
+            val connection = (currentUrl.openConnection(proxy) as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
+                readTimeout = POST_CONNECT_CHECK_TIMEOUT_MS
+                instanceFollowRedirects = false
+                setRequestProperty("Accept", accept)
+                setRequestProperty("User-Agent", "VPNProject-Android/0.1")
+            }
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    if (redirectCount == MAX_POST_CHECK_REDIRECTS) error("Too many HTTPS redirects.")
+                    val location = connection.getHeaderField("Location")
+                        ?: error("HTTPS verification endpoint redirected without a Location.")
+                    val nextUrl = URL(currentUrl, location)
+                    if (!nextUrl.protocol.equals("https", ignoreCase = true)) {
+                        error("Xray verification blocked a redirect to cleartext HTTP.")
+                    }
+                    currentUrl = nextUrl
+                    continue
+                }
+                if (code !in 200..299) error("HTTP $code")
+                return connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val output = StringBuilder()
+                    val buffer = CharArray(512)
+                    while (output.length < MAX_POST_CHECK_RESPONSE_CHARS) {
+                        val remaining = MAX_POST_CHECK_RESPONSE_CHARS - output.length
+                        val read = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                        if (read < 0) break
+                        if (read == 0) continue
+                        output.append(buffer, 0, read)
+                    }
+                    output.toString()
+                }
+            } finally {
+                connection.disconnect()
+            }
         }
+        error("Could not complete Xray verification after HTTPS redirects.")
     }
 
     private fun extractPublicIpv4(body: String): String? {
@@ -452,6 +640,8 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     private fun scheduleNetworkReverification(reason: String) {
+        val generation = lifecycleGeneration.get()
+        if (!running.get() || runningGeneration != generation || !isCurrentLifecycle(generation)) return
         val controller = coreController ?: return
         val now = System.currentTimeMillis()
         val decision = rebindPolicy.evaluate(
@@ -468,11 +658,12 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         reverifyThread = Thread({
             try {
                 if (decision.delayMs > 0L) Thread.sleep(decision.delayMs)
-                if (!running.get() || Thread.currentThread().isInterrupted) return@Thread
+                if (!running.get() || !isCurrentLifecycle(generation) || Thread.currentThread().isInterrupted) return@Thread
                 val activeController = coreController ?: controller
                 val current = lastStatus
                 setCurrentUnderlyingNetwork()
-                updateStatus(
+                val updated = updateStatusIfCurrent(
+                    generation,
                     EngineState.RECONNECTING,
                     "Network changed; re-checking Xray route.",
                     appendDetailLine(activeNote, "Network change: ${decision.reason}"),
@@ -482,17 +673,20 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                     egressIp = current.egressIp,
                     latencyMs = current.latencyMs
                 )
-                startForegroundNotification("Network changed. Re-checking Xray route…")
+                if (!updated || !isCurrentLifecycle(generation)) return@Thread
+                startForegroundNotificationIfCurrent(generation, "Network changed. Re-checking Xray route…")
                 startVerification(
                     activeController,
                     appendDetailLine(activeNote, "Network re-check: ${decision.reason}").orEmpty(),
-                    activeLocalHttpProxyPort
+                    activeLocalHttpProxyPort,
+                    generation
                 )
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             } catch (e: Exception) {
                 val current = lastStatus
-                updateStatus(
+                updateStatusIfCurrent(
+                    generation,
                     EngineState.RUNNING,
                     "Xray is running, but network re-check could not start: ${e.message ?: e.javaClass.simpleName}",
                     current.detail,
@@ -503,9 +697,9 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                     latencyMs = current.latencyMs
                 )
             } finally {
-                reverifyRunning.set(false)
+                if (generation == lifecycleGeneration.get()) reverifyRunning.set(false)
             }
-        }, "xray-network-reverify")
+        }, "xray-network-reverify-$generation")
         reverifyThread?.isDaemon = true
         reverifyThread?.start()
     }
@@ -555,17 +749,17 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         return transports.joinToString("+") + "/" + validated
     }
 
-    private fun startForegroundHeartbeat() {
+    private fun startForegroundHeartbeat(generation: Int) {
         heartbeatThread?.interrupt()
         heartbeatThread = Thread({
-            while (running.get() && !Thread.currentThread().isInterrupted) {
+            while (running.get() && isCurrentLifecycle(generation) && !Thread.currentThread().isInterrupted) {
                 try {
                     Thread.sleep(FOREGROUND_HEARTBEAT_MS)
-                    if (!running.get() || Thread.currentThread().isInterrupted) break
+                    if (!running.get() || !isCurrentLifecycle(generation) || Thread.currentThread().isInterrupted) break
                     val current = lastStatus
                     val message = when (current.state) {
                         EngineState.VERIFIED -> buildString {
-                            append("Xray VPN protected")
+                            append("Xray proxy egress verified; app-to-TUN path not independently tested")
                             current.egressIp?.let { append(" • IP ").append(it) }
                             current.latencyMs?.let { append(" • ").append(it).append("ms") }
                         }
@@ -575,7 +769,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                         EngineState.RUNNING -> "Xray VPN is running; egress is not verified yet."
                         else -> "Xray VPN service is active."
                     }
-                    startForegroundNotification(message)
+                    startForegroundNotificationIfCurrent(generation, message)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                 } catch (_: Exception) {
@@ -587,13 +781,13 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         heartbeatThread?.start()
     }
 
-    private fun startStatsPolling(controller: CoreController) {
+    private fun startStatsPolling(controller: CoreController, generation: Int) {
         statsThread?.interrupt()
         statsThread = Thread({
-            while (running.get() && !Thread.currentThread().isInterrupted) {
+            while (running.get() && isCurrentLifecycle(generation) && !Thread.currentThread().isInterrupted) {
                 try {
                     val stats = controller.queryAllOutboundTrafficStats()
-                    updateTrafficStats(stats)
+                    updateTrafficStats(stats, generation)
                     Thread.sleep(STATS_REFRESH_MS)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
@@ -607,16 +801,19 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         statsThread?.start()
     }
 
-    private fun updateTrafficStats(stats: String?) {
+    private fun updateTrafficStats(stats: String?, generation: Int) {
         val traffic = XrayTrafficStatsParser.parse(stats)
         if (traffic.rxBytes == null && traffic.txBytes == null) return
-        val current = lastStatus
-        if (current.kind != EngineKind.XRAY_CORE) return
-        lastStatus = current.copy(
-            rxBytes = traffic.rxBytes ?: current.rxBytes,
-            txBytes = traffic.txBytes ?: current.txBytes,
-            detail = if (stats.isNullOrBlank()) current.detail else replaceStatsLine(current.detail, stats.shortForStatus(180))
-        )
+        synchronized(lifecycleLock) {
+            if (generation != lifecycleGeneration.get() || !running.get()) return
+            val current = lastStatus
+            if (current.kind != EngineKind.XRAY_CORE) return
+            lastStatus = current.copy(
+                rxBytes = traffic.rxBytes ?: current.rxBytes,
+                txBytes = traffic.txBytes ?: current.txBytes,
+                detail = if (stats.isNullOrBlank()) current.detail else replaceStatsLine(current.detail, stats.shortForStatus(180))
+            )
+        }
     }
 
     private fun replaceStatsLine(current: String?, stats: String): String {
@@ -674,10 +871,44 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     private fun stopXray(message: String) {
-        updateStatus(EngineState.STOPPING, message)
+        val pendingStart = synchronized(lifecycleLock) {
+            lifecycleGeneration.incrementAndGet()
+            val thread = startThread
+            thread?.interrupt()
+            startThread = null
+            updateStatus(EngineState.STOPPING, message)
+            thread
+        }
+        joinUninterruptibly(pendingStart)
         stopCoreOnly()
-        updateStatus(EngineState.STOPPED, message)
+        synchronized(lifecycleLock) {
+            updateStatus(EngineState.STOPPED, message)
+        }
         stopForegroundCompat()
+    }
+
+    private fun invalidatePendingStart() {
+        val pendingStart = synchronized(lifecycleLock) {
+            lifecycleGeneration.incrementAndGet()
+            val thread = startThread
+            thread?.interrupt()
+            startThread = null
+            thread
+        }
+        joinUninterruptibly(pendingStart)
+    }
+
+    private fun joinUninterruptibly(thread: Thread?) {
+        if (thread == null || thread === Thread.currentThread()) return
+        var interrupted = false
+        while (thread.isAlive) {
+            try {
+                thread.join()
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private fun stopForegroundCompat() {
@@ -690,24 +921,31 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     }
 
     private fun stopCoreOnly() {
-        running.set(false)
-        reverifyRunning.set(false)
+        val resources = synchronized(lifecycleLock) {
+            running.set(false)
+            runningGeneration = null
+            verificationGeneration.incrementAndGet()
+            reverifyRunning.set(false)
+            verifierThread?.interrupt()
+            verifierThread = null
+            reverifyThread?.interrupt()
+            reverifyThread = null
+            statsThread?.interrupt()
+            statsThread = null
+            heartbeatThread?.interrupt()
+            heartbeatThread = null
+            activeNote = ""
+            activeLocalHttpProxyPort = 0
+            lastRebindRequestedAtEpochMs = 0L
+            val controller = coreController
+            val tun = vpnInterface
+            coreController = null
+            vpnInterface = null
+            controller to tun
+        }
         unregisterNetworkCallback()
-        verifierThread?.interrupt()
-        verifierThread = null
-        reverifyThread?.interrupt()
-        reverifyThread = null
-        statsThread?.interrupt()
-        statsThread = null
-        heartbeatThread?.interrupt()
-        heartbeatThread = null
-        activeNote = ""
-        activeLocalHttpProxyPort = 0
-        lastRebindRequestedAtEpochMs = 0L
-        runCatching { coreController?.stopLoop() }
-        coreController = null
-        runCatching { vpnInterface?.close() }
-        vpnInterface = null
+        runCatching { resources.first?.stopLoop() }
+        runCatching { resources.second?.close() }
     }
 
     private fun xudpBaseKey(): String {
@@ -726,7 +964,12 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         rxBytes: Long? = null,
         txBytes: Long? = null,
         latencyMs: Long? = null,
-        egressIp: String? = null
+        egressIp: String? = null,
+        verificationScope: VerificationScope = if (verified) {
+            VerificationScope.XRAY_PROXY_EGRESS
+        } else {
+            VerificationScope.NONE
+        }
     ) {
         lastStatus = EngineStatus(
             kind = EngineKind.XRAY_CORE,
@@ -737,8 +980,62 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             txBytes = txBytes,
             latencyMs = latencyMs,
             egressIp = egressIp,
-            verified = verified
+            verified = verified,
+            verificationScope = verificationScope,
+            profileId = activeProfileId
         )
+    }
+
+    private fun isCurrentLifecycle(generation: Int): Boolean =
+        lifecycleGeneration.get() == generation
+
+    private fun isCurrentVerification(generation: Int, verificationRunId: Int): Boolean =
+        isCurrentLifecycle(generation) && verificationGeneration.get() == verificationRunId
+
+    private fun updateStatusIfCurrent(
+        generation: Int,
+        state: EngineState,
+        message: String,
+        detail: String? = null,
+        verified: Boolean = false,
+        rxBytes: Long? = null,
+        txBytes: Long? = null,
+        latencyMs: Long? = null,
+        egressIp: String? = null,
+        verificationRunId: Int? = null
+    ): Boolean = synchronized(lifecycleLock) {
+        if (generation != lifecycleGeneration.get() ||
+            (verificationRunId != null && verificationGeneration.get() != verificationRunId)
+        ) {
+            false
+        } else {
+            updateStatus(
+                state = state,
+                message = message,
+                detail = detail,
+                verified = verified,
+                rxBytes = rxBytes,
+                txBytes = txBytes,
+                latencyMs = latencyMs,
+                egressIp = egressIp
+            )
+            true
+        }
+    }
+
+    private fun startForegroundNotificationIfCurrent(
+        generation: Int,
+        contentText: String,
+        verificationRunId: Int? = null
+    ): Boolean = synchronized(lifecycleLock) {
+        if (generation != lifecycleGeneration.get() ||
+            (verificationRunId != null && verificationGeneration.get() != verificationRunId)
+        ) {
+            false
+        } else {
+            startForegroundNotification(contentText)
+            true
+        }
     }
 
     private fun startForegroundNotification(contentText: String) {
@@ -807,6 +1104,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         const val EXTRA_CONFIG_JSON = "com.vpnproject.app.vpn.xray.extra.CONFIG_JSON"
         const val EXTRA_PROFILE_NAME = "com.vpnproject.app.vpn.xray.extra.PROFILE_NAME"
         const val EXTRA_NOTE = "com.vpnproject.app.vpn.xray.extra.NOTE"
+        const val EXTRA_PROFILE_ID = "com.vpnproject.app.vpn.xray.extra.PROFILE_ID"
         const val EXTRA_DNS_SERVERS = "com.vpnproject.app.vpn.xray.extra.DNS_SERVERS"
         const val EXTRA_BYPASS_PACKAGES = "com.vpnproject.app.vpn.xray.extra.BYPASS_PACKAGES"
         const val EXTRA_LOCAL_HTTP_PROXY_PORT = "com.vpnproject.app.vpn.xray.extra.LOCAL_HTTP_PROXY_PORT"
@@ -823,9 +1121,11 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         private const val CHANNEL_ID = "xray_engine_status"
         private const val NOTIFICATION_ID = 61
         private const val STOP_REQUEST_CODE = 62
+        private const val XRAY_IPV6_TUN_ADDRESS = "fd00:1111:2222:3333::1"
         private const val VERIFY_START_DELAY_MS = 3_000L
         private const val VERIFY_URL_TIMEOUT_MS = 15_000L
         private const val POST_CONNECT_CHECK_TIMEOUT_MS = 5_000
+        private const val MAX_POST_CHECK_REDIRECTS = 3
         private const val MAX_POST_CHECK_RESPONSE_CHARS = 4_096
         private const val STATS_REFRESH_MS = 2_000L
         private const val FOREGROUND_HEARTBEAT_MS = 60_000L

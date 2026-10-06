@@ -12,6 +12,7 @@ class VpnTunnelPolicyTest {
         assertEquals(TunAddress("10.111.0.2", 32), policy.tunAddress)
         assertEquals(listOf(TunRoute("0.0.0.0", 0)), policy.routes)
         assertEquals(listOf("1.1.1.1", "9.9.9.9"), policy.dnsServers)
+        assertTrue("IPv6 must be captured by default.", policy.blockIpv6OutsideTunnel)
         assertTrue(policy.validate().isEmpty())
     }
 

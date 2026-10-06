@@ -56,6 +56,9 @@ object ClashConfigParser {
             parsed.filter { it.missingRealityPublicKey }.take(3).forEach { proxy ->
                 add("Clash REALITY proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} is missing public-key/pbk; ask the provider for the full REALITY link before Connect.")
             }
+            parsed.filter { it.unsupportedShadowsocksPlugin }.take(3).forEach { proxy ->
+                add("Clash Shadowsocks proxy ${V2RayLinkInspector.safeDisplayName(proxy.name) ?: proxy.endpoint.host} uses a plugin that this Xray mapper does not support; it is saved for diagnostics but will not be started with the plugin silently removed.")
+            }
         }
 
         return ImportedConfig(
@@ -180,6 +183,8 @@ object ClashConfigParser {
         val credential = firstNonBlank(block.field("uuid"), block.field("password"))
         val missingCredential = credential.isNullOrBlank()
         val missingRealityPublicKey = security == "reality" && publicKey.isNullOrBlank()
+        val unsupportedShadowsocksPlugin = rawType in setOf("ss", "shadowsocks") &&
+            (block.hasKey("plugin") || block.hasKey("plugin-opts") || block.hasKey("plugin_opts"))
         val transportMode = when (network) {
             "grpc" -> firstNonBlank(
                 block.field("grpc-mode"),
@@ -200,7 +205,7 @@ object ClashConfigParser {
             )
             else -> null
         }
-        val runtimeLink = buildRuntimeLink(
+        val runtimeLink = if (unsupportedShadowsocksPlugin) null else buildRuntimeLink(
             type = rawType,
             server = server,
             port = port,
@@ -234,6 +239,7 @@ object ClashConfigParser {
             unsupportedTransport = network !in runtimeSupportedTransports,
             missingCredential = missingCredential,
             missingRealityPublicKey = missingRealityPublicKey,
+            unsupportedShadowsocksPlugin = unsupportedShadowsocksPlugin,
             runtimeLink = runtimeLink,
             endpoint = EndpointCandidate(
                 host = server,
@@ -278,6 +284,13 @@ object ClashConfigParser {
         }
         if (missingCredentialCount > 0) {
             add("${missingCredentialCount.formatCount("supported Clash proxy is", "supported Clash proxies are")} missing uuid/password; secrets are not shown, but Connect needs a complete user-provided proxy.")
+        }
+        val pluginShadowsocksCount = supportedBlocks.count { block ->
+            block.field("type")?.lowercase() in setOf("ss", "shadowsocks") &&
+                (block.hasKey("plugin") || block.hasKey("plugin-opts") || block.hasKey("plugin_opts"))
+        }
+        if (pluginShadowsocksCount > 0) {
+            add("${pluginShadowsocksCount.formatCount("Clash Shadowsocks proxy uses", "Clash Shadowsocks proxies use")} SIP003 plugin options that are not mapped by embedded Xray; Connect will not silently strip them.")
         }
         val unsupportedTransports = supportedBlocks.map { block ->
             normalizeNetwork(block.field("network") ?: block.field("transport") ?: block.field("net") ?: block.inferredTransport())
@@ -675,6 +688,7 @@ object ClashConfigParser {
         val unsupportedTransport: Boolean,
         val missingCredential: Boolean,
         val missingRealityPublicKey: Boolean,
+        val unsupportedShadowsocksPlugin: Boolean,
         val runtimeLink: String?,
         val endpoint: EndpointCandidate
     )

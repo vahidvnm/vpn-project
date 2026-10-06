@@ -16,9 +16,10 @@ class VpnHubStatusMapperTest {
             xray = EngineStatus(
                 kind = EngineKind.XRAY_CORE,
                 state = EngineState.VERIFIED,
-                message = "Xray verified in 126ms.",
+                message = "Xray proxy egress verified.",
                 latencyMs = 126L,
-                verified = true
+                verified = true,
+                verificationScope = VerificationScope.XRAY_PROXY_EGRESS
             )
         )
 
@@ -27,6 +28,7 @@ class VpnHubStatusMapperTest {
         assertTrue(hub.verified)
         assertEquals(126L, hub.latencyMs)
         assertTrue(hub.detail.contains("Embedded Xray"))
+        assertTrue(hub.detail.contains("Android app-to-TUN traffic path was not independently tested"))
     }
 
     @Test
@@ -66,6 +68,30 @@ class VpnHubStatusMapperTest {
         assertEquals(VpnHubConnectionState.CONNECTING, hub.state)
         assertEquals("Connecting", hub.title)
         assertEquals(EngineKind.XRAY_CORE, hub.activeEngine)
+    }
+
+    @Test
+    fun ignoresStatusesBelongingToADifferentProfile() {
+        val hub = VpnHubStatusMapper.from(
+            wireGuard = EngineStatus(
+                kind = EngineKind.WIREGUARD_GO,
+                state = EngineState.VERIFIED,
+                message = "Old profile connected.",
+                verified = true,
+                profileId = "old-profile"
+            ),
+            xray = EngineStatus(
+                kind = EngineKind.XRAY_CORE,
+                state = EngineState.STOPPED,
+                message = "Stopped.",
+                profileId = "old-profile"
+            ),
+            activeProfileId = "selected-profile"
+        )
+
+        assertEquals(VpnHubConnectionState.IDLE, hub.state)
+        assertTrue(!hub.verified)
+        assertEquals(null, hub.activeEngine)
     }
 
     @Test
