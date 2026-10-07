@@ -38,6 +38,9 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
         )
         val urls = verifyUrls.filter { it.startsWith("https://", ignoreCase = true) }
             .ifEmpty { DEFAULT_VERIFY_URLS }
+        val fieldDiagnostic = runtime.safeFieldSummary.takeIf { it.isNotBlank() }
+            ?.let { " Parsed runtime fields: $it." }
+            .orEmpty()
         Seq.setContext(context.applicationContext)
         Libv2ray.initCoreEnv(context.filesDir.absolutePath, xudpBaseKey())
         val controller = Libv2ray.newCoreController(this)
@@ -60,13 +63,13 @@ class XrayRealDelayTester(private val context: Context) : CoreCallbackHandler {
             XrayRealDelayResult(
                 reachable = false,
                 latencyMs = null,
-                detail = "Real delay failed: ${attempts.joinToString("; ").ifBlank { "no successful probe" }}"
+                detail = "Real delay failed: ${attempts.joinToString("; ").ifBlank { "no successful probe" }}.$fieldDiagnostic"
             )
         } catch (error: Exception) {
             XrayRealDelayResult(
                 reachable = false,
                 latencyMs = null,
-                detail = "Real delay failed: ${error.message ?: error.javaClass.simpleName}"
+                detail = "Real delay failed: ${error.message ?: error.javaClass.simpleName}.$fieldDiagnostic"
             )
         } finally {
             runCatching { controller.stopLoop() }

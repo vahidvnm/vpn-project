@@ -8,6 +8,12 @@ This project embeds or downloads the following third-party components during And
 - Purpose: embedded WireGuard GoBackend for user-supplied WireGuard configs.
 - License: Apache-2.0, per the upstream WireGuard Android tunnel artifact metadata.
 
+## ZXing Android Embedded
+
+- Artifact: `com.journeyapps:zxing-android-embedded:4.3.0` (with ZXing Core as a transitive dependency).
+- Purpose: user-initiated live QR scanning and decoding/encoding QR payloads.
+- License: Apache-2.0 according to the upstream project metadata; confirm transitive dependency notices during release preparation.
+
 ## AndroidLibXrayLite / Xray core
 
 - Artifact: `libv2ray.aar`

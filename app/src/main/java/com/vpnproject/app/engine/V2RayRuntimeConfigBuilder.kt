@@ -22,6 +22,7 @@ object V2RayRuntimeConfigBuilder {
         localHttpProxyPort: Int? = null
     ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
+        val fieldSummary = runtimeFieldSummary(prepared.profile)
         return V2RayRuntimeConfig(
             configJson = buildXrayConfig(
                 profile = prepared.profile,
@@ -35,7 +36,8 @@ object V2RayRuntimeConfigBuilder {
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
             localHttpProxyPort = localHttpProxyPort?.takeIf { it in MIN_LOCAL_HTTP_PROXY_PORT..MAX_LOCAL_HTTP_PROXY_PORT },
-            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray."
+            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} via ${prepared.profile.network}/${prepared.profile.security.ifBlank { "none" }} for embedded Xray.$fieldSummary",
+            safeFieldSummary = fieldSummary.removePrefix(" Fields:").trim()
         )
     }
 
@@ -47,6 +49,7 @@ object V2RayRuntimeConfigBuilder {
         logLevel: String = DEFAULT_LOG_LEVEL
     ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
+        val fieldSummary = runtimeFieldSummary(prepared.profile)
         return V2RayRuntimeConfig(
             configJson = buildXrayConfig(
                 profile = prepared.profile,
@@ -59,7 +62,8 @@ object V2RayRuntimeConfigBuilder {
                 localHttpProxyPort = null
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
-            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN."
+            note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN.$fieldSummary",
+            safeFieldSummary = fieldSummary.removePrefix(" Fields:").trim()
         )
     }
 
@@ -208,6 +212,52 @@ object V2RayRuntimeConfigBuilder {
             name = fragment.urlDecodeOrSelf().takeIf { it.isNotBlank() }
         )
     }
+
+    private fun runtimeFieldSummary(profile: V2RayProfile): String {
+        val fields = mutableListOf<String>()
+        if (profile.network == "xhttp") {
+            val mode = diagnosticValue(profile.xhttpMode, XHTTP_DIAGNOSTIC_MODES, fallback = "omitted")
+            val hostSource = when {
+                !profile.hostHeader?.firstHostHeader().isNullOrBlank() -> "explicit"
+                !profile.authority.isNullOrBlank() -> "authority"
+                !profile.sni.isNullOrBlank() -> "sni-fallback"
+                else -> "unset"
+            }
+            val path = if (profile.path.isNullOrBlank()) "default(/)" else "set"
+            fields += "XHTTP mode=$mode, host=$hostSource, path=$path"
+        }
+
+        when (profile.security) {
+            "tls" -> fields += "TLS SNI=${diagnosticSniSource(profile)}, fingerprint=${diagnosticValue(profile.fingerprint, TLS_FINGERPRINTS, fallback = "omitted")}, ALPN=${diagnosticAlpn(profile.alpn)}"
+            "reality" -> fields += "REALITY SNI=${diagnosticSniSource(profile)}, fingerprint=${diagnosticValue(profile.fingerprint, TLS_FINGERPRINTS, fallback = "chrome")}, publicKey=${if (profile.publicKey.isNullOrBlank()) "missing" else "present"}, shortId=${if (profile.shortId.isNullOrBlank()) "missing" else "present"}"
+        }
+
+        return fields.takeIf { it.isNotEmpty() }
+            ?.joinToString(separator = "; ", prefix = " Fields: ")
+            .orEmpty()
+    }
+
+    private fun diagnosticSniSource(profile: V2RayProfile): String = when {
+        !profile.sni.isNullOrBlank() -> "explicit"
+        !profile.hostHeader?.firstHostHeader().isNullOrBlank() -> "host-fallback"
+        else -> "endpoint-fallback"
+    }
+
+    private fun diagnosticAlpn(value: String?): String {
+        val items = value?.split(',')?.map { it.trim().lowercase(java.util.Locale.US) }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        if (items.isEmpty()) return "omitted"
+        val known = items.take(MAX_DIAGNOSTIC_ALPN_ITEMS).map { item ->
+            if (item in SAFE_ALPN_VALUES) item else "custom"
+        }
+        return known.joinToString(",") + if (items.size > MAX_DIAGNOSTIC_ALPN_ITEMS) ",more" else ""
+    }
+
+    private fun diagnosticValue(value: String?, allowed: Set<String>, fallback: String): String =
+        value?.trim()?.lowercase(java.util.Locale.US)?.takeIf { it.isNotBlank() }
+            ?.let { candidate -> if (candidate in allowed) candidate else "custom" }
+            ?: fallback
 
     private fun validateRuntimeSupport(profile: V2RayProfile) {
         if (profile.network !in SUPPORTED_NETWORKS) {
@@ -636,6 +686,10 @@ object V2RayRuntimeConfigBuilder {
     private const val DEFAULT_LOG_LEVEL = "warning"
     private val SUPPORTED_NETWORKS = setOf("tcp", "ws", "grpc", "http", "httpupgrade", "xhttp")
     private val SUPPORTED_SECURITY = setOf("", "tls", "reality")
+    private val XHTTP_DIAGNOSTIC_MODES = setOf("auto", "packet-up", "stream-up", "stream-one")
+    private val TLS_FINGERPRINTS = setOf("chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized", "unsafe")
+    private val SAFE_ALPN_VALUES = setOf("h2", "http/1.1", "h3")
+    private const val MAX_DIAGNOSTIC_ALPN_ITEMS = 4
     private const val DEFAULT_MUX_CONCURRENCY = 8
     private const val MIN_MUX_CONCURRENCY = 1
     private const val MAX_MUX_CONCURRENCY = 32
@@ -648,7 +702,8 @@ data class V2RayRuntimeConfig(
     val configJson: String,
     val profileName: String,
     val note: String,
-    val localHttpProxyPort: Int? = null
+    val localHttpProxyPort: Int? = null,
+    val safeFieldSummary: String = ""
 )
 
 private data class PreparedProfile(

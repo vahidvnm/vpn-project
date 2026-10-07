@@ -571,6 +571,50 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun buildsVlessXhttpTlsSettingsFromShareLinkWithFastlyFields() {
+        val runtime = buildRuntime(
+            ConfigKind.V2RAY,
+            "vless://11111111-1111-1111-1111-111111111111@198.51.100.10:443" +
+                "?encryption=none&type=xhttp&security=tls" +
+                "&host=connecto-ssl.global.ssl.fastly.net&path=assets%2F&mode=auto" +
+                "&sni=global.ssl.fastly.net&fp=edge&alpn=h2%2Chttp%2F1.1#Fastly-XHTTP"
+        )
+        val json = runtime.configJson
+
+        assertContains(json, "\"network\": \"xhttp\"")
+        assertContains(json, "\"security\": \"tls\"")
+        assertContains(json, "\"xhttpSettings\"")
+        assertContains(json, "\"path\": \"/assets/\"")
+        assertContains(json, "\"host\": \"connecto-ssl.global.ssl.fastly.net\"")
+        assertContains(json, "\"mode\": \"auto\"")
+        assertContains(json, "\"tlsSettings\"")
+        assertContains(json, "\"serverName\": \"global.ssl.fastly.net\"")
+        assertContains(json, "\"fingerprint\": \"edge\"")
+        assertContains(json, "\"alpn\": [\"h2\",\"http/1.1\"]")
+        assertContains(json, "\"allowInsecure\": false")
+        assertFalse(json.contains("\"extra\""))
+        assertContains(runtime.safeFieldSummary, "XHTTP mode=auto, host=explicit, path=set")
+        assertContains(runtime.safeFieldSummary, "TLS SNI=explicit, fingerprint=edge, ALPN=h2,http/1.1")
+        assertContains(runtime.note, "Fields: XHTTP mode=auto")
+        assertFalse(runtime.safeFieldSummary.contains("connecto-ssl.global.ssl.fastly.net"))
+        assertFalse(runtime.safeFieldSummary.contains("assets/"))
+    }
+
+    @Test
+    fun blankXhttpTlsSniIsReportedAsHostFallbackWithoutLoggingHostValue() {
+        val runtime = buildRuntime(
+            ConfigKind.V2RAY,
+            "vless://11111111-1111-1111-1111-111111111111@198.51.100.10:443" +
+                "?encryption=none&type=xhttp&security=tls" +
+                "&host=front.example&path=assets%2F&mode=auto&fp=random&alpn=h2%2Chttp%2F1.1#Fastly-XHTTP"
+        )
+
+        assertContains(runtime.configJson, "\"serverName\": \"front.example\"")
+        assertContains(runtime.safeFieldSummary, "TLS SNI=host-fallback, fingerprint=random")
+        assertFalse(runtime.safeFieldSummary.contains("front.example"))
+    }
+
+    @Test
     fun supportedXrayTransportMatrixBuildsRuntimeJson() {
         val cases = listOf(
             "tcp-none" to ("vless://11111111-1111-1111-1111-111111111111@tcp.example:80?type=tcp&security=none#Tcp" to "\"network\": \"tcp\""),

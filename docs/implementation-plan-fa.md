@@ -16,13 +16,13 @@
 | OpenVPN | parser، آماده‌سازی/pinning و handoff به کلاینت خارجی وجود دارد. | engine داخلی، تصمیم مجوز/وابستگی و تست عملی handoff روی کانفیگ مجاز باقی است. |
 | TUN و Android | سرویس Xray/WireGuard واقعی و مسیر مجوز/سرویس foreground وجود دارد. `AutoVpnService` فقط TUN آزمایشی می‌سازد و packetها را drop می‌کند. | Always-on/lockdown فقط راهنمای Android است، نه kill switch اختصاصی اثبات‌شده؛ IPv6، DNS leak، bypass اپ‌ها و رفتار توقف سرویس باید روی گوشی آزموده شوند. |
 | Verify و UI | Xray proxy-egress، IP عمومی، بررسی DNS best-effort و traffic counters از core قابل نمایش‌اند. WireGuard معیار verifier جدا دارد. | `XRAY_PROXY_EGRESS` معادل تأیید app-to-TUN یا DNS-leak authoritative نیست. رفتار طولانی‌مدت و چنددستگاهی نهایی نشده است. |
-| پروفایل و تست | raw config/subscription URL با Android Keystore + AES-GCM ذخیره می‌شود؛ UI روشن/تیرهٔ سفید/مشکی با accent محدود، آیکون سیستم VPN و traffic حفظ می‌شوند. Queue testها محدود و کاربرآغازشده‌اند؛ Smart fallback خاموش و opt-in است. | redaction سراسری، سیاست export/backup، persistence واقعی per-network و پوشش کامل lifecycle هنوز نیازمند بازبینی‌اند. |
+| پروفایل و تست | raw config/subscription URL با Android Keystore + AES-GCM ذخیره می‌شود؛ UI روشن/تیرهٔ سفید/مشکی با accent محدود، آیکون سیستم VPN و traffic حفظ می‌شوند. Quick check و Real delay صف فقط با اقدام کاربر شروع می‌شوند و همهٔ پروفایل‌های ذخیره‌شده در محدودهٔ انتخاب‌شده را می‌پوشانند؛ هم‌زمانی Quick check محدود و Real delay ترتیبی است. | redaction سراسری، سیاست backup، persistence واقعی per-network، آزمون دستگاهی ورودی/اشتراک و پوشش کامل lifecycle هنوز نیازمند بازبینی‌اند. |
 | Build و انتشار | CI، unit tests و debug APK build موجودند؛ Xray AAR با نسخه و SHA-256 pin می‌شود؛ ABI فعلی `arm64-v8a` است. | نام و مجوز پروژه، اسناد معماری/امنیت/provider، Gradle wrapper، release signing، پشتیبانی ABI و بررسی نهایی مجوز Xray/LGPL مشخص/تکمیل نشده‌اند. |
 
 ## قواعد ثابت برای همهٔ مراحل
 
 1. فقط کانفیگ رسمی/مجاز provider یا کانفیگی که کاربر خودش paste/import کرده؛ هیچ pool عمومی، استخراج مخفی، generator کنارگذاشته‌شده یا ارسال credential به backend اضافه نشود.
-2. Quick/Real/Connect verification فقط با اقدام روشن کاربر آغاز شود. هیچ probe در startup، بازشدن صفحه، تغییر شبکه یا مرتب‌سازی/recommendation اجرا نشود. صف‌ها capped و قابل لغو بمانند.
+2. Quick/Real/Connect verification فقط با اقدام روشن کاربر آغاز شود. هیچ probe در startup، بازشدن صفحه، تغییر شبکه یا مرتب‌سازی/recommendation اجرا نشود. Quick check و Real delay همهٔ پروفایل‌های ذخیره‌شده در صف انتخاب‌شده را آزمایش کنند؛ سقف تعداد کانفیگ ممنوع است و فقط هم‌زمانی Quick check می‌تواند محدود باشد (Real delay ترتیبی است).
 3. Smart fallback فقط پس از لمس Connect و با فعال‌سازی قبلی کاربر مجاز است؛ حداکثر candidate محدود، بدون queue-wide scan. Recommendation و sorting از دادهٔ ذخیره‌شده استفاده کنند و probe تازه نسازند.
 4. تا وقتی شواهد scope مربوط را نداریم، از عبارت «ترافیک کل گوشی تأیید شد» استفاده نکنیم. وضعیت proxy-egress، tunnel-running، app-to-TUN و DNS-leak هرکدام جدا باشند.
 5. UI فعلی، جریان import → start → verify، آیکون VPN و نمایش traffic حفظ شود؛ بازطراحی سفید/مشکی و accent محدود به خواست کاربر نیاز دارد.
@@ -127,12 +127,21 @@
 - [ ] تصمیم بگیریم metadata غیرمحرمانه مثل endpoint/host در SharedPreferences ساده بماند یا آن هم رمز شود؛ raw config و subscription URL همین حالا encrypted هستند.
 - [ ] audit همهٔ مسیرهای exception/native-core/notification/status/clipboard تا UUID، password، private key و subscription URL بیرون نرود؛ redaction tests مستقل اضافه شود.
 - [ ] تصمیم backup/restore روشن؛ در وضعیت فعلی backup خاموش است و profileها به دستگاه جدید منتقل نمی‌شوند.
-- [ ] export/import عمومی فقط با انتخاب کاربر، تأیید و هشدار secret؛ OpenVPN handoff فعلی فایل متن config می‌سازد و باید همین هشدار واضح را داشته باشد.
+- [x] export/import عمومی فقط با انتخاب کاربر و تأیید صریح: خروجی متن اصلی، فایل ذخیره‌شده، QR برای کانفیگ کوچک، بستهٔ متنی گروه، اشتراک Base64 سازگار V2Ray/Xray و پیوند provider در صورت وجود؛ هشدار شامل احتمال وجود credential است.
+- [ ] audit نهایی redaction و رفتار lifecycle فایل خروجی/اشتراک روی دستگاه؛ OpenVPN handoff فعلی فایل متن config می‌سازد و باید همین هشدار روشن را حفظ کند.
 - [ ] بررسی رفتار Keystore در reset/restore/خرابی کلید، حذف profile/subscription و حذف دادهٔ قدیمی.
 - [ ] تصمیم telemetry/crash reporting و privacy policy پیش از انتشار؛ در صورت نبود policy، telemetry خاموش بماند.
 - [ ] افزودن `SECURITY.md` و پاسخ مسئولانه به گزارش آسیب‌پذیری.
 
 ### مرحلهٔ 7 — UX، diagnostics و دسترس‌پذیری — اولویت P1/P2
+
+#### زیرمرحلهٔ ۷-الف — افزودن، آزمون صف و اشتراک‌گذاری امن
+
+- [x] افزودن کانفیگ از اسکن زندهٔ QR، تصویر QR، کلیپ‌بورد، فایل تکی/چندتایی و پیوند subscription؛ انتخاب چندفایلی تا ۲٬۰۰۰ فایل، ۲ مگابایت برای هر فایل و ۶۴ مگابایت برای کل batch؛ تشخیص payload مشترک بین ورودی QR و کلیپ‌بورد. انتخاب مستقیم پوشه پیاده نشده است.
+- [x] نگه‌داشتن پروفایل‌های دستی در زبانهٔ Imported در کنار All و گروه‌های subscription.
+- [x] شروع دستی Quick check و Real delay برای همهٔ پروفایل‌های ذخیره‌شده در محدودهٔ انتخاب‌شده، بدون سقف تعداد تست؛ هم‌زمانی Quick check محدود و Real delay ترتیبی است.
+- [x] اشتراک‌گذاری تکی و گروهی به‌صورت متن، فایل ذخیره‌شونده، QR برای کانفیگ تکی تا ۱٬۸۰۰ بایت، بستهٔ متنی، اشتراک Base64 سازگار V2Ray/Xray و پیوند اصلی provider در صورت وجود؛ هر خروجی حاوی credential پشت تأیید و هشدار صریح است.
+- [ ] آزمون روی گوشی برای مجوز/لغو دوربین، QRهای واقعی، انتخاب چند فایل و مسیرهای دریافت/اشتراک خروجی؛ build و آزمون‌های خودکار این تغییرات هنوز اجرا نشده‌اند.
 
 - [ ] متن اتصال، خطا و verification بر اساس scope جدا شود: «Xray proxy egress تأیید شد» در برابر «ترافیک اپ از TUN تأیید شد».
 - [ ] taxonomy خطا: مجوز Android، config ناقص، auth/credential، transport ناسازگار، endpoint/DNS، timeout، core crash و app-to-TUN/DNS leak؛ هیچ secret در پیام عادی نیاید.
@@ -140,7 +149,7 @@
 - [ ] تکمیل empty/error states، accessibility و polish نهایی Settings/Locations بدون بازطراحی خلاف تم فعلی.
 - [ ] profile lifecycle نهایی: انتخاب پایدار، تگ‌های اختیاری، favorite، rename/delete، import/export امن و مدیریت واضح پروفایل‌های خراب/قدیمی.
 - [ ] Advanced diagnostics فنی بماند؛ Quick check، Real delay و full VPN verification جدا نمایش داده شوند.
-- [ ] هر sort/recommendation از دادهٔ موجود استفاده کند؛ queue و subscription بزرگ فقط با اقدام دستی کاربر و batch cap آزمایش شوند.
+- [ ] هر sort/recommendation از دادهٔ موجود استفاده کند؛ صف بزرگ فقط با اقدام دستی کاربر آزمایش شود و هیچ سقف تعدادِ کانفیگ، موردی را از آزمون در صف انتخاب‌شده حذف نکند. سقف import/بارگذاری subscription و هم‌زمانی اجرا جدا و شفاف بماند.
 
 ### مرحلهٔ 8 — license، ساخت و آمادگی انتشار — release blocker
 

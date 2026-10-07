@@ -20,6 +20,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.text.TextUtils
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -41,6 +42,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -48,6 +50,9 @@ import com.vpnproject.app.core.ClashConfigParser
 import com.vpnproject.app.core.ConfigImporter
 import com.vpnproject.app.core.ConfigKind
 import com.vpnproject.app.core.ConfigParseException
+import com.vpnproject.app.core.ConfigShareEntry
+import com.vpnproject.app.core.ConfigShareFormatter
+import com.vpnproject.app.core.ConfigSharePayload
 import com.vpnproject.app.core.EndpointCandidate
 import com.vpnproject.app.core.EndpointDiscovery
 import com.vpnproject.app.core.EndpointHealthChecker
@@ -57,6 +62,7 @@ import com.vpnproject.app.core.IpClassifier
 import com.vpnproject.app.core.NetworkKey
 import com.vpnproject.app.core.NetworkType
 import com.vpnproject.app.core.ProbeKind
+import com.vpnproject.app.core.QrCodeImageDecoder
 import com.vpnproject.app.core.ResolvedEndpointCandidate
 import com.vpnproject.app.core.RouteHealthCache
 import com.vpnproject.app.core.V2RaySubscriptionParser
@@ -81,6 +87,7 @@ import com.vpnproject.app.engine.RuntimeConfigSelection
 import com.vpnproject.app.engine.V2RayRuntimeConfigBuilder
 import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.XrayRealDelayTester
+import com.vpnproject.app.engine.XrayRealDelayResult
 import com.vpnproject.app.engine.VpnHubStatusMapper
 import com.vpnproject.app.profile.FasterSwitchRecommendationPolicy
 import com.vpnproject.app.profile.SecureProfileStore
@@ -90,6 +97,11 @@ import com.vpnproject.app.profile.VpnProfileKind
 import com.vpnproject.app.profile.VpnProfileEndpoint
 import com.vpnproject.app.vpn.AndroidVpnEngineAdapterRegistry
 import com.vpnproject.app.vpn.AutoVpnService
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.journeyapps.barcodescanner.IntentIntegrator
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -170,6 +182,7 @@ class MainActivity : Activity() {
     private lateinit var autoTestToggleButton: TextView
     private lateinit var autoTestStatusText: TextView
     private var autoTestEnabled = false
+    @Volatile
     private var autoTestInFlight = false
     private lateinit var settingsSmartFallbackValueText: TextView
     private var smartFallbackEnabled = false
@@ -250,6 +263,8 @@ class MainActivity : Activity() {
     private val trackedConnectionProfileId: String?
         get() = engineOperationCoordinator.snapshot().requestedProfileId
     private var fileImportGeneration = 0
+    private var qrImageImportGeneration = 0
+    private var pendingTextExport: ConfigSharePayload? = null
     private var pendingOpenVpnConfigText: String? = null
     private var pendingOpenVpnConfigName: String = "vpn-project-pinned.ovpn"
     private val endpointDiscovery by lazy { EndpointDiscovery() }
@@ -339,7 +354,7 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Use top + to add configs. Tests and fallbacks stay capped and OFF until enabled."
+            text = "Use top + to add configs. Queue tests run only when requested and cover every config in the selected group."
             textSize = 13.5f
             gravity = Gravity.CENTER
             setTextColor(PearlPalette.TEXT_MUTED)
@@ -367,7 +382,7 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
         settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run quick no-VPN latency after import/select", settingsAutoTestValueText) { toggleAutoTest() })
         settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default. If Connect fails, try a few nearby configs only", settingsSmartFallbackValueText) { toggleSmartFallback() })
-        settingsCard.addView(settingsRow("◷", "Test settings", "Real delay URL, queue limits, and live row updates") { showTestSettingsSheet() })
+        settingsCard.addView(settingsRow("◷", "Test settings", "All configs in selected queue, Real delay URL, and row updates") { showTestSettingsSheet() })
         settingsCard.addView(settingsRow("▦", "Subscriptions", "Groups, refresh all, load more, and search") { showSubscriptionSettingsSheet() })
         settingsCard.addView(settingsRow("⇄", "Routing & DNS", "DNS, per-app bypass, kill switch, and Xray controls") { showRoutingSettingsSheet() })
         settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status, safe report, and full technical log") { showDiagnosticsHubSheet() })
@@ -965,7 +980,7 @@ class MainActivity : Activity() {
         updateAutoTestToggle()
         setAutoTestStatus(
             if (autoTestEnabled) "Auto latency enabled: selected configs will run quick no-VPN latency."
-            else "Auto latency disabled. Queue tests stay manual and capped."
+            else "Auto latency disabled. Queue tests stay manual; a requested batch covers the whole selected queue."
         )
     }
 
@@ -1063,7 +1078,7 @@ class MainActivity : Activity() {
 
     private fun maybeAutoRankBestProfile(reason: String) {
         // Queue-wide ranking is never automatic; subscriptions can contain hundreds or thousands of configs.
-        // Use Locations > Queue tools for a capped manual ping test.
+        // Use Locations > Queue tools only after the user explicitly requests a full-queue test.
     }
 
     private fun autoTestSelectedConfig(reason: String, testLabel: String = "Quick check") {
@@ -1158,7 +1173,7 @@ class MainActivity : Activity() {
             setAutoTestStatus("$testLabel: add configs first")
             return
         }
-        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator()).take(quickCheckProfileLimit())
+        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator())
         autoTestInFlight = true
         setAutoTestStatus("$testLabel testing ${rankedInput.size} ${scopeLabel.shortUi(32)} without connecting...")
         val network = currentNetworkLabel()
@@ -1332,16 +1347,13 @@ class MainActivity : Activity() {
         storedProfiles: List<VpnProfile>,
         groups: List<SubscriptionGroup>
     ): List<VpnProfile> {
-        if (groups.isEmpty()) {
-            return storedProfiles.filterNot { it.id.startsWith(SUBSCRIPTION_PROFILE_PREFIX) }
+        val linkedSubscriptionIds = groups.flatMap { it.profileIds }.toSet()
+        return storedProfiles.filter { profile ->
+            !profile.id.startsWith(SUBSCRIPTION_PROFILE_PREFIX) || profile.id in linkedSubscriptionIds
         }
-        val byId = storedProfiles.associateBy { it.id }
-        return groups
-            .flatMap { group -> group.profileIds.mapNotNull { id -> byId[id] } }
-            .distinctBy { it.id }
     }
 
-    private fun currentVisibleProfilesForTesting(limit: Int = MAX_AUTO_RANK_PROFILES): List<VpnProfile> {
+    private fun currentVisibleProfilesForTesting(limit: Int = Int.MAX_VALUE): List<VpnProfile> {
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         val allProfiles = activeLocationProfiles(storedProfiles, groups)
@@ -1396,7 +1408,7 @@ class MainActivity : Activity() {
                 })
             }
             if (uniqueCandidates.size > 1) {
-                val count = uniqueCandidates.take(quickCheckProfileLimit()).size
+                val count = uniqueCandidates.size
                 addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-test $count configs and select the fastest reachable one") {
                     dialog.dismiss()
                     rankProfilesAndSelectBest(
@@ -1429,6 +1441,23 @@ class MainActivity : Activity() {
         autoTestSelectedConfig("manual-${label.lowercase(java.util.Locale.US).replace(" ", "-")}", testLabel = label)
     }
 
+    private fun measureRealDelaySafely(config: ImportedConfig): XrayRealDelayResult = try {
+        xrayRealDelayTester.measure(
+            config = config,
+            verifyUrls = realDelayVerifyUrls(),
+            dnsServers = vpnDnsServers(),
+            muxEnabled = xrayMuxEnabled(),
+            muxConcurrency = xrayMuxConcurrency(),
+            logLevel = xrayLogLevel()
+        )
+    } catch (error: Exception) {
+        XrayRealDelayResult(
+            reachable = false,
+            latencyMs = null,
+            detail = "Real delay failed: ${error.javaClass.simpleName}"
+        )
+    }
+
     private fun runRealDelayForProfile(profile: VpnProfile) {
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("Real delay paused while VPN is running")
@@ -1444,14 +1473,7 @@ class MainActivity : Activity() {
         setAutoTestStatus("Real delay running for ${compactProfileTitle(profile)} with Xray core...")
         val network = currentNetworkLabel()
         Thread {
-            val result = xrayRealDelayTester.measure(
-                config = config,
-                verifyUrls = realDelayVerifyUrls(),
-                dnsServers = vpnDnsServers(),
-                muxEnabled = xrayMuxEnabled(),
-                muxConcurrency = xrayMuxConcurrency(),
-                logLevel = xrayLogLevel()
-            )
+            val result = measureRealDelaySafely(config)
             val updated = runCatching {
                 profileStore.markTested(
                     profileId = profile.id,
@@ -1484,10 +1506,9 @@ class MainActivity : Activity() {
         selectedLocationGroupFilter = filter
         normalizeLocationGroupFilter(groups)
         saveLocationViewPrefs()
-        val query = locationSearchQuery.trim()
-        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
-        val grouped = profilesForLocationFilter(filtered, groups)
-        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(locationSortComparator())
+        val scoped = profilesForLocationFilter(allProfiles, groups, filter)
+            .distinctBy { it.id }
+            .sortedWith(profileRankingComparator())
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
@@ -1502,14 +1523,14 @@ class MainActivity : Activity() {
             setAutoTestStatus("A test is already running")
             return
         }
-        val candidates = scoped.take(realDelayProfileLimit())
+        val candidates = scoped
         autoTestInFlight = true
-        setAutoTestStatus("Real delay testing ${candidates.size}/${scoped.size} configs in ${scope.shortUi(20)} / ${locationRuntimeFilterLabel()} with Xray core...")
+        setAutoTestStatus("Real delay testing all ${candidates.size} configs in ${scope.shortUi(24)} with Xray core, one at a time...")
         val network = currentNetworkLabel()
         Thread {
             val results = mutableListOf<ProfileProbeResult>()
-            candidates.forEachIndexed { index, profile ->
-                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) return@forEachIndexed
+            for ((index, profile) in candidates.withIndex()) {
+                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) break
                 mainHandler.post {
                     if (autoTestInFlight) {
                         markProfileRowTesting(profile, "Real delay")
@@ -1517,14 +1538,7 @@ class MainActivity : Activity() {
                     }
                 }
                 val config = loadProfileConfigQuiet(profile)
-                val delayResult = if (config != null) xrayRealDelayTester.measure(
-                    config = config,
-                    verifyUrls = realDelayVerifyUrls(),
-                    dnsServers = vpnDnsServers(),
-                    muxEnabled = xrayMuxEnabled(),
-                    muxConcurrency = xrayMuxConcurrency(),
-                    logLevel = xrayLogLevel()
-                ) else null
+                val delayResult = config?.let(::measureRealDelaySafely)
                 val summary = ConfigProbeSummary(
                     report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
                     okCount = if (delayResult?.reachable == true) 1 else 0,
@@ -1557,11 +1571,18 @@ class MainActivity : Activity() {
             val best = results.filter { it.summary.reachable }
                 .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
                     .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE })
-            val report = buildAutoRankingReport(results, best, "real delay $scope")
+            val stoppedEarly = results.size < candidates.size
+            val pausedForVpn = autoTestsShouldPauseForLiveVpn()
+            val report = buildAutoRankingReport(results, best, "real delay $scope") +
+                if (stoppedEarly) "\nStopped after ${results.size}/${candidates.size} configs; remaining configs were not tested." else ""
             runOnUiThread {
                 autoTestInFlight = false
-                setAutoTestStatus(best?.let { "Real delay best: ${compactProfileTitle(it.profile)} • ${it.summary.bestLatencyMs}ms" }
-                    ?: "Real delay found no reachable configs")
+                setAutoTestStatus(when {
+                    pausedForVpn -> "Real delay paused after ${results.size}/${candidates.size}; VPN is running"
+                    stoppedEarly -> "Real delay stopped after ${results.size}/${candidates.size} configs"
+                    best != null -> "Real delay best: ${compactProfileTitle(best.profile)} • ${best.summary.bestLatencyMs}ms"
+                    else -> "Real delay found no reachable configs"
+                })
                 if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = report
                 refreshProfileButtons(syncVerified = false)
                 updateDashboardSummary()
@@ -1953,48 +1974,18 @@ class MainActivity : Activity() {
     private fun showTestSettingsSheet() {
         showBottomSheet(
             title = "Test settings",
-            subtitle = "v2rayNG-style test knobs, kept safe for big subscriptions."
+            subtitle = "Run a test only when you ask; queue batches have no profile-count cap."
         ) { dialog ->
             addView(settingsHintText(
-                "Quick check is a no-VPN endpoint probe. Real delay starts temporary Xray core, but final VPN/TUN verification still happens only after Connect."
+                "Quick check tests every config in the selected queue, with at most $MAX_PARALLEL_PING_TESTS probes running at once. Real delay tests every config one at a time and may take a long time. Neither is a full-phone VPN/TUN verification."
             ))
-            addView(bottomSheetActionRow("◷", "Quick check batch", "${quickCheckProfileLimit()} configs • $MAX_PARALLEL_PING_TESTS parallel workers") {
-                dialog.dismiss()
-                promptIntegerSetting(
-                    title = "Quick check batch",
-                    subtitle = "How many configs Queue tools can quick-test at once. Keep this modest for 1000+ subscriptions.",
-                    currentValue = quickCheckProfileLimit(),
-                    minValue = 1,
-                    maxValue = MAX_QUICK_CHECK_SETTING_LIMIT,
-                    onSave = { value ->
-                        appSettings.edit().putInt(KEY_QUICK_CHECK_LIMIT, value).apply()
-                        setActionStatus("Quick check batch set to $value configs.")
-                    }
-                )
-            })
-            addView(bottomSheetActionRow("✓", "Real delay batch", "${realDelayProfileLimit()} configs • temporary Xray core") {
-                dialog.dismiss()
-                promptIntegerSetting(
-                    title = "Real delay batch",
-                    subtitle = "Real delay is heavier than Quick check. Use small values on older phones.",
-                    currentValue = realDelayProfileLimit(),
-                    minValue = 1,
-                    maxValue = MAX_REAL_DELAY_SETTING_LIMIT,
-                    onSave = { value ->
-                        appSettings.edit().putInt(KEY_REAL_DELAY_LIMIT, value).apply()
-                        setActionStatus("Real delay batch set to $value configs.")
-                    }
-                )
-            })
             addView(bottomSheetActionRow("URL", "Real delay URL", realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }.shortUi(62)) {
                 dialog.dismiss()
                 promptRealDelayUrls()
             })
-            addView(bottomSheetActionRow("↺", "Reset test defaults", "Quick 36, Real delay 8, generate_204 URLs") {
+            addView(bottomSheetActionRow("↺", "Reset test defaults", "Restore the standard Real delay URL list") {
                 dialog.dismiss()
                 appSettings.edit()
-                    .remove(KEY_QUICK_CHECK_LIMIT)
-                    .remove(KEY_REAL_DELAY_LIMIT)
                     .remove(KEY_REAL_DELAY_URLS)
                     .apply()
                 setActionStatus("Test settings reset to safe defaults.")
@@ -2326,8 +2317,8 @@ class MainActivity : Activity() {
                 ).apply { setMargins(0, dp(10), 0, dp(8)) }
             }
             addView(input)
-            addView(settingsHintText("Allowed range: $minValue–$maxValue. Lower numbers keep 1000+ config subscriptions responsive."))
-            addView(bottomSheetActionRow("✓", "Save", "Apply this limit to future Queue tools tests") {
+            addView(settingsHintText("Allowed range: $minValue–$maxValue."))
+            addView(bottomSheetActionRow("✓", "Save", "Apply this setting") {
                 val value = input.text?.toString().orEmpty().trim().toIntOrNull()
                 if (value == null || value !in minValue..maxValue) {
                     setActionStatus("$title must be between $minValue and $maxValue.")
@@ -2385,14 +2376,6 @@ class MainActivity : Activity() {
         setTextColor(PearlPalette.TEXT_MUTED)
         setPadding(dp(6), dp(8), dp(6), dp(4))
     }
-
-    private fun quickCheckProfileLimit(): Int = appSettings
-        .getInt(KEY_QUICK_CHECK_LIMIT, MAX_AUTO_RANK_PROFILES)
-        .coerceIn(1, MAX_QUICK_CHECK_SETTING_LIMIT)
-
-    private fun realDelayProfileLimit(): Int = appSettings
-        .getInt(KEY_REAL_DELAY_LIMIT, MAX_REAL_DELAY_PROFILES)
-        .coerceIn(1, MAX_REAL_DELAY_SETTING_LIMIT)
 
     private fun realDelayVerifyUrls(): List<String> = parseRealDelayUrls(
         appSettings.getString(KEY_REAL_DELAY_URLS, null).orEmpty()
@@ -2474,8 +2457,8 @@ class MainActivity : Activity() {
             appendLine("Selected: ${selectedProfile?.displayName?.cleanProfileLabel()?.shortUi(48) ?: "none"}")
             appendLine("Profiles: ${storedProfiles.size}")
             appendLine("Subscription groups: ${groups.size}")
-            appendLine("Quick check limit: ${quickCheckProfileLimit()}")
-            appendLine("Real delay limit: ${realDelayProfileLimit()}")
+            appendLine("Queue tests: user-started; all configs in the selected group are included")
+            appendLine("Quick-check parallel workers: $MAX_PARALLEL_PING_TESTS")
             appendLine("Smart fallback: ${smartFallbackEnabled} (max $MAX_SMART_FALLBACK_ATTEMPTS)")
             appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
             appendLine("VPN DNS: ${vpnDnsServers().joinToString(", ")}")
@@ -3881,7 +3864,7 @@ class MainActivity : Activity() {
             title = "Choose location",
             subtitle = "Tap to select. Subscription groups stay separated."
         ) { dialog ->
-            addView(bottomSheetActionRow("+", "Add config", "Clipboard, file, or subscription") {
+            addView(bottomSheetActionRow("+", "Add config", "QR scan, QR image, files, clipboard, or subscription") {
                 dialog.dismiss()
                 showAddConfigMenu()
             })
@@ -3987,6 +3970,10 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 showProfileRuntimeDetailsSheet(profile)
             })
+            addView(bottomSheetActionRow("↗", "Share / export", "Original text or file, plus QR when it fits") {
+                dialog.dismiss()
+                showProfileShareSheet(profile)
+            })
             addView(bottomSheetActionRow("✎", "Rename", "Change display name") {
                 dialog.dismiss()
                 promptRenameSelectedProfile()
@@ -4004,6 +3991,232 @@ class MainActivity : Activity() {
                 confirmDeleteSelectedProfile()
             })
         }
+    }
+
+    private fun showProfileShareSheet(profile: VpnProfile) {
+        val rawConfig = runCatching { profileStore.loadRawConfig(profile.id) }.getOrNull()
+        if (rawConfig.isNullOrBlank()) {
+            setActionStatus("Could not read the encrypted config for sharing.")
+            return
+        }
+        val entry = ConfigShareEntry(profile.displayName, rawConfig)
+        val original = ConfigShareFormatter.singleConfig(entry)
+        if (original == null) {
+            setActionStatus("This profile has no exportable config text.")
+            return
+        }
+        val subscription = ConfigShareFormatter.v2RaySubscription(listOf(entry), profile.displayName)
+        showBottomSheet(
+            title = "Share / export profile",
+            subtitle = "Exports include credentials. Share only with the config owner's permission."
+        ) { dialog ->
+            addView(settingsHintText("Choose the original format, a text share, a saved file, or a QR code. Sharing is explicit and does not upload anything to this app's servers."))
+            addView(bottomSheetActionRow("↗", "Share original text", original.label) {
+                dialog.dismiss()
+                confirmSensitiveExport("Share config?", "The config may contain a UUID, password, private key, or provider token. Continue only if you trust the recipient.") {
+                    shareTextPayload(original)
+                }
+            })
+            addView(bottomSheetActionRow("▣", "Save original file", original.fileName) {
+                dialog.dismiss()
+                confirmSensitiveExport("Save config file?", "The saved file contains the original credentials in plain text. Keep it private.") {
+                    beginTextExport(original)
+                }
+            })
+            if (subscription != null) {
+                addView(bottomSheetActionRow("↗", "Share as V2Ray subscription", subscription.label) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Share subscription?", "This base64 subscription contains the same credentials as the config. Continue only with permission.") {
+                        shareTextPayload(subscription)
+                    }
+                })
+                addView(bottomSheetActionRow("▣", "Save as .sub file", subscription.fileName) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Save subscription file?", "The .sub file contains credentials in a portable form. Keep it private.") {
+                        beginTextExport(subscription)
+                    }
+                })
+            }
+            addView(bottomSheetActionRow("▦", "Show QR code", "Display this config on screen for another device to scan") {
+                dialog.dismiss()
+                confirmSensitiveExport("Show config QR?", "Anyone who can see or photograph the QR code can use this config and its credentials.") {
+                    showConfigQrCode(original)
+                }
+            })
+        }
+    }
+
+    private fun showSubscriptionGroupShareSheet(group: SubscriptionGroup) {
+        val entries = group.profileIds.mapNotNull { profileId ->
+            val profile = runCatching { profileStore.profile(profileId) }.getOrNull() ?: return@mapNotNull null
+            val raw = runCatching { profileStore.loadRawConfig(profileId) }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            ConfigShareEntry(profile.displayName, raw)
+        }
+        val providerUrl = runCatching { profileStore.loadSubscriptionUrl(group.id) }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        if (entries.isEmpty() && providerUrl == null) {
+            setActionStatus("No saved configs or provider URL in this group can be exported.")
+            return
+        }
+        val textBundle = ConfigShareFormatter.textBundle(entries, group.displayName)
+        val v2RaySubscription = ConfigShareFormatter.v2RaySubscription(entries, group.displayName)
+        showBottomSheet(
+            title = "Share / export ${group.displayName.cleanProfileLabel().shortUi(24)}",
+            subtitle = "${entries.size} configs • every export may contain credentials"
+        ) { dialog ->
+            addView(settingsHintText("Only share configs or subscription links that you own or have permission to share. A provider URL may grant account access."))
+            textBundle?.let { payload ->
+                addView(bottomSheetActionRow("↗", "Share text bundle", payload.label) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Share config bundle?", "This bundle contains the original configs and credentials for ${entries.size} profiles.") {
+                        shareTextPayload(payload)
+                    }
+                })
+                addView(bottomSheetActionRow("▣", "Save text bundle", payload.fileName) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Save config bundle?", "This plain-text file contains credentials for ${entries.size} profiles.") {
+                        beginTextExport(payload)
+                    }
+                })
+            }
+            if (v2RaySubscription != null) {
+                addView(bottomSheetActionRow("↗", "Share base64 subscription", v2RaySubscription.label) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Share subscription?", "This portable subscription contains every config in the group, encoded as base64.") {
+                        shareTextPayload(v2RaySubscription)
+                    }
+                })
+                addView(bottomSheetActionRow("▣", "Save .sub file", v2RaySubscription.fileName) {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Save subscription file?", "The .sub file contains credentials for every config in the group.") {
+                        beginTextExport(v2RaySubscription)
+                    }
+                })
+            }
+            if (providerUrl != null) {
+                addView(bottomSheetActionRow("↗", "Share provider subscription URL", "Includes the provider's access token") {
+                    dialog.dismiss()
+                    confirmSensitiveExport("Share provider URL?", "This URL may provide access to the full subscription and account. Share it only with someone authorized.") {
+                        shareTextPayload(
+                            ConfigSharePayload(
+                                label = "Provider subscription URL",
+                                fileName = ConfigShareFormatter.fileName(group.displayName, "txt"),
+                                mimeType = "text/plain",
+                                content = providerUrl
+                            )
+                        )
+                    }
+                })
+            }
+        }
+    }
+
+    private fun confirmSensitiveExport(title: String, message: String, onContinue: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("Continue") { _, _ -> onContinue() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun shareTextPayload(payload: ConfigSharePayload) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, payload.fileName)
+            putExtra(Intent.EXTRA_TEXT, payload.content)
+        }
+        runCatching { startActivity(Intent.createChooser(intent, "Share config")) }
+            .onFailure { setActionStatus("Could not open Android's share menu.") }
+    }
+
+    private fun beginTextExport(payload: ConfigSharePayload) {
+        pendingTextExport = payload
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = payload.mimeType
+            putExtra(Intent.EXTRA_TITLE, payload.fileName)
+        }
+        runCatching { startActivityForResult(intent, EXPORT_CONFIG_REQUEST) }
+            .onFailure {
+                pendingTextExport = null
+                setActionStatus("Could not open Android's file picker for export.")
+            }
+    }
+
+    private fun writePendingTextExport(uri: Uri) {
+        val payload = pendingTextExport
+        if (payload == null) {
+            setActionStatus("No config export is waiting to be saved.")
+            return
+        }
+        try {
+            contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                writer.write(payload.content)
+            } ?: throw ConfigParseException("Could not open the selected output file.")
+            setActionStatus("Saved ${payload.fileName}.")
+        } catch (error: Exception) {
+            setActionStatus("Export failed: ${error.message ?: error.javaClass.simpleName}")
+        } finally {
+            pendingTextExport = null
+        }
+    }
+
+    private fun showConfigQrCode(payload: ConfigSharePayload) {
+        if (payload.content.toByteArray(Charsets.UTF_8).size > MAX_QR_CONFIG_BYTES) {
+            setActionStatus("This config is too large for one QR code. Share it as text or save the original file instead.")
+            return
+        }
+        val bitmap = runCatching {
+            val size = dp(280)
+            val hints = mapOf(
+                EncodeHintType.CHARACTER_SET to "UTF-8",
+                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+                EncodeHintType.MARGIN to 1
+            )
+            val matrix = QRCodeWriter().encode(payload.content, BarcodeFormat.QR_CODE, size, size, hints)
+            Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
+                for (y in 0 until size) {
+                    for (x in 0 until size) {
+                        setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+                    }
+                }
+            }
+        }.getOrElse { error ->
+            setActionStatus("Could not create a QR code: ${error.message ?: error.javaClass.simpleName}")
+            return
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            addView(TextView(this@MainActivity).apply {
+                text = "Keep this screen private. Anyone who scans the code may be able to use the config."
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(PearlPalette.TEXT_MUTED)
+                setPadding(0, 0, 0, dp(8))
+            })
+            addView(ImageView(this@MainActivity).apply {
+                setImageBitmap(bitmap)
+                adjustViewBounds = true
+                background = roundedBackground(Color.WHITE, PearlPalette.HAIRLINE, radiusDp = 18)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                layoutParams = LinearLayout.LayoutParams(dp(296), dp(296))
+            })
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Config QR code")
+            .setView(content)
+            .setPositiveButton("Close", null)
+            .create()
+        dialog.setOnDismissListener {
+            (content.getChildAt(1) as? ImageView)?.setImageDrawable(null)
+            bitmap.recycle()
+        }
+        dialog.show()
     }
 
     private fun showProfileRuntimeDetailsSheet(profile: VpnProfile) {
@@ -4524,6 +4737,16 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Android framework, acceptable for this no-AndroidX skeleton.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        val qrScanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (qrScanResult != null) {
+            val contents = qrScanResult.contents
+            if (resultCode == RESULT_OK && !contents.isNullOrBlank()) {
+                importConfigPayload(contents, "QR scan")
+            } else {
+                setActionStatus("QR scan was cancelled or no code was found.")
+            }
+            return
+        }
         when (requestCode) {
             VPN_PERMISSION_REQUEST -> {
                 val action = pendingVpnAction
@@ -4540,11 +4763,29 @@ class MainActivity : Activity() {
                 }
             }
             IMPORT_CONFIG_REQUEST -> {
-                val uri = data?.data
-                if (resultCode == RESULT_OK && uri != null) {
-                    importConfig(uri)
+                val selectedUris = buildList {
+                    data?.clipData?.let { clips ->
+                        for (index in 0 until clips.itemCount) clips.getItemAt(index).uri?.let { add(it) }
+                    }
+                    data?.data?.let { add(it) }
+                }.distinct()
+                if (resultCode == RESULT_OK && selectedUris.isNotEmpty()) {
+                    importConfigFiles(selectedUris)
                 } else {
                     status.text = "No config selected."
+                }
+            }
+            IMPORT_QR_IMAGE_REQUEST -> {
+                val uri = data?.data
+                if (resultCode == RESULT_OK && uri != null) importQrImage(uri)
+                else setActionStatus("No QR image selected.")
+            }
+            EXPORT_CONFIG_REQUEST -> {
+                val uri = data?.data
+                if (resultCode == RESULT_OK && uri != null) writePendingTextExport(uri)
+                else {
+                    pendingTextExport = null
+                    setActionStatus("File export was cancelled.")
                 }
             }
             EXPORT_OPENVPN_REQUEST -> {
@@ -5004,11 +5245,19 @@ class MainActivity : Activity() {
             title = "Add config",
             subtitle = "Only use your own or provider-approved configs."
         ) { dialog ->
+            addView(bottomSheetActionRow("▦", "Scan QR code", "Open the camera and scan a config or subscription") {
+                dialog.dismiss()
+                startQrCodeScan()
+            })
+            addView(bottomSheetActionRow("▧", "Import QR image", "Read a QR code from an image in your files") {
+                dialog.dismiss()
+                openQrImagePicker()
+            })
             addView(bottomSheetActionRow("⌘", "Paste from clipboard", "Config link, subscription URL, or subscription text") {
                 dialog.dismiss()
                 importConfigFromClipboard()
             })
-            addView(bottomSheetActionRow("□", "Import from file", "Pick .json, .yaml, .conf, .ovpn, or text file") {
+            addView(bottomSheetActionRow("□", "Import config file(s)", "Pick one or several .json, .yaml, .conf, .ovpn, or text files") {
                 dialog.dismiss()
                 openConfigPicker()
             })
@@ -5021,6 +5270,69 @@ class MainActivity : Activity() {
                 loadLatestProfile()
             })
         }
+    }
+
+    private fun startQrCodeScan() {
+        runCatching {
+            IntentIntegrator(this).apply {
+                setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                setPrompt("Align the QR code inside the frame")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }.initiateScan()
+        }.onFailure { error ->
+            setActionStatus("Could not open the QR scanner: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun openQrImagePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        startActivityForResult(intent, IMPORT_QR_IMAGE_REQUEST)
+    }
+
+    private fun importQrImage(uri: Uri) {
+        val generation = ++qrImageImportGeneration
+        setActionStatus("Reading QR code from selected image...")
+        Thread({
+            val result = runCatching {
+                contentResolver.openInputStream(uri)?.use(QrCodeImageDecoder::decode)
+                    ?: throw ConfigParseException("Could not open the selected image.")
+            }
+            runOnUiThread {
+                if (generation != qrImageImportGeneration) return@runOnUiThread
+                result.fold(
+                    onSuccess = { contents -> importConfigPayload(contents, "QR image") },
+                    onFailure = { error ->
+                        setActionStatus("QR image import failed: ${error.message ?: "No readable QR code found."}")
+                    }
+                )
+            }
+        }, "vpn-qr-image-import").start()
+    }
+
+    private fun importConfigPayload(rawText: String, sourceName: String?) {
+        val text = rawText.trim()
+        if (text.isBlank()) {
+            setActionStatus("The selected QR code is empty.")
+            return
+        }
+        normalizedSubscriptionUrl(text)?.let { subscriptionUrl ->
+            addOrRefreshSubscriptionGroup(subscriptionNameFromUrl(subscriptionUrl), subscriptionUrl, existingGroup = null)
+            return
+        }
+        val links = V2RaySubscriptionParser.extractLinks(text)
+        val directSingleLink = links.size == 1 && startsWithSingleV2RayLink(text)
+        if (links.isNotEmpty() && !directSingleLink) {
+            addClipboardSubscriptionGroup(
+                sourceName?.let { "$it subscription" } ?: "Imported subscription",
+                text
+            )
+            return
+        }
+        importConfigText(text, sourceName)
     }
 
     private fun promptAddSubscriptionGroup() {
@@ -5196,7 +5508,7 @@ class MainActivity : Activity() {
             subtitle = "${preview.totalCount} configs detected. Choose how many to save now."
         ) { dialog ->
             addView(TextView(this@MainActivity).apply {
-                text = "Import fewer configs for a lighter phone list, or import all when you want the full provider queue. Queue tests stay manual and capped."
+                text = "Import fewer configs for a lighter phone list, or import all when you want the full provider queue. Queue tests stay user-started and test every saved config."
                 textSize = 12.5f
                 setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(10), dp(8), dp(6))
@@ -5592,6 +5904,7 @@ class MainActivity : Activity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
                 arrayOf("application/octet-stream", "application/x-openvpn-profile", "text/plain", "text/*")
@@ -5600,41 +5913,115 @@ class MainActivity : Activity() {
         startActivityForResult(intent, IMPORT_CONFIG_REQUEST)
     }
 
+    private fun importConfigFiles(uris: List<Uri>) {
+        val uniqueUris = uris.distinct()
+        if (uniqueUris.isEmpty()) {
+            setActionStatus("No config files were selected.")
+            return
+        }
+        if (uniqueUris.size == 1) {
+            importConfig(uniqueUris.single())
+            return
+        }
+        if (uniqueUris.size > MAX_CONFIG_FILES_PER_PICK) {
+            setActionStatus("Select up to $MAX_CONFIG_FILES_PER_PICK files per import; split the folder into smaller selections.")
+            return
+        }
+
+        val generation = ++fileImportGeneration
+        setActionStatus("Importing ${uniqueUris.size} selected config files...")
+        Thread({
+            val imported = mutableListOf<Pair<VpnProfile, ImportedConfig>>()
+            var failedCount = 0
+            var totalBytes = 0L
+            var batchLimitReached = false
+            for (uri in uniqueUris) {
+                val parsed = runCatching { readConfigFile(uri) }.getOrNull()
+                if (parsed == null) {
+                    failedCount++
+                    continue
+                }
+                if (totalBytes + parsed.byteCount > MAX_CONFIG_BATCH_BYTES) {
+                    batchLimitReached = true
+                    break
+                }
+                totalBytes += parsed.byteCount
+                val saved = runCatching {
+                    val displayName = importedProfileDisplayName(parsed.config, parsed.text, parsed.name)
+                    profileStore.saveImportedConfig(parsed.config, displayName) to parsed.config
+                }.getOrNull()
+                if (saved == null) {
+                    failedCount++
+                    continue
+                }
+                imported += saved
+            }
+            val notProcessedCount = (uniqueUris.size - imported.size - failedCount).coerceAtLeast(0)
+            runOnUiThread {
+                if (generation != fileImportGeneration) return@runOnUiThread
+                if (imported.isEmpty()) {
+                    setActionStatus("No selected files could be imported. Check that they are supported configs and each is under ${MAX_CONFIG_FILE_BYTES / (1024 * 1024)} MB.")
+                    return@runOnUiThread
+                }
+                val last = imported.last()
+                selectedProfile = last.first
+                selectedProfileId = last.first.id
+                importedConfig = last.second
+                selectedLocationGroupFilter = LOCATION_FILTER_MANUAL
+                locationSearchQuery = ""
+                saveLocationViewPrefs()
+                refreshProfileButtons(syncVerified = false)
+                updateDashboardSummary()
+                showSection(AppSection.PROFILES)
+                val followUp = buildList {
+                    if (failedCount > 0) add("$failedCount files were unreadable or unsupported")
+                    if (batchLimitReached || notProcessedCount > 0) {
+                        add("stopped at the ${MAX_CONFIG_BATCH_BYTES / (1024 * 1024)} MB batch-size limit")
+                    }
+                    if (isEmpty()) add("Queue tools can test every imported config when you start a test")
+                }.joinToString("; ")
+                setActionStatus("Imported ${imported.size}/${uniqueUris.size} selected configs into Imported. $followUp.")
+            }
+        }, "vpn-config-multi-file-import").start()
+    }
+
     private fun importConfig(uri: Uri) {
         val generation = ++fileImportGeneration
         status.text = "Reading and parsing selected config..."
         Thread({
-            val result = runCatching {
-                val name = displayName(uri)
-                val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                    val output = ByteArrayOutputStream()
-                    val buffer = ByteArray(8 * 1024)
-                    var totalBytes = 0
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        if (read == 0) continue
-                        totalBytes += read
-                        if (totalBytes > MAX_CONFIG_FILE_BYTES) {
-                            throw ConfigParseException("Selected config is too large for this preview build.")
-                        }
-                        output.write(buffer, 0, read)
-                    }
-                    output.toByteArray()
-                } ?: throw ConfigParseException("Could not open selected file.")
-                val text = String(bytes, Charsets.UTF_8)
-                Triple(text, name, ConfigImporter.parse(text, name))
-            }
+            val result = runCatching { readConfigFile(uri) }
             runOnUiThread {
                 if (generation != fileImportGeneration) return@runOnUiThread
                 result.fold(
-                    onSuccess = { (text, name, config) -> importConfigText(text, name, config) },
+                    onSuccess = { file -> importConfigText(file.text, file.name, file.config) },
                     onFailure = { error ->
                         status.text = "Import failed: ${error.message ?: error.javaClass.simpleName}"
                     }
                 )
             }
         }, "vpn-config-file-import").start()
+    }
+
+    private fun readConfigFile(uri: Uri): ParsedConfigFile {
+        val name = displayName(uri)
+        val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8 * 1024)
+            var totalBytes = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read == 0) continue
+                totalBytes += read
+                if (totalBytes > MAX_CONFIG_FILE_BYTES) {
+                    throw ConfigParseException("Selected config is too large for this preview build.")
+                }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        } ?: throw ConfigParseException("Could not open selected file.")
+        val text = String(bytes, Charsets.UTF_8)
+        return ParsedConfigFile(name, text, ConfigImporter.parse(text, name), bytes.size.toLong())
     }
 
     private fun importConfigFromClipboard() {
@@ -5653,19 +6040,7 @@ class MainActivity : Activity() {
             return
         }
 
-        normalizedSubscriptionUrl(clipText)?.let { subscriptionUrl ->
-            addOrRefreshSubscriptionGroup(subscriptionNameFromUrl(subscriptionUrl), subscriptionUrl, existingGroup = null)
-            return
-        }
-
-        val subscriptionLinks = V2RaySubscriptionParser.extractLinks(clipText)
-        val directSingleLink = subscriptionLinks.size == 1 && startsWithSingleV2RayLink(clipText)
-        if (subscriptionLinks.isNotEmpty() && !directSingleLink) {
-            addClipboardSubscriptionGroup("Clipboard subscription", clipText)
-            return
-        }
-
-        importConfigText(clipText, null)
+        importConfigPayload(clipText, null)
     }
 
     private fun normalizedSubscriptionUrl(text: String): String? {
@@ -6121,7 +6496,7 @@ class MainActivity : Activity() {
 
     private fun sanitizeLocationGroupFilter(value: String?): String = when {
         value.isNullOrBlank() -> LOCATION_FILTER_ALL
-        value == LOCATION_FILTER_MANUAL -> LOCATION_FILTER_ALL
+        value == LOCATION_FILTER_MANUAL -> LOCATION_FILTER_MANUAL
         else -> value
     }
 
@@ -6141,7 +6516,9 @@ class MainActivity : Activity() {
     private fun normalizeLocationGroupFilter(groups: List<SubscriptionGroup>) {
         val before = selectedLocationGroupFilter
         selectedLocationGroupFilter = sanitizeLocationGroupFilter(selectedLocationGroupFilter)
-        if (selectedLocationGroupFilter != LOCATION_FILTER_ALL && groups.none { it.id == selectedLocationGroupFilter }) {
+        if (selectedLocationGroupFilter !in setOf(LOCATION_FILTER_ALL, LOCATION_FILTER_MANUAL) &&
+            groups.none { it.id == selectedLocationGroupFilter }
+        ) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
         }
         selectedLocationRuntimeFilter = sanitizeLocationRuntimeFilter(selectedLocationRuntimeFilter)
@@ -6151,14 +6528,15 @@ class MainActivity : Activity() {
 
     private fun profilesForLocationFilter(
         profiles: List<VpnProfile>,
-        groups: List<SubscriptionGroup>
+        groups: List<SubscriptionGroup>,
+        filter: String = selectedLocationGroupFilter
     ): List<VpnProfile> {
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
         val profileById = profiles.associateBy { it.id }
-        return when (selectedLocationGroupFilter) {
+        return when (filter) {
             LOCATION_FILTER_ALL -> if (groups.isEmpty()) profiles else subscriptionProfileIds.mapNotNull { profileById[it] }
-            LOCATION_FILTER_MANUAL -> profiles
-            else -> groups.firstOrNull { it.id == selectedLocationGroupFilter }
+            LOCATION_FILTER_MANUAL -> profiles.filterNot { it.id in subscriptionProfileIds }
+            else -> groups.firstOrNull { it.id == filter }
                 ?.profileIds
                 ?.mapNotNull { profileById[it] }
                 .orEmpty()
@@ -6204,18 +6582,16 @@ class MainActivity : Activity() {
         selectedLocationGroupFilter = filter
         normalizeLocationGroupFilter(groups)
         saveLocationViewPrefs()
-        val query = locationSearchQuery.trim()
-        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
-        val grouped = profilesForLocationFilter(filtered, groups)
-        val scoped = applyLocationRuntimeFilter(grouped).sortedWith(locationSortComparator())
+        val scoped = profilesForLocationFilter(allProfiles, groups, filter)
+            .distinctBy { it.id }
+            .sortedWith(profileRankingComparator())
         val scope = locationFilterLabel(groups)
         refreshProfileButtons(syncVerified = false)
         if (scoped.isEmpty()) {
             setActionStatus("No configs in $scope to test.")
             return
         }
-        val capped = scoped.take(quickCheckProfileLimit()).size
-        setActionStatus("$label for $scope / ${locationRuntimeFilterLabel()}: testing $capped/${scoped.size} configs without connecting. Large queues are never auto-tested.")
+        setActionStatus("$label: testing all ${scoped.size} configs in $scope. Search/runtime filters do not hide configs from this user-started batch.")
         rankProfilesAndSelectBest(
             inputProfiles = scoped,
             reason = "queue tools $scope $label",
@@ -6246,11 +6622,21 @@ class MainActivity : Activity() {
             )
         }
         val allTotal = groups.mapNotNull { subscriptionTotalCount(it) }.takeIf { it.isNotEmpty() }?.sum()
-        tabRow.addView(locationFilterTab("All", subscriptionCountLabel(allProfiles.size, allTotal), selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
+        val allQueueCount = profilesForLocationFilter(allProfiles, groups, LOCATION_FILTER_ALL).size
+        tabRow.addView(locationFilterTab("All", subscriptionCountLabel(allQueueCount, allTotal), selectedLocationGroupFilter == LOCATION_FILTER_ALL) {
             selectedLocationGroupFilter = LOCATION_FILTER_ALL
             saveLocationViewPrefs()
             refreshProfileButtons(syncVerified = false)
         })
+        val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
+        val manualCount = allProfiles.count { it.id !in subscriptionProfileIds }
+        if (manualCount > 0) {
+            tabRow.addView(locationFilterTab("Imported", manualCount.toString(), selectedLocationGroupFilter == LOCATION_FILTER_MANUAL) {
+                selectedLocationGroupFilter = LOCATION_FILTER_MANUAL
+                saveLocationViewPrefs()
+                refreshProfileButtons(syncVerified = false)
+            })
+        }
         groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
             val groupCount = group.profileIds.count { it in allProfileIds }
             tabRow.addView(locationFilterTab(group.displayName.cleanProfileLabel().shortUi(16), subscriptionCountLabel(groupCount, subscriptionTotalCount(group)), selectedLocationGroupFilter == group.id) {
@@ -6279,7 +6665,7 @@ class MainActivity : Activity() {
                 addView(tabRow)
             })
             addView(queueMenuButton {
-                showQueueToolsSheet(groups, scoped, activeGroup, scope)
+                showQueueToolsSheet(groups, activeGroup, scope)
             })
         })
         if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL || selectedLocationSortMode != LOCATION_SORT_RECOMMENDED) {
@@ -6328,14 +6714,16 @@ class MainActivity : Activity() {
 
     private fun showQueueToolsSheet(
         groups: List<SubscriptionGroup>,
-        scopedProfiles: List<VpnProfile>,
         activeGroup: SubscriptionGroup?,
         scope: String
     ) {
-        val capped = scopedProfiles.take(quickCheckProfileLimit()).size
+        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
+        val allProfiles = activeLocationProfiles(storedProfiles, groups)
+        val queueProfiles = profilesForLocationFilter(allProfiles, groups, selectedLocationGroupFilter).distinctBy { it.id }
+        val queueCount = queueProfiles.size
         showBottomSheet(
             title = "Queue tools",
-            subtitle = "$scope • ${locationRuntimeFilterLabel()} • sort ${locationSortLabel()} • testing capped at $capped/${scopedProfiles.size}"
+            subtitle = "$scope • $queueCount saved configs • each test runs the full queue; search and runtime filters do not reduce it"
         ) { dialog ->
             addView(bottomSheetActionRow("◎", "Runtime filter", locationRuntimeFilterDescription()) {
                 dialog.dismiss()
@@ -6345,12 +6733,11 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 showLocationSortSheet()
             })
-            addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for up to $capped configs in this queue") {
+            addView(bottomSheetActionRow("◷", "Quick check all", "Fast endpoint reachability for all $queueCount configs in this queue") {
                 dialog.dismiss()
                 testLocationFilter(selectedLocationGroupFilter, label = "Quick check")
             })
-            val realDelayCap = scopedProfiles.take(realDelayProfileLimit()).size
-            addView(bottomSheetActionRow("✓", "Real delay", "Xray-core proxy delay for up to $realDelayCap configs before VPN connect") {
+            addView(bottomSheetActionRow("✓", "Real delay all", "Xray-core delay for all $queueCount configs, one at a time; this can take a while") {
                 dialog.dismiss()
                 runRealDelayForLocationFilter(selectedLocationGroupFilter)
             })
@@ -6529,8 +6916,26 @@ class MainActivity : Activity() {
                     setTextColor(PearlPalette.TEXT_MUTED)
                     setPadding(dp(10), dp(14), dp(10), dp(14))
                 })
+                if (!runCatching { profileStore.loadSubscriptionUrl(group.id) }.getOrNull().isNullOrBlank()) {
+                    addView(bottomSheetActionRow("↗", "Share provider subscription URL", "The link may grant access to the provider account") {
+                        dialog.dismiss()
+                        showSubscriptionGroupShareSheet(group)
+                    })
+                }
                 return@showBottomSheet
             }
+            addView(bottomSheetActionRow("◷", "Quick check all", "Test all ${profiles.size} configs in this subscription folder") {
+                dialog.dismiss()
+                testLocationFilter(group.id, label = "Quick check")
+            })
+            addView(bottomSheetActionRow("✓", "Real delay all", "Test all ${profiles.size} configs one at a time; this can take a while") {
+                dialog.dismiss()
+                runRealDelayForLocationFilter(group.id)
+            })
+            addView(bottomSheetActionRow("↗", "Share / export group", "Text bundle, V2Ray subscription, or provider URL") {
+                dialog.dismiss()
+                showSubscriptionGroupShareSheet(group)
+            })
             val listContainer = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
@@ -7015,6 +7420,13 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private data class ParsedConfigFile(
+        val name: String?,
+        val text: String,
+        val config: ImportedConfig,
+        val byteCount: Long
+    )
+
     private data class SubscriptionImportPreview(
         val subscriptionText: String,
         val totalCount: Int,
@@ -7062,6 +7474,8 @@ class MainActivity : Activity() {
         const val VPN_PERMISSION_REQUEST = 1001
         const val IMPORT_CONFIG_REQUEST = 1002
         const val EXPORT_OPENVPN_REQUEST = 1003
+        const val IMPORT_QR_IMAGE_REQUEST = 1004
+        const val EXPORT_CONFIG_REQUEST = 1005
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val INITIAL_PROFILE_RENDER_ROWS = 160
@@ -7071,8 +7485,6 @@ class MainActivity : Activity() {
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 20
         const val MAX_GROUP_PROFILE_PREVIEW = 16
         const val MAX_RECOMMENDED_PROFILES = 5
-        const val MAX_AUTO_RANK_PROFILES = 36
-        const val MAX_REAL_DELAY_PROFILES = 8
         const val MAX_SMART_FALLBACK_ATTEMPTS = 3
         const val MAX_SMART_FALLBACK_CANDIDATES = 24
         const val SMART_FALLBACK_BASE_DELAY_MS = 1_500L
@@ -7081,8 +7493,6 @@ class MainActivity : Activity() {
         const val FASTER_SUGGESTION_MIN_GAIN_MS = 250L
         const val FASTER_SUGGESTION_RATIO_PERCENT = 80L
         const val FASTER_SWITCH_RESULT_MS = 15_000L
-        const val MAX_QUICK_CHECK_SETTING_LIMIT = 200
-        const val MAX_REAL_DELAY_SETTING_LIMIT = 32
         const val MAX_REAL_DELAY_URLS = 4
         const val MAX_VPN_DNS_SERVERS = 4
         const val MAX_BYPASS_PACKAGES = 64
@@ -7093,6 +7503,9 @@ class MainActivity : Activity() {
         const val MAX_SUBSCRIPTION_TOTAL_PROFILES = 2_000
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
         const val MAX_CONFIG_FILE_BYTES = 2 * 1024 * 1024
+        const val MAX_CONFIG_BATCH_BYTES = 64L * 1024 * 1024
+        const val MAX_CONFIG_FILES_PER_PICK = 2_000
+        const val MAX_QR_CONFIG_BYTES = 1_800
         const val MAX_SUBSCRIPTION_REDIRECTS = 5
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
@@ -7108,8 +7521,6 @@ class MainActivity : Activity() {
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
         const val KEY_SMART_FALLBACK_ENABLED = "smart_fallback_enabled"
-        const val KEY_QUICK_CHECK_LIMIT = "quick_check_limit"
-        const val KEY_REAL_DELAY_LIMIT = "real_delay_limit"
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"
         const val KEY_VPN_DNS_SERVERS = "vpn_dns_servers"
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
