@@ -18,7 +18,8 @@ data class VpnHubStatus(
     val rxBytes: Long? = null,
     val txBytes: Long? = null,
     val egressIp: String? = null,
-    val latencyMs: Long? = null
+    val latencyMs: Long? = null,
+    val failureCategory: EngineFailureCategory? = null
 )
 
 enum class VpnHubConnectionState {
@@ -108,7 +109,8 @@ object VpnHubStatusMapper {
                 rxBytes = status.rxBytes,
                 txBytes = status.txBytes,
                 egressIp = status.egressIp,
-                latencyMs = status.latencyMs
+                latencyMs = status.latencyMs,
+                failureCategory = EngineFailureClassifier.classify(status)
             )
         }
 

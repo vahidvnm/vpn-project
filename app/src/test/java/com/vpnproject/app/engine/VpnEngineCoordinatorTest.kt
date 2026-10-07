@@ -191,6 +191,41 @@ class VpnEngineCoordinatorTest {
     }
 
     @Test
+    fun failedServiceStatusRequiresConfirmedStopBeforeStartingAnotherEngine() {
+        val coordinator = VpnEngineCoordinator()
+        val previous = coordinator.beginPending("profile-xray")
+        assertTrue(coordinator.bindEngine(previous, VpnEngineId.XRAY_CORE, "profile-xray"))
+        assertTrue(coordinator.markStartRequested(previous))
+
+        val next = coordinator.beginPending("profile-wg")
+        assertTrue(coordinator.bindEngine(next, VpnEngineId.WIREGUARD_GO, "profile-wg"))
+        assertTrue(coordinator.setPhase(next, EngineOperationPhase.STARTING))
+        val wireGuardConnecting = EngineStatus(
+            kind = EngineKind.WIREGUARD_GO,
+            state = EngineState.CONNECTING,
+            message = "WireGuard selected.",
+            profileId = "profile-wg"
+        )
+        val failedXray = EngineStatus(
+            kind = EngineKind.XRAY_CORE,
+            state = EngineState.FAILED,
+            message = "Rebind failed; service resources may still exist.",
+            profileId = "profile-xray"
+        )
+
+        assertEquals(setOf(VpnEngineId.XRAY_CORE), coordinator.beginStartHandoff(next, listOf(wireGuardConnecting, failedXray)))
+        assertEquals(EngineStartHandoffState.WAITING, coordinator.startHandoffState(next))
+        assertFalse(coordinator.observeServiceStatus(failedXray))
+        assertEquals(EngineStartHandoffState.WAITING, coordinator.startHandoffState(next))
+
+        val stopped = failedXray.copy(state = EngineState.STOPPED, message = "Xray explicitly stopped.")
+        assertTrue(coordinator.observeServiceStatus(stopped))
+        assertEquals(EngineStartHandoffState.READY, coordinator.startHandoffState(next))
+        assertTrue(coordinator.markStartRequested(next, wireGuardConnecting))
+        assertEquals(VpnEngineId.WIREGUARD_GO, coordinator.snapshot().requestedEngineId)
+    }
+
+    @Test
     fun failedEngineHandoffNeverStartsTheNewEngine() {
         val coordinator = VpnEngineCoordinator()
         val token = coordinator.beginPending("profile-wg")

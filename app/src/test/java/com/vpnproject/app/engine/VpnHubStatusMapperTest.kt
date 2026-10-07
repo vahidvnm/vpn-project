@@ -111,5 +111,6 @@ class VpnHubStatusMapperTest {
 
         assertEquals(VpnHubConnectionState.FAILED, hub.state)
         assertTrue(hub.detail.contains("Embedded Xray failed"))
+        assertEquals(EngineFailureCategory.UNKNOWN, hub.failureCategory)
     }
 }

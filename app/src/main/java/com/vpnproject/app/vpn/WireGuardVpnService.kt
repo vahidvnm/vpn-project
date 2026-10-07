@@ -11,6 +11,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.SystemClock
 import com.vpnproject.app.core.WireGuardConfigParser
 import com.vpnproject.app.engine.EngineKind
 import com.vpnproject.app.engine.EngineState
@@ -28,6 +29,7 @@ import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * First real connection engine: official WireGuard userspace GoBackend.
@@ -43,6 +45,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
     private val lifecycleGeneration = AtomicInteger(0)
     private val lifecycleLock = Any()
     private val rebindRunning = AtomicBoolean(false)
+    private val pendingRebindReason = AtomicReference<String?>(null)
 
     @Volatile
     private var startThread: Thread? = null
@@ -73,7 +76,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
     private var networkCallbackRegistered: Boolean = false
 
     @Volatile
-    private var lastRebindRequestedAtEpochMs: Long = 0L
+    private var lastRebindRequestedAtElapsedMs: Long = 0L
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -142,6 +145,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
         val generation = lifecycleGeneration.incrementAndGet()
         synchronized(lifecycleLock) {
+            lastRebindRequestedAtElapsedMs = 0L
             activeProfileId = profileId
             updateStatus(EngineState.CONNECTING, "Starting WireGuard engine…", note)
         }
@@ -351,6 +355,9 @@ class WireGuardVpnService : GoBackend.VpnService() {
                             verificationThread = null
                         }
                     }
+                    if (isCurrentVerification(lifecycle, verificationId)) {
+                        drainPendingNetworkRebind(lifecycle)
+                    }
                 }
             }, "wireguard-engine-verify-$lifecycle-$verificationId").also { verificationThread = it }
         }
@@ -399,25 +406,46 @@ class WireGuardVpnService : GoBackend.VpnService() {
         }
     }
 
-    private fun scheduleNetworkRebind(reason: String) {
+    private fun hasNetworkCheckInProgress(): Boolean =
+        rebindRunning.get() || verificationRunning.get() ||
+            lastStatus.state in setOf(EngineState.VERIFYING, EngineState.RECONNECTING)
+
+    private fun drainPendingNetworkRebind(generation: Int) {
+        if (!isCurrentLifecycle(generation)) return
+        pendingRebindReason.getAndSet(null)?.let { reason ->
+            scheduleNetworkRebind(reason, coalescedNetworkChange = true)
+        }
+    }
+
+    private fun scheduleNetworkRebind(reason: String, coalescedNetworkChange: Boolean = false) {
         val generation = lifecycleGeneration.get()
         if (!isCurrentLifecycle(generation) || starting.get()) return
         if (lastStatus.state in setOf(EngineState.STOPPING, EngineState.STOPPED, EngineState.FAILED)) return
         val goBackend = backend ?: return
         val tunnelHandle = tunnel ?: return
         currentConfig ?: return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val isRunning = runCatching { goBackend.getState(tunnelHandle) == Tunnel.State.UP }
             .getOrElse { tunnelHandle.state() == Tunnel.State.UP }
         val decision = rebindPolicy.evaluate(
             isRunning = isRunning,
-            nowEpochMs = now,
-            lastRequestedEpochMs = lastRebindRequestedAtEpochMs,
+            nowMonotonicMs = now,
+            lastRequestedMonotonicMs = if (coalescedNetworkChange) 0L else lastRebindRequestedAtElapsedMs,
             reason = reason
         )
-        if (!decision.shouldSchedule) return
-        lastRebindRequestedAtEpochMs = now
-        if (!rebindRunning.compareAndSet(false, true)) return
+        if (!decision.shouldSchedule) {
+            if (hasNetworkCheckInProgress()) {
+                pendingRebindReason.set(reason)
+                if (!hasNetworkCheckInProgress()) drainPendingNetworkRebind(generation)
+            }
+            return
+        }
+        if (!rebindRunning.compareAndSet(false, true)) {
+            pendingRebindReason.set(reason)
+            if (!hasNetworkCheckInProgress()) drainPendingNetworkRebind(generation)
+            return
+        }
+        lastRebindRequestedAtElapsedMs = now
 
         val thread = Thread({
             var reboundBackend: GoBackend? = null
@@ -478,6 +506,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
                 }
                 rebindRunning.set(false)
                 if (rebindThread === Thread.currentThread()) rebindThread = null
+                drainPendingNetworkRebind(generation)
             }
         }, "wireguard-network-rebind-$generation")
         thread.isDaemon = true
@@ -537,6 +566,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
             backend = null
             tunnel = null
             currentConfig = null
+            lastRebindRequestedAtElapsedMs = 0L
             if (stopError == null) {
                 updateStatus(EngineState.STOPPED, "WireGuard engine stopped.")
             } else {
@@ -554,6 +584,7 @@ class WireGuardVpnService : GoBackend.VpnService() {
 
     private fun stopRebindAndJoin() {
         rebindRunning.set(false)
+        pendingRebindReason.set(null)
         val thread = rebindThread
         rebindThread = null
         thread?.interrupt()

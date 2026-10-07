@@ -3,7 +3,8 @@ package com.vpnproject.app.engine
 data class NetworkRebindDecision(
     val shouldSchedule: Boolean,
     val delayMs: Long,
-    val reason: String
+    val reason: String,
+    val retryAfterMs: Long = 0L
 )
 
 class NetworkRebindPolicy(
@@ -17,8 +18,8 @@ class NetworkRebindPolicy(
 
     fun evaluate(
         isRunning: Boolean,
-        nowEpochMs: Long,
-        lastRequestedEpochMs: Long,
+        nowMonotonicMs: Long,
+        lastRequestedMonotonicMs: Long,
         reason: String
     ): NetworkRebindDecision {
         if (!isRunning) {
@@ -29,8 +30,8 @@ class NetworkRebindPolicy(
             )
         }
 
-        val elapsedMs = nowEpochMs - lastRequestedEpochMs
-        val canSchedule = lastRequestedEpochMs <= 0L || elapsedMs >= minIntervalMs
+        val elapsedMs = nowMonotonicMs - lastRequestedMonotonicMs
+        val canSchedule = lastRequestedMonotonicMs <= 0L || elapsedMs >= minIntervalMs
         return if (canSchedule) {
             NetworkRebindDecision(
                 shouldSchedule = true,
@@ -41,7 +42,8 @@ class NetworkRebindPolicy(
             NetworkRebindDecision(
                 shouldSchedule = false,
                 delayMs = 0L,
-                reason = "Network rebind suppressed for ${minIntervalMs - elapsedMs}ms: $reason"
+                reason = "Network rebind suppressed for ${minIntervalMs - elapsedMs}ms: $reason",
+                retryAfterMs = (minIntervalMs - elapsedMs).coerceAtLeast(0L)
             )
         }
     }

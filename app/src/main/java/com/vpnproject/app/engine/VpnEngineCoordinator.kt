@@ -48,7 +48,12 @@ class VpnEngineCoordinator {
     private var requestedEngineId: VpnEngineId? = null
     private var requestedStatusBaseline: EngineStatus? = null
     private var requestedServiceAcknowledged = false
-    private val stoppingTargets = mutableMapOf<VpnEngineId, String?>()
+    private data class StopTarget(
+        val profileId: String?,
+        val baselineStatus: EngineStatus?
+    )
+
+    private val stoppingTargets = mutableMapOf<VpnEngineId, StopTarget>()
     private var stopFailureObserved = false
     private var startHandoffTokenGeneration: Long? = null
 
@@ -100,8 +105,9 @@ class VpnEngineCoordinator {
 
     /**
      * Establish a barrier before starting a prepared engine. Only other
-     * in-app engines with a non-terminal service status are stopped and waited
-     * on; the selected engine may restart its own existing service directly.
+     * in-app engines with a non-terminal or failed status are explicitly stopped
+     * and waited on; FAILED may still own OS resources. The selected engine may
+     * restart its own existing service directly.
      * A null result means the operation token is stale or is not engine-bound.
      */
     @Synchronized
@@ -125,8 +131,11 @@ class VpnEngineCoordinator {
                 }
                 return@forEach
             }
-            if (isNonTerminalServiceState(status.state)) {
-                stoppingTargets[statusEngineId] = status.profileId
+            if (requiresExplicitStop(status)) {
+                stoppingTargets[statusEngineId] = StopTarget(
+                    profileId = status.profileId,
+                    baselineStatus = status
+                )
             } else if (statusEngineId == requestedEngineId &&
                 (requestedProfileId == null || status.profileId == requestedProfileId)
             ) {
@@ -224,8 +233,9 @@ class VpnEngineCoordinator {
     fun observeServiceStatus(status: EngineStatus): Boolean {
         val statusEngineId = engineIdFor(status)
         if (phase == EngineOperationPhase.STOPPING && stoppingTargets.containsKey(statusEngineId)) {
-            val targetProfileId = stoppingTargets[statusEngineId]
-            if (targetProfileId != null && status.profileId != targetProfileId) return false
+            val target = stoppingTargets.getValue(statusEngineId)
+            if (target.profileId != null && status.profileId != target.profileId) return false
+            if (target.baselineStatus == status) return false
             return when (status.state) {
                 EngineState.IDLE,
                 EngineState.STOPPED -> finishStopTargetLocked(statusEngineId, failed = false)
@@ -283,11 +293,17 @@ class VpnEngineCoordinator {
         startHandoffTokenGeneration = null
 
         if (serviceStatuses.isEmpty() && previousRequestedEngineId != null) {
-            stoppingTargets[previousRequestedEngineId] = previousRequestedProfileId
+            stoppingTargets[previousRequestedEngineId] = StopTarget(
+                profileId = previousRequestedProfileId,
+                baselineStatus = requestedStatusBaseline
+            )
         } else {
             serviceStatuses.forEach { status ->
-                if (isNonTerminalServiceState(status.state)) {
-                    stoppingTargets[engineIdFor(status)] = status.profileId
+                if (requiresExplicitStop(status)) {
+                    stoppingTargets[engineIdFor(status)] = StopTarget(
+                        profileId = status.profileId,
+                        baselineStatus = status
+                    )
                 }
             }
         }
@@ -327,6 +343,10 @@ class VpnEngineCoordinator {
         EngineState.STOPPED,
         EngineState.FAILED -> false
     }
+
+    /** A failed service may still own resources; issue and confirm an explicit stop. */
+    private fun requiresExplicitStop(status: EngineStatus): Boolean =
+        isNonTerminalServiceState(status.state) || status.state == EngineState.FAILED
 
     private fun finishStopTargetLocked(engineId: VpnEngineId, failed: Boolean): Boolean {
         stoppingTargets.remove(engineId)

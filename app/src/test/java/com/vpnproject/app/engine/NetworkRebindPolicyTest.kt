@@ -12,8 +12,8 @@ class NetworkRebindPolicyTest {
 
         val decision = policy.evaluate(
             isRunning = false,
-            nowEpochMs = 10_000,
-            lastRequestedEpochMs = 0,
+            nowMonotonicMs = 10_000,
+            lastRequestedMonotonicMs = 0,
             reason = "network available"
         )
 
@@ -28,8 +28,8 @@ class NetworkRebindPolicyTest {
 
         val decision = policy.evaluate(
             isRunning = true,
-            nowEpochMs = 10_000,
-            lastRequestedEpochMs = 0,
+            nowMonotonicMs = 10_000,
+            lastRequestedMonotonicMs = 0,
             reason = "network available"
         )
 
@@ -44,12 +44,13 @@ class NetworkRebindPolicyTest {
 
         val decision = policy.evaluate(
             isRunning = true,
-            nowEpochMs = 10_500,
-            lastRequestedEpochMs = 10_000,
+            nowMonotonicMs = 10_500,
+            lastRequestedMonotonicMs = 10_000,
             reason = "network capabilities changed"
         )
 
         assertFalse(decision.shouldSchedule)
         assertTrue(decision.reason.contains("suppressed"))
+        assertEquals(1_500L, decision.retryAfterMs)
     }
 }

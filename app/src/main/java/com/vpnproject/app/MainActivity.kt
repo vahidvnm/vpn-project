@@ -70,6 +70,8 @@ import com.vpnproject.app.core.V2RayLinkInspector
 import com.vpnproject.app.core.VpnProtocol
 import com.vpnproject.app.core.VpnRoutingInputParser
 import com.vpnproject.app.engine.EngineExecutionMode
+import com.vpnproject.app.engine.EngineFailureCategory
+import com.vpnproject.app.engine.EngineFailureClassifier
 import com.vpnproject.app.engine.EngineOperationPhase
 import com.vpnproject.app.engine.EngineOperationToken
 import com.vpnproject.app.engine.EngineStartHandoffState
@@ -89,6 +91,8 @@ import com.vpnproject.app.engine.VpnHubConnectionState
 import com.vpnproject.app.engine.XrayRealDelayTester
 import com.vpnproject.app.engine.XrayRealDelayResult
 import com.vpnproject.app.engine.VpnHubStatusMapper
+import com.vpnproject.app.engine.TrafficRateSampler
+import com.vpnproject.app.engine.TrafficRateSample
 import com.vpnproject.app.profile.FasterSwitchRecommendationPolicy
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.SubscriptionGroup
@@ -239,6 +243,7 @@ class MainActivity : Activity() {
     private var fasterSwitchResultUntilMs = 0L
     private var lastRecordedVerificationKey: String? = null
     private var lastRecordedFailureKey: String? = null
+    private var lastOperationFailureCategory: EngineFailureCategory? = null
     private lateinit var profileListContainer: LinearLayout
     private lateinit var subscriptionGroupContainer: LinearLayout
     private var pendingVpnAction = PendingVpnAction.NONE
@@ -260,6 +265,10 @@ class MainActivity : Activity() {
         }
     }
     private val engineOperationCoordinator = VpnEngineCoordinator()
+    private val trafficRateSampler = TrafficRateSampler()
+    private var lastTrafficRateScopeKey: String? = null
+    private var latestTrafficRateSample: TrafficRateSample? = null
+    private var latestTrafficRateSampleAtMs = 0L
     private val trackedConnectionProfileId: String?
         get() = engineOperationCoordinator.snapshot().requestedProfileId
     private var fileImportGeneration = 0
@@ -480,6 +489,9 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         pendingEngineStartHandoff?.let { engineOperationCoordinator.cancel(it.operationToken) }
         clearPendingEngineStartHandoff()
+        // A permission/prepare callback must not start a service after this
+        // Activity has gone away; already-requested services remain untouched.
+        engineOperationCoordinator.cancelPending()
         super.onDestroy()
     }
 
@@ -646,8 +658,8 @@ class MainActivity : Activity() {
         addView(MiniChartView(this@MainActivity).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
         })
-        statDownText = speedLine("↓", "0 B", "Download", PearlPalette.INK)
-        statUpText = speedLine("↑", "0 B", "Upload", PearlPalette.CHAMPAGNE_DARK)
+        statDownText = speedLine("↓", "0 B", "Download total", PearlPalette.INK)
+        statUpText = speedLine("↑", "0 B", "Upload total", PearlPalette.CHAMPAGNE_DARK)
         statLatencyText = speedLine("◷", "--", "Ping", PearlPalette.INK)
         liveStatsBadge = TextView(this@MainActivity).apply { visibility = View.GONE }
         statEngineText = TextView(this@MainActivity).apply {
@@ -1409,7 +1421,7 @@ class MainActivity : Activity() {
             }
             if (uniqueCandidates.size > 1) {
                 val count = uniqueCandidates.size
-                addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-test $count configs and select the fastest reachable one") {
+                addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-check $count configs and select the lowest-ping reachable one; this is not a download-speed test") {
                     dialog.dismiss()
                     rankProfilesAndSelectBest(
                         inputProfiles = uniqueCandidates,
@@ -2447,27 +2459,34 @@ class MainActivity : Activity() {
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
         val hub = currentHubStatus()
+        val failureCategory = hub.failureCategory ?: lastOperationFailureCategory
         val report = buildString {
             appendLine("VPN Hub safe diagnostics")
             appendLine("Status: ${hub.title}")
-            appendLine("Detail: ${hub.detail}")
+            appendLine("Failure category: ${failureCategory?.label ?: "none / not failed"}")
+            failureCategory?.let { appendLine("Suggested action: ${it.suggestedAction}") }
+            appendLine("Status detail: omitted from safe report")
             appendLine("Verified: ${hub.verified}")
             appendLine("Engine: ${hub.activeEngine?.let { engineLabel(it) } ?: "none"}")
             appendLine("Latency: ${hub.latencyMs?.let { "${it}ms" } ?: "n/a"}")
-            appendLine("Selected: ${selectedProfile?.displayName?.cleanProfileLabel()?.shortUi(48) ?: "none"}")
+            appendLine("Selected profile name and ID: omitted")
             appendLine("Profiles: ${storedProfiles.size}")
             appendLine("Subscription groups: ${groups.size}")
             appendLine("Queue tests: user-started; all configs in the selected group are included")
             appendLine("Quick-check parallel workers: $MAX_PARALLEL_PING_TESTS")
             appendLine("Smart fallback: ${smartFallbackEnabled} (max $MAX_SMART_FALLBACK_ATTEMPTS)")
-            appendLine("Real delay URLs: ${realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }}")
-            appendLine("VPN DNS: ${vpnDnsServers().joinToString(", ")}")
+            appendLine("Configured real-delay URL count: ${realDelayVerifyUrls().size}")
+            appendLine("Configured VPN DNS server count: ${vpnDnsServers().size}")
             appendLine("Bypass app packages: ${bypassAppPackages().size}")
             appendLine("Xray sniffing: ${xraySniffingEnabled()}")
             appendLine("Xray mux: ${xrayMuxEnabled()} concurrency ${xrayMuxConcurrency()}")
             appendLine("Xray log level: ${xrayLogLevel()}")
             appendLine()
-            appendLine(engineDiagnosticsText(engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO), engineAdapters.snapshot(VpnEngineId.XRAY_CORE)))
+            appendLine(engineDiagnosticsText(
+                engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO),
+                engineAdapters.snapshot(VpnEngineId.XRAY_CORE),
+                safeForSharing = true
+            ))
         }
         (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("VPN Hub safe diagnostics", report))
@@ -2811,18 +2830,65 @@ class MainActivity : Activity() {
             }
         )
         hubStatusDetail.text = if (pendingSwitchActive) {
-            "Stopping current tunnel. Connect the faster tested config when ready."
+            "Stopping current tunnel. Connect the lower-ping tested config when ready."
         } else {
             dashboardDetail(hub)
         }
-        connectionStatsText.text = buildStatsLine(hub.verified, hub.verificationScope, hub.rxBytes, hub.txBytes, hub.egressIp, hub.activeEngine, hub.latencyMs)
+        val rateProfileId = hub.profileId ?: trackedConnectionProfileId
+        val rateScopeKey = if (
+            hub.activeEngine == com.vpnproject.app.engine.EngineKind.XRAY_CORE &&
+            (hub.state == VpnHubConnectionState.CONNECTED ||
+                hub.state == VpnHubConnectionState.RUNNING_UNVERIFIED) &&
+            !rateProfileId.isNullOrBlank()
+        ) {
+            "${hub.activeEngine?.name}:$rateProfileId"
+        } else {
+            null
+        }
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        if (rateScopeKey != lastTrafficRateScopeKey) {
+            trafficRateSampler.reset()
+            latestTrafficRateSample = null
+            latestTrafficRateSampleAtMs = 0L
+            lastTrafficRateScopeKey = rateScopeKey
+        }
+        if (rateScopeKey != null) {
+            trafficRateSampler.sample(rateScopeKey, hub.rxBytes, hub.txBytes, nowElapsedMs)?.let { sample ->
+                latestTrafficRateSample = sample
+                latestTrafficRateSampleAtMs = nowElapsedMs
+            }
+            if (latestTrafficRateSampleAtMs == 0L ||
+                nowElapsedMs - latestTrafficRateSampleAtMs > TRAFFIC_RATE_DISPLAY_MAX_AGE_MS
+            ) {
+                latestTrafficRateSample = null
+            }
+        } else {
+            trafficRateSampler.reset()
+            latestTrafficRateSample = null
+            latestTrafficRateSampleAtMs = 0L
+        }
+        connectionStatsText.text = buildStatsLine(
+            hub.verified,
+            hub.verificationScope,
+            hub.rxBytes,
+            hub.txBytes,
+            hub.egressIp,
+            hub.activeEngine,
+            hub.latencyMs,
+            latestTrafficRateSample
+        )
 
         val down = formatBytes(hub.rxBytes ?: 0)
         val up = formatBytes(hub.txBytes ?: 0)
+        val trafficRate = latestTrafficRateSample
         if (::statLatencyText.isInitialized) statLatencyText.text = "◷  ${hub.latencyMs?.let { "${it} ms" } ?: "--"}\n     Ping"
         if (::statEngineText.isInitialized) statEngineText.text = "Engine\n${hub.activeEngine?.let { engineLabel(it) } ?: "Auto"}"
-        if (::statDownText.isInitialized) statDownText.text = "↓  $down\n     Download"
-        if (::statUpText.isInitialized) statUpText.text = "↑  $up\n     Upload"
+        if (::statDownText.isInitialized) statDownText.text = trafficRate?.let {
+            "↓  ${formatBytesPerSecond(it.downloadBytesPerSecond)}\n     Observed down/s"
+        } ?: "↓  $down\n     Download total"
+        if (::statUpText.isInitialized) statUpText.text = trafficRate?.let {
+            "↑  ${formatBytesPerSecond(it.uploadBytesPerSecond)}\n     Observed up/s"
+        } ?: "↑  $up\n     Upload total"
 
         if (::protectionBadge.isInitialized) {
             val protectionText = when (hub.state) {
@@ -2862,7 +2928,7 @@ class MainActivity : Activity() {
         VpnHubConnectionState.RUNNING_UNVERIFIED -> "Checking"
         VpnHubConnectionState.FAILED -> "Failed"
         VpnHubConnectionState.STOPPED -> "Disconnected"
-        VpnHubConnectionState.IDLE -> "Ready"
+        VpnHubConnectionState.IDLE -> if (lastOperationFailureCategory != null) "Needs attention" else "Ready"
     }
 
     private fun dashboardDetail(hub: com.vpnproject.app.engine.VpnHubStatus): String {
@@ -2884,9 +2950,11 @@ class MainActivity : Activity() {
             ).joinToString(" • ").ifBlank { "Connection verification evidence is limited." }
             VpnHubConnectionState.CONNECTING -> "Starting tunnel and verifying internet access."
             VpnHubConnectionState.RUNNING_UNVERIFIED -> "Tunnel is running; waiting for verification."
-            VpnHubConnectionState.FAILED -> hub.detail.shortUi(96)
+            VpnHubConnectionState.FAILED -> "Likely area: ${hub.failureCategory?.label ?: EngineFailureCategory.UNKNOWN.label} • ${hub.detail.shortUi(86)}"
             VpnHubConnectionState.STOPPED -> profileName?.let { "$it is ready. Tap START to reconnect." } ?: "No active tunnel."
-            VpnHubConnectionState.IDLE -> profileName?.let { "$it is ready. Tap START to connect." } ?: "Import or select a profile to connect."
+            VpnHubConnectionState.IDLE -> lastOperationFailureCategory?.let {
+                "Likely area: ${it.label} • ${it.suggestedAction}"
+            } ?: (profileName?.let { "$it is ready. Tap START to connect." } ?: "Import or select a profile to connect.")
         }
     }
 
@@ -2897,7 +2965,8 @@ class MainActivity : Activity() {
         txBytes: Long?,
         egressIp: String?,
         engine: com.vpnproject.app.engine.EngineKind?,
-        latencyMs: Long?
+        latencyMs: Long?,
+        trafficRate: TrafficRateSample?
     ): String {
         val evidence = when (verificationScope) {
             com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS -> "Proxy egress checked; app path untested"
@@ -2909,9 +2978,24 @@ class MainActivity : Activity() {
             "Traffic: ${formatBytes(rxBytes ?: 0)} down / ${formatBytes(txBytes ?: 0)} up"
         )
         latencyMs?.let { parts += "Latency: ${it}ms" }
+        trafficRate?.let {
+            parts += "Recent engine traffic: ${formatBytesPerSecond(it.downloadBytesPerSecond)} down / ${formatBytesPerSecond(it.uploadBytesPerSecond)} up"
+        }
         engine?.let { parts += "Engine: ${engineLabel(it)}" }
         egressIp?.let { parts += "IP: $it" }
         return parts.joinToString(" • ")
+    }
+
+    private fun formatBytesPerSecond(bytesPerSecond: Double): String {
+        if (!bytesPerSecond.isFinite() || bytesPerSecond < 0.0) return "--"
+        val units = arrayOf("B/s", "KiB/s", "MiB/s", "GiB/s")
+        var value = bytesPerSecond
+        var unitIndex = 0
+        while (value >= 1024.0 && unitIndex < units.lastIndex) {
+            value /= 1024.0
+            unitIndex += 1
+        }
+        return "${String.format(java.util.Locale.US, "%.1f", value)} ${units[unitIndex]}"
     }
 
     private fun engineLabel(kind: com.vpnproject.app.engine.EngineKind): String = when (kind) {
@@ -3002,7 +3086,7 @@ class MainActivity : Activity() {
         }
         val gain = suggestion.activeLatencyMs - (suggestion.signal.latencyMs ?: suggestion.activeLatencyMs)
         fasterSuggestionButton.visibility = View.VISIBLE
-        fasterSuggestionButton.text = "Try faster tested: ${compactProfileTitle(suggestion.profile).shortUi(18)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms • −${gain}ms"
+        fasterSuggestionButton.text = "Try lower ping: ${compactProfileTitle(suggestion.profile).shortUi(18)} • ${suggestion.signal.label} ${suggestion.signal.latencyMs}ms • −${gain}ms"
         fasterSuggestionButton.setOnClickListener { showFasterSuggestionSheet(suggestion) }
     }
 
@@ -3029,22 +3113,22 @@ class MainActivity : Activity() {
         val active = isLiveState(hub.state)
         fasterSuggestionButton.visibility = View.VISIBLE
         if (trackedConnectionProfileId == pendingId && active) {
-            fasterSuggestionButton.text = "Connecting faster tested… ${pendingFasterSwitchText.orEmpty().shortUi(44)}"
+            fasterSuggestionButton.text = "Connecting lower-ping config… ${pendingFasterSwitchText.orEmpty().shortUi(44)}"
             fasterSuggestionButton.setOnClickListener {
-                status.text = "Connecting faster tested config. Waiting for verification."
+                status.text = "Connecting lower-ping config. Waiting for verification."
                 scheduleFasterSwitchRefreshes()
             }
         } else if (active) {
             fasterSuggestionButton.text = "Switch pending: stopping current tunnel… ${pendingFasterSwitchText.orEmpty().shortUi(42)}"
             fasterSuggestionButton.setOnClickListener {
-                status.text = "Stopping current tunnel first. Wait until Home shows Ready, then tap Connect faster."
+                status.text = "Stopping current tunnel first. Wait until Home shows Ready, then tap Connect lower-ping config."
                 scheduleFasterSwitchRefreshes()
             }
         } else {
             val label = pendingFasterSwitchText ?: compactProfileTitle(pendingProfile)
-            fasterSuggestionButton.text = "Connect faster tested: ${label.shortUi(44)}"
+            fasterSuggestionButton.text = "Connect lower-ping config: ${label.shortUi(44)}"
             fasterSuggestionButton.setOnClickListener {
-                pauseAutoTestsForConnection("Auto test paused while connecting faster tested config")
+                pauseAutoTestsForConnection("Auto test paused while connecting lower-ping config")
                 requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
                 scheduleFasterSwitchRefreshes()
             }
@@ -3089,11 +3173,11 @@ class MainActivity : Activity() {
             ""
         }
         val message = prefix + when {
-            previous != null && actual != null && improved -> "Improved: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
-            previous != null && actual != null -> "No improvement: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
-            actual != null && expected != null -> "Connected faster tested: ${actual}ms now • expected ${expected}ms"
-            actual != null -> "Connected faster tested: ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
-            else -> "Faster tested config checked: ${compactProfileTitle(profile).shortUi(26)}"
+            previous != null && actual != null && improved -> "Ping improved: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            previous != null && actual != null -> "Ping did not improve: ${previous}ms → ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            actual != null && expected != null -> "Connected; measured ping ${actual}ms • previously expected ${expected}ms"
+            actual != null -> "Connected; measured ping ${actual}ms • ${compactProfileTitle(profile).shortUi(22)}"
+            else -> "Lower-ping config checked: ${compactProfileTitle(profile).shortUi(26)}"
         }
         if (previous != null && actual != null) {
             rememberFasterSwitchOutcome(profile, network, improved)
@@ -3109,7 +3193,7 @@ class MainActivity : Activity() {
 
     private fun recordFasterSwitchFailureIfNeeded(profile: VpnProfile, reason: String) {
         if (pendingFasterSwitchProfileId != profile.id) return
-        val message = "Faster tested failed: ${compactProfileTitle(profile).shortUi(20)} • ${reason.shortUi(44)}"
+        val message = "Lower-ping option failed: ${compactProfileTitle(profile).shortUi(20)} • ${reason.shortUi(44)}"
         fasterSwitchResultText = message
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
         status.text = message
@@ -3146,7 +3230,7 @@ class MainActivity : Activity() {
             ?: profile.lastVerifiedNetwork
         if (profileSwitchNoImprovementPenalty(profile, network) == 0) return null
         val networkTag = compactNetworkLabel(network.orEmpty())?.let { " • $it" }.orEmpty()
-        return "Recent switch: no improvement$networkTag"
+        return "Recent switch: ping did not improve$networkTag"
     }
 
     private fun saveFasterSwitchImprovement(
@@ -3173,7 +3257,7 @@ class MainActivity : Activity() {
         val network = compactNetworkLabel(appSettings.getString(KEY_LAST_FAST_SWITCH_NETWORK, null).orEmpty())
             ?.let { " • $it" }.orEmpty()
         val age = if (isLatencyFresh(epoch)) "fresh" else "old"
-        return "Last improvement: ${previous}ms → ${actual}ms • $age$network"
+        return "Last ping improvement: ${previous}ms → ${actual}ms • $age$network"
     }
 
     private fun scheduleFasterSwitchRefreshes() {
@@ -3214,16 +3298,16 @@ class MainActivity : Activity() {
     private fun showFasterSuggestionSheet(suggestion: FasterProfileSuggestion) {
         val latency = suggestion.signal.latencyMs ?: return
         showBottomSheet(
-            title = "Faster tested config",
-            subtitle = "${suggestion.signal.label} ${latency}ms vs current ${suggestion.activeLatencyMs}ms on ${compactNetworkLabel(currentNetworkLabel().orEmpty()) ?: "this network"}"
+            title = "Lower-ping tested config",
+            subtitle = "Measured ping: ${latency}ms vs current ping ${suggestion.activeLatencyMs}ms on ${compactNetworkLabel(currentNetworkLabel().orEmpty()) ?: "this network"}. This is not a throughput test."
         ) { dialog ->
-            addView(settingsHintText("This does not auto-test or auto-switch the queue. It only uses remembered results from this network."))
-            addView(bottomSheetActionRow("⇢", "Stop current + select", "Select ${compactProfileTitle(suggestion.profile).shortUi(24)}; Home will show Connect faster when ready") {
+            addView(settingsHintText("This does not auto-test or auto-switch the queue. It only uses remembered ping-latency results from this network, not throughput."))
+            addView(bottomSheetActionRow("⇢", "Stop current + select", "Select ${compactProfileTitle(suggestion.profile).shortUi(24)}; Home will show Connect lower-ping config when ready") {
                 dialog.dismiss()
                 setPendingFasterSwitch(suggestion)
                 stopImportedEngines()
                 loadProfile(suggestion.profile)
-                status.text = "Faster tested config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Wait for stop, then tap Connect faster."
+                status.text = "Lower-ping config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Wait for stop, then tap Connect lower-ping config."
                 scheduleFasterSwitchRefreshes()
                 updateDashboardSummary()
             })
@@ -4716,22 +4800,33 @@ class MainActivity : Activity() {
         return "${String.format(java.util.Locale.US, "%.1f", mb)} MB"
     }
 
-    private fun engineDiagnosticsText(wireGuard: EngineRuntimeSnapshot, xray: EngineRuntimeSnapshot): String {
+    private fun engineDiagnosticsText(
+        wireGuard: EngineRuntimeSnapshot,
+        xray: EngineRuntimeSnapshot,
+        safeForSharing: Boolean = false
+    ): String {
         fun formatEngine(name: String, snapshot: EngineRuntimeSnapshot): String = buildString {
             val current = snapshot.status
             appendLine("$name status: ${current.state}")
             appendLine("Verified: ${if (snapshot.verification.verified) "yes" else "no"}")
             appendLine("Verification scope: ${snapshot.verification.scope}")
-            appendLine("Profile ID: ${current.profileId ?: "unknown"}")
-            appendLine("Message: ${current.message}")
-            current.detail?.let { appendLine("Detail: $it") }
-            current.egressIp?.let { appendLine("Egress IP: $it") }
+            if (safeForSharing) {
+                appendLine("Profile ID, message detail, and egress IP: omitted")
+            } else {
+                appendLine("Profile ID: ${current.profileId ?: "unknown"}")
+                appendLine("Message: ${current.message}")
+                current.detail?.let { appendLine("Detail: $it") }
+                current.egressIp?.let { appendLine("Egress IP: $it") }
+            }
             appendLine("RX/TX: ${snapshot.stats.rxBytes ?: 0} / ${snapshot.stats.txBytes ?: 0} bytes")
-            snapshot.failure?.let { appendLine("Failure explanation: ${it.detail}") }
+            snapshot.failure?.let {
+                appendLine("Failure category: ${it.category.label}")
+                appendLine("Suggested action: ${it.suggestedAction}")
+                if (!safeForSharing) appendLine("Failure detail: ${it.detail}")
+            }
         }
-        return "Advanced engine diagnostics:\n" +
-            formatEngine("WireGuard", wireGuard) + "\n" +
-            formatEngine("Xray", xray)
+        val heading = if (safeForSharing) "VPN engine diagnostics (safe summary):\n" else "Advanced engine diagnostics:\n"
+        return heading + formatEngine("WireGuard", wireGuard) + "\n" + formatEngine("Xray", xray)
     }
 
     @Deprecated("Deprecated in Android framework, acceptable for this no-AndroidX skeleton.")
@@ -4922,6 +5017,7 @@ class MainActivity : Activity() {
     ) {
         val requestToken = operationToken ?: engineOperationCoordinator.beginPending(requestedProfileId)
         if (!engineOperationCoordinator.isCurrent(requestToken)) return
+        lastOperationFailureCategory = null
         if (pendingEngineStartHandoff?.operationToken != requestToken) clearPendingEngineStartHandoff()
         engineOperationCoordinator.setPhase(requestToken, EngineOperationPhase.PREPARING)
         val requestedProfile = requestedProfileId
@@ -4935,7 +5031,8 @@ class MainActivity : Activity() {
         val config = requestedProfile?.let(::loadProfileConfigQuiet) ?: currentSelectionConfig
         if (config == null) {
             engineOperationCoordinator.fail(requestToken)
-            status.text = "Import or pick a saved VPN profile first."
+            lastOperationFailureCategory = EngineFailureCategory.CONFIGURATION
+            status.text = "${EngineFailureCategory.CONFIGURATION.label}: Import or pick a saved VPN profile first."
             updateDashboardSummary()
             return
         }
@@ -4954,7 +5051,8 @@ class MainActivity : Activity() {
                 val adapter = engineAdapters.adapterFor(route.runtimeEngineId)
                 if (adapter == null) {
                     engineOperationCoordinator.fail(requestToken)
-                    status.text = "No runnable in-app engine is registered for ${route.adapterId.displayName}."
+                    lastOperationFailureCategory = EngineFailureCategory.ENGINE_START
+                    status.text = "${EngineFailureCategory.ENGINE_START.label}: No runnable in-app engine is registered for ${route.adapterId.displayName}."
                 } else {
                     val request = EnginePreparationRequest(
                         config = config,
@@ -5034,13 +5132,11 @@ class MainActivity : Activity() {
                     onFailure = { error ->
                         engineOperationCoordinator.fail(operationToken)
                         val message = "$engineName runtime config failed: ${error.message ?: error.javaClass.simpleName}"
-                        status.text = message
+                        val category = EngineFailureClassifier.classifyFailure(message, error.message)
+                        lastOperationFailureCategory = category
+                        status.text = "${category.label}: $message\n${category.suggestedAction}"
                         hubStatusTitle.text = if (route.runtimeEngineId == VpnEngineId.XRAY_CORE) "Needs mapper" else "Connection failed"
-                        hubStatusDetail.text = if (route.runtimeEngineId == VpnEngineId.XRAY_CORE) {
-                            "This profile stayed saved, but Xray could not prepare a supported runtime config."
-                        } else {
-                            "The selected profile could not be prepared for $engineName."
-                        }
+                        hubStatusDetail.text = "${category.label}. ${category.suggestedAction}"
                         maybeStartSmartFallback(message)
                     }
                 )
@@ -5066,9 +5162,11 @@ class MainActivity : Activity() {
             val error = startResult.exceptionOrNull()
             engineOperationCoordinator.fail(operationToken, clearRequestedEngine = true)
             val message = "$engineName start failed: ${error?.message ?: error?.javaClass?.simpleName ?: "unknown error"}"
-            status.text = message
+            val category = EngineFailureClassifier.classifyFailure(message, error?.message)
+            lastOperationFailureCategory = category
+            status.text = "${category.label}: $message\n${category.suggestedAction}"
             hubStatusTitle.text = "Connection failed"
-            hubStatusDetail.text = message
+            hubStatusDetail.text = "${category.label}. ${category.suggestedAction}"
             maybeStartSmartFallback(message)
         }
     }
@@ -5086,7 +5184,8 @@ class MainActivity : Activity() {
                 pendingEngineStartHandoff = null
                 mainHandler.removeCallbacks(engineHandoffPollRunnable)
                 val message = "The previous engine did not stop cleanly; ${pending.engineName} was not started."
-                status.text = message
+                lastOperationFailureCategory = EngineFailureCategory.STOP_OPERATION
+                status.text = "${EngineFailureCategory.STOP_OPERATION.label}: $message"
                 hubStatusTitle.text = "Connection failed"
                 hubStatusDetail.text = message
                 updateDashboardSummary()
@@ -5112,7 +5211,8 @@ class MainActivity : Activity() {
         } else {
             "Could not request the previous engine to stop; ${pending.engineName} was not started. ${failure?.message ?: failure?.javaClass?.simpleName ?: "Unknown error."}"
         }
-        status.text = message
+        lastOperationFailureCategory = EngineFailureCategory.STOP_OPERATION
+        status.text = "${EngineFailureCategory.STOP_OPERATION.label}: $message"
         hubStatusTitle.text = "Connection failed"
         hubStatusDetail.text = message
         updateDashboardSummary()
@@ -5128,6 +5228,7 @@ class MainActivity : Activity() {
 
     private fun stopImportedEngines() {
         clearPendingEngineStartHandoff()
+        lastOperationFailureCategory = null
         val serviceStatuses = listOf(
             engineAdapters.status(VpnEngineId.WIREGUARD_GO),
             engineAdapters.status(VpnEngineId.XRAY_CORE)
@@ -7510,6 +7611,7 @@ class MainActivity : Activity() {
         const val SUBSCRIPTION_TIMEOUT_MS = 15_000
         const val LIVE_REFRESH_CONNECTED_MS = 2_000L
         const val LIVE_REFRESH_IDLE_MS = 6_000L
+        const val TRAFFIC_RATE_DISPLAY_MAX_AGE_MS = 6_000L
         const val ENGINE_HANDOFF_POLL_INTERVAL_MS = 250L
         const val ENGINE_HANDOFF_TIMEOUT_MS = 15_000L
         const val PROFILE_TEST_FRESH_MS = 6 * 60 * 60 * 1000L

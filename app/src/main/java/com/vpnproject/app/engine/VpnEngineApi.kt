@@ -68,8 +68,10 @@ data class EngineVerificationSnapshot(
 
 data class EngineFailureExplanation(
     val engineId: VpnEngineId,
+    val category: EngineFailureCategory,
     val summary: String,
-    val detail: String
+    val detail: String,
+    val suggestedAction: String
 )
 
 data class EngineRuntimeSnapshot(
@@ -121,10 +123,13 @@ interface VpnEngineAdapter {
             currentStatus.message.takeIf { it.isNotBlank() },
             currentStatus.detail?.takeIf { it.isNotBlank() }
         ).distinct().joinToString("\n")
+        val category = EngineFailureClassifier.classify(currentStatus) ?: EngineFailureCategory.UNKNOWN
         return EngineFailureExplanation(
             engineId = engineId,
-            summary = "${engineId.displayName()} connection failed",
-            detail = detail.ifBlank { "The engine reported a failure without additional details." }
+            category = category,
+            summary = "${category.label}: ${engineId.displayName()} connection failed",
+            detail = detail.ifBlank { "The engine reported a failure without additional details." },
+            suggestedAction = category.suggestedAction
         )
     }
 

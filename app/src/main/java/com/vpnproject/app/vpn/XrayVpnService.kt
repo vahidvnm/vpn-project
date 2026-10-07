@@ -14,6 +14,7 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import com.vpnproject.app.core.IpClassifier
@@ -37,6 +38,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class XrayVpnService : VpnService(), CoreCallbackHandler {
     private val running = AtomicBoolean(false)
@@ -88,11 +90,13 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
     @Volatile
     private var reverifyThread: Thread? = null
 
+    private val pendingReverifyReason = AtomicReference<String?>(null)
+
     @Volatile
     private var networkCallbackRegistered: Boolean = false
 
     @Volatile
-    private var lastRebindRequestedAtEpochMs: Long = 0L
+    private var lastRebindRequestedAtElapsedMs: Long = 0L
 
     @Volatile
     private var activeNote: String = ""
@@ -519,6 +523,9 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                             verifierThread = null
                         }
                     }
+                    if (isCurrentVerification(generation, verificationRunId)) {
+                        drainPendingNetworkReverification(generation)
+                    }
                 }
             }, "xray-verifier-$generation-$verificationRunId").also { verifierThread = it }
         }
@@ -645,20 +652,40 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             .firstOrNull { IpClassifier.isPublicIpv4(it) }
     }
 
-    private fun scheduleNetworkReverification(reason: String) {
+    private fun hasNetworkCheckInProgress(): Boolean =
+        reverifyRunning.get() || lastStatus.state in setOf(EngineState.VERIFYING, EngineState.RECONNECTING)
+
+    private fun drainPendingNetworkReverification(generation: Int) {
+        if (!isCurrentLifecycle(generation)) return
+        pendingReverifyReason.getAndSet(null)?.let { reason ->
+            scheduleNetworkReverification(reason, coalescedNetworkChange = true)
+        }
+    }
+
+    private fun scheduleNetworkReverification(reason: String, coalescedNetworkChange: Boolean = false) {
         val generation = lifecycleGeneration.get()
         if (!running.get() || runningGeneration != generation || !isCurrentLifecycle(generation)) return
         val controller = coreController ?: return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val decision = rebindPolicy.evaluate(
             isRunning = running.get(),
-            nowEpochMs = now,
-            lastRequestedEpochMs = lastRebindRequestedAtEpochMs,
+            nowMonotonicMs = now,
+            lastRequestedMonotonicMs = if (coalescedNetworkChange) 0L else lastRebindRequestedAtElapsedMs,
             reason = reason
         )
-        if (!decision.shouldSchedule) return
-        lastRebindRequestedAtEpochMs = now
-        if (!reverifyRunning.compareAndSet(false, true)) return
+        if (!decision.shouldSchedule) {
+            if (hasNetworkCheckInProgress()) {
+                pendingReverifyReason.set(reason)
+                if (!hasNetworkCheckInProgress()) drainPendingNetworkReverification(generation)
+            }
+            return
+        }
+        if (!reverifyRunning.compareAndSet(false, true)) {
+            pendingReverifyReason.set(reason)
+            if (!hasNetworkCheckInProgress()) drainPendingNetworkReverification(generation)
+            return
+        }
+        lastRebindRequestedAtElapsedMs = now
 
         reverifyThread?.interrupt()
         reverifyThread = Thread({
@@ -703,7 +730,11 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
                     latencyMs = current.latencyMs
                 )
             } finally {
-                if (generation == lifecycleGeneration.get()) reverifyRunning.set(false)
+                if (generation == lifecycleGeneration.get()) {
+                    if (reverifyThread === Thread.currentThread()) reverifyThread = null
+                    reverifyRunning.set(false)
+                    drainPendingNetworkReverification(generation)
+                }
             }
         }, "xray-network-reverify-$generation")
         reverifyThread?.isDaemon = true
@@ -716,7 +747,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
         runCatching {
             connectivityManager.registerDefaultNetworkCallback(networkCallback)
             networkCallbackRegistered = true
-            lastRebindRequestedAtEpochMs = System.currentTimeMillis()
+            lastRebindRequestedAtElapsedMs = SystemClock.elapsedRealtime()
         }
     }
 
@@ -932,6 +963,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             runningGeneration = null
             verificationGeneration.incrementAndGet()
             reverifyRunning.set(false)
+            pendingReverifyReason.set(null)
             verifierThread?.interrupt()
             verifierThread = null
             reverifyThread?.interrupt()
@@ -942,7 +974,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             heartbeatThread = null
             activeNote = ""
             activeLocalHttpProxyPort = 0
-            lastRebindRequestedAtEpochMs = 0L
+            lastRebindRequestedAtElapsedMs = 0L
             val controller = coreController
             val tun = vpnInterface
             coreController = null

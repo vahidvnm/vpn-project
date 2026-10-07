@@ -76,7 +76,9 @@ class VpnEngineApiTest {
         val explanation = failed.explainFailure()
 
         assertEquals(VpnEngineId.WIREGUARD_GO, explanation?.engineId)
+        assertEquals(EngineFailureCategory.UNKNOWN, explanation?.category)
         assertTrue(explanation?.detail.orEmpty().contains("Endpoint is not reachable."))
+        assertTrue(explanation?.suggestedAction.orEmpty().contains("does not establish a root cause"))
         assertNull(running.explainFailure())
     }
 
