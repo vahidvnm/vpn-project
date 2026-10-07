@@ -45,10 +45,21 @@ jobs:
           gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug 2>&1 | tee gradle-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            tail_text=$(tail -80 gradle-build.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            failure_summary=$(grep -E -A12 -B3 '(^e: |^FAILURE:|FAILED|There were failing tests|AssertionError|What went wrong:|Execution failed)' gradle-build.log | tail -60)
+            if [ -z "$failure_summary" ]; then failure_summary=$(tail -40 gradle-build.log); fi
+            tail_text=$(printf '%s' "$failure_summary" | tail -c 3000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::error title=Gradle build failed::$tail_text"
             exit "$status"
           fi
+
+      - name: Upload Gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-ci-gradle-log
+          path: gradle-build.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
