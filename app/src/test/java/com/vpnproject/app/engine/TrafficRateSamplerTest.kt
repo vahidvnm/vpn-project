@@ -37,9 +37,12 @@ class TrafficRateSamplerTest {
         assertNull(sampler.sample("XRAY:profile-a", 5_000, 2_000, 1_000))
         assertNull(sampler.sample("XRAY:profile-b", 10, 10, 2_000))
         assertNull(sampler.sample("XRAY:profile-b", 20, 20, 8_000))
-        assertNull(sampler.sample("XRAY:profile-b", 30, 40, 9_000))
-        val rate = sampler.sample("XRAY:profile-b", 130, 140, 10_000)
+        val afterGapRate = sampler.sample("XRAY:profile-b", 30, 40, 9_000)
+        assertEquals(10.0, afterGapRate?.downloadBytesPerSecond ?: 0.0, 0.001)
+        assertEquals(20.0, afterGapRate?.uploadBytesPerSecond ?: 0.0, 0.001)
+        assertEquals(1_000L, afterGapRate?.intervalMs ?: -1L)
 
+        val rate = sampler.sample("XRAY:profile-b", 130, 140, 10_000)
         assertEquals(100.0, rate?.downloadBytesPerSecond ?: 0.0, 0.001)
         assertEquals(100.0, rate?.uploadBytesPerSecond ?: 0.0, 0.001)
     }
