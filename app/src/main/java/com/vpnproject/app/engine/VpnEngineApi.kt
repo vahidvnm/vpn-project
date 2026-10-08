@@ -21,7 +21,9 @@ data class EngineRuntimeOptions(
     val sniffingEnabled: Boolean = true,
     val muxEnabled: Boolean = false,
     val muxConcurrency: Int = 8,
-    val logLevel: String = "warning"
+    val logLevel: String = "warning",
+    val localDnsEnabled: Boolean = true,
+    val fakeDnsEnabled: Boolean = false
 )
 
 /** Prepared payloads remain engine-specific and are never rendered to diagnostics. */

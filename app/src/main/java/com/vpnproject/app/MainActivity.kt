@@ -369,8 +369,8 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Use + to import a config. Tests run per profile from its actions; VPN/TUN verification happens only when you connect."
-            textSize = 13.5f
+            text = "Connection, test, and DNS options in one place. Manual tests run only for the selected profile."
+            textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(PearlPalette.TEXT_MUTED)
             setPadding(dp(8), 0, dp(8), dp(8))
@@ -394,15 +394,20 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsConnectionSummaryText)
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsSmartFallbackValueText = TextView(this).apply { text = if (smartFallbackEnabled) "ON" else "OFF" }
+        settingsCard.addView(settingsGroupLabel("General"))
         settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") {
             showEngineStatus()
         })
-        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, checks the selected profile after import/select", settingsAutoTestValueText) { toggleAutoTest() })
-        settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default. If Connect fails, try a few nearby configs only", settingsSmartFallbackValueText) { toggleSmartFallback() })
-        settingsCard.addView(settingsRow("◷", "Test settings", "HTTPS target and options for per-profile tests") { showTestSettingsSheet() })
-        settingsCard.addView(settingsRow("▦", "Subscriptions", "Refresh saved subscription links") { showSubscriptionSettingsSheet() })
-        settingsCard.addView(settingsRow("⇄", "Routing & DNS", "DNS, per-app bypass, kill switch, and Xray controls") { showRoutingSettingsSheet() })
-        settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status and safe report; sensitive details omitted") { showDiagnosticsHubSheet() })
+        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default; checks the selected profile after import or selection", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default; tries a few nearby configs only after Connect fails", settingsSmartFallbackValueText) { toggleSmartFallback() })
+        settingsCard.addView(settingsGroupLabel("Tests"))
+        settingsCard.addView(settingsRow("◷", "Manual profile tests", "TCP delay and Real delay; never scans the queue") { showManualProfileTestsSheet() })
+        settingsCard.addView(settingsRow("⚙", "Test settings", "HTTPS target and options for per-profile tests") { showTestSettingsSheet() })
+        settingsCard.addView(settingsGroupLabel("Network"))
+        settingsCard.addView(settingsRow("▦", "Subscriptions", "Refresh and manage saved provider links") { showSubscriptionSettingsSheet() })
+        settingsCard.addView(settingsRow("⇄", "Routing & DNS", "VPN DNS, Local DNS, FakeDNS, app routing, and Xray controls") { showRoutingSettingsSheet() })
+        settingsCard.addView(settingsGroupLabel("Support"))
+        settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Connection status and safe report; sensitive details omitted") { showDiagnosticsHubSheet() })
         settingsCard.addView(settingsRow("⋯", "Advanced tools", "Rare VPN setup tools, hidden until needed") { toggleAdvancedPanel() })
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1110,6 +1115,66 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun selectedProfileForManualTest(): VpnProfile? {
+        val profileId = selectedProfileId ?: return selectedProfile
+        return runCatching { profileStore.profile(profileId) }.getOrNull()
+            ?: selectedProfile?.takeIf { it.id == profileId }
+    }
+
+    private fun supportsManualRealDelay(profile: VpnProfile): Boolean =
+        profile.kind in setOf(VpnProfileKind.XRAY, VpnProfileKind.SING_BOX, VpnProfileKind.CLASH) &&
+            profileRuntimeCompatibilityDeep(profile).connectReady
+
+    private fun addManualProfileTestRows(target: LinearLayout, dialog: Dialog) {
+        val selectedForTest = selectedProfileForManualTest()
+        target.addView(bottomSheetActionRow(
+            "TCP",
+            "Test TCP delays (TCPing)",
+            selectedForTest?.let { "Selected: ${compactProfileTitle(it)} • endpoint reachability only" }
+                ?: "Select one profile first • endpoint check only, not a VPN login"
+        ) {
+            val profile = selectedProfileForManualTest()
+            if (profile == null) {
+                setActionStatus("Select one saved profile in Locations or Home before starting a test.")
+                return@bottomSheetActionRow
+            }
+            dialog.dismiss()
+            runQuickLatencyTestForProfile(profile, "Test TCP delays (TCPing)")
+        })
+        target.addView(bottomSheetActionRow(
+            "◷",
+            "Test real delays",
+            selectedForTest?.let {
+                if (supportsManualRealDelay(it)) "Selected: ${compactProfileTitle(it)} • temporary Xray proxy check"
+                else "Selected profile needs an Xray-compatible runtime"
+            } ?: "Select one Xray-compatible profile first"
+        ) {
+            val profile = selectedProfileForManualTest()
+            if (profile == null) {
+                setActionStatus("Select one Xray-compatible profile in Locations or Home first.")
+                return@bottomSheetActionRow
+            }
+            if (!supportsManualRealDelay(profile)) {
+                setActionStatus("Real delay is available for Xray-ready V2Ray, sing-box, and Clash profiles only.")
+                return@bottomSheetActionRow
+            }
+            dialog.dismiss()
+            runRealDelayForProfile(profile)
+        })
+    }
+
+    private fun showManualProfileTestsSheet() {
+        val selected = selectedProfileForManualTest()
+        showBottomSheet(
+            title = "Manual profile tests",
+            subtitle = selected?.let { "Selected: ${compactProfileTitle(it)} • one profile per run" }
+                ?: "Select one saved profile first; no queue-wide scan."
+        ) { dialog ->
+            addView(settingsHintText("TCPing checks endpoint reachability only. Real delay uses a temporary Xray proxy check. Neither starts Android VPN or verifies the full TUN path."))
+            addManualProfileTestRows(this, dialog)
+        }
+    }
+
     private fun selectProfileForTest(profile: VpnProfile): Boolean {
         val config = loadProfileConfig(profile) ?: return false
         importedConfig = config
@@ -1387,6 +1452,19 @@ class MainActivity : Activity() {
         setPadding(0, 0, 0, dp(10))
     }
 
+    private fun settingsGroupLabel(textValue: String): TextView = TextView(this).apply {
+        text = textValue
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        setTextColor(PearlPalette.TEXT_MUTED)
+        setPadding(dp(8), dp(12), dp(4), dp(2))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
     private fun createActionButton(
         textValue: String,
         primary: Boolean = false,
@@ -1472,12 +1550,13 @@ class MainActivity : Activity() {
         trailing.gravity = Gravity.CENTER
         trailing.typeface = Typeface.DEFAULT_BOLD
         if (valueView != null) {
+            val isEnabled = trailing.text?.toString()?.equals("ON", ignoreCase = true) == true
             trailing.textSize = 11f
             trailing.setPadding(dp(10), dp(5), dp(10), dp(5))
-            trailing.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
+            trailing.setTextColor(if (isEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
             trailing.background = roundedBackground(
-                fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
-                strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
+                fillColor = if (isEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
+                strokeColor = if (isEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = 14
             )
             trailing.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
@@ -1498,7 +1577,7 @@ class MainActivity : Activity() {
             subtitle = "Per-profile checks only; no queue-wide probing."
         ) { dialog ->
             addView(settingsHintText(
-                "Quick check and Real delay are started from one profile's actions. They do not start Android VPN or prove the app-to-TUN path. Connect separately to verify that path."
+                "Start a manual test from Queue tools, Settings, or a single profile's actions. Tests never scan the queue, do not start Android VPN, and do not prove the app-to-TUN path. Connect separately to verify that path."
             ))
             addView(bottomSheetActionRow("URL", "Real delay URL", realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }.shortUi(62)) {
                 dialog.dismiss()
@@ -1538,10 +1617,50 @@ class MainActivity : Activity() {
             title = "Routing & DNS",
             subtitle = "Xray/VPN routing controls without cluttering Home."
         ) { dialog ->
-            addView(settingsHintText("These settings apply to embedded Xray connections. WireGuard/OpenVPN fallback behavior depends on their own configs/clients."))
+            addView(settingsHintText("DNS and Xray routing apply to embedded Xray profiles. Local DNS uses Xray's DNS module; FakeDNS requires it and can affect apps that expect real IP addresses. Reconnect after changing these options."))
             addView(bottomSheetActionRow("DNS", "VPN DNS", vpnDnsServers().joinToString(", ")) {
                 dialog.dismiss()
                 showDnsSettingsSheet()
+            })
+            val localDnsValue = TextView(this@MainActivity).apply {
+                text = if (xrayLocalDnsEnabled()) "ON" else "OFF"
+            }
+            addView(settingsRow(
+                "DNS",
+                "Enable local DNS",
+                "Send tunnel DNS requests to the Xray DNS module",
+                localDnsValue
+            ) {
+                val enabled = !xrayLocalDnsEnabled()
+                val editor = appSettings.edit().putBoolean(KEY_LOCAL_DNS_ENABLED, enabled)
+                if (!enabled) editor.putBoolean(KEY_FAKE_DNS_ENABLED, false)
+                editor.apply()
+                dialog.dismiss()
+                setActionStatus(
+                    if (enabled) "Local DNS enabled. Reconnect to apply."
+                    else "Local DNS disabled; FakeDNS was also turned off because it requires Local DNS. Reconnect to apply."
+                )
+            })
+            val fakeDnsValue = TextView(this@MainActivity).apply {
+                text = if (xrayFakeDnsEnabled()) "ON" else "OFF"
+            }
+            addView(settingsRow(
+                "F",
+                "Enable FakeDNS",
+                if (xrayLocalDnsEnabled()) "Synthetic IP answers; may affect apps that require real IPs"
+                else "Requires Local DNS; enabling it will also turn Local DNS on",
+                fakeDnsValue
+            ) {
+                val enabled = !xrayFakeDnsEnabled()
+                appSettings.edit()
+                    .putBoolean(KEY_LOCAL_DNS_ENABLED, true)
+                    .putBoolean(KEY_FAKE_DNS_ENABLED, enabled)
+                    .apply()
+                dialog.dismiss()
+                setActionStatus(
+                    if (enabled) "FakeDNS enabled and Local DNS enabled. Reconnect to apply; turn FakeDNS off if an app stops working."
+                    else "FakeDNS disabled. Local DNS remains enabled. Reconnect to apply."
+                )
             })
             val bypassCount = bypassAppPackages().size
             addView(bottomSheetActionRow("APP", "Bypass apps", if (bypassCount == 0) "No extra app bypasses; only this app bypasses itself" else "$bypassCount app package${if (bypassCount == 1) "" else "s"} bypass VPN") {
@@ -1709,9 +1828,6 @@ class MainActivity : Activity() {
             })
             addView(bottomSheetActionRow("FRG", "Fragment", "Planned • stays OFF until safely mapped for Xray") {
                 setActionStatus("Fragment is planned for a later advanced pass; it will stay OFF by default.")
-            })
-            addView(bottomSheetActionRow("DNS", "FakeDNS", "Planned • advanced only") {
-                setActionStatus("FakeDNS is planned for a later advanced pass; it can break some apps if enabled blindly.")
             })
             addView(bottomSheetActionRow("↺", "Reset Xray advanced", "Sniffing ON, Mux OFF, log warning") {
                 dialog.dismiss()
@@ -1910,6 +2026,11 @@ class MainActivity : Activity() {
     ).packages
 
     private fun xraySniffingEnabled(): Boolean = appSettings.getBoolean(KEY_XRAY_SNIFFING, true)
+
+    private fun xrayLocalDnsEnabled(): Boolean = appSettings.getBoolean(KEY_LOCAL_DNS_ENABLED, true)
+
+    private fun xrayFakeDnsEnabled(): Boolean =
+        appSettings.getBoolean(KEY_FAKE_DNS_ENABLED, false) && xrayLocalDnsEnabled()
 
     private fun xrayMuxEnabled(): Boolean = appSettings.getBoolean(KEY_XRAY_MUX_ENABLED, false)
 
@@ -4583,7 +4704,9 @@ class MainActivity : Activity() {
                             sniffingEnabled = xraySniffingEnabled(),
                             muxEnabled = xrayMuxEnabled(),
                             muxConcurrency = xrayMuxConcurrency(),
-                            logLevel = xrayLogLevel()
+                            logLevel = xrayLogLevel(),
+                            localDnsEnabled = xrayLocalDnsEnabled(),
+                            fakeDnsEnabled = xrayFakeDnsEnabled()
                         )
                     )
                     prepareAndStartEngine(route, adapter, request, requestToken)
@@ -6297,7 +6420,7 @@ class MainActivity : Activity() {
     ) {
         showBottomSheet(
             title = "Queue tools",
-            subtitle = "$scope • Filters and subscription management; test one profile at a time from its actions."
+            subtitle = "$scope • test the selected profile only; no queue-wide scan."
         ) { dialog ->
             addView(bottomSheetActionRow("◎", "Runtime filter", locationRuntimeFilterDescription()) {
                 dialog.dismiss()
@@ -6307,6 +6430,7 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 showLocationSortSheet()
             })
+            addManualProfileTestRows(this, dialog)
             if (activeGroup != null) {
                 val total = subscriptionTotalCount(activeGroup)
                 val canLoadMore = !profileStore.loadSubscriptionUrl(activeGroup.id).isNullOrBlank() &&
@@ -7021,6 +7145,8 @@ class MainActivity : Activity() {
         const val KEY_SMART_FALLBACK_ENABLED = "smart_fallback_enabled"
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"
         const val KEY_VPN_DNS_SERVERS = "vpn_dns_servers"
+        const val KEY_LOCAL_DNS_ENABLED = "local_dns_enabled"
+        const val KEY_FAKE_DNS_ENABLED = "fake_dns_enabled"
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
         const val KEY_XRAY_SNIFFING = "xray_sniffing"
         const val KEY_XRAY_MUX_ENABLED = "xray_mux_enabled"

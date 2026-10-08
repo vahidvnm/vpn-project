@@ -72,7 +72,9 @@ private class XrayVpnEngineAdapter(
             muxEnabled = options.muxEnabled,
             muxConcurrency = options.muxConcurrency,
             logLevel = options.logLevel,
-            localHttpProxyPort = allocateLocalProxyPort()
+            localHttpProxyPort = allocateLocalProxyPort(),
+            localDnsEnabled = options.localDnsEnabled,
+            fakeDnsEnabled = options.fakeDnsEnabled
         )
         return PreparedXrayEngineStart(
             runtime = runtime,

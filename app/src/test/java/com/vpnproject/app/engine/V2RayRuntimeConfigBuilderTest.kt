@@ -485,6 +485,62 @@ class V2RayRuntimeConfigBuilderTest {
     }
 
     @Test
+    fun localDnsToggleControlsInternalDnsOutboundAndPort53Routing() {
+        val config = ImportedConfig(
+            kind = ConfigKind.V2RAY,
+            originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#LocalDns",
+            endpoints = emptyList()
+        )
+
+        val enabled = V2RayRuntimeConfigBuilder.build(config, localDnsEnabled = true)
+        assertContains(enabled.configJson, "\"tag\": \"dns-out\"")
+        assertContains(enabled.configJson, "\"inboundTag\": [\"tun\"]")
+        assertContains(enabled.configJson, "\"network\": \"tcp,udp\", \"port\": \"53\"")
+        assertTrue(
+            enabled.configJson.indexOf("\"port\": \"53\"") <
+                enabled.configJson.indexOf("\"outboundTag\": \"direct\"")
+        )
+
+        val disabled = V2RayRuntimeConfigBuilder.build(config, localDnsEnabled = false)
+        assertFalse(disabled.configJson.contains("\"tag\": \"dns-out\""))
+        assertFalse(disabled.configJson.contains("\"port\": \"53\""))
+    }
+
+    @Test
+    fun fakeDnsAddsPoolsServerPrioritySniffingAndProxyRouteOnlyWithLocalDns() {
+        val config = ImportedConfig(
+            kind = ConfigKind.V2RAY,
+            originalText = "vless://11111111-1111-1111-1111-111111111111@edge.example:443?type=ws&security=tls&host=front.example&path=%2Fws&sni=front.example#FakeDns",
+            endpoints = emptyList()
+        )
+
+        val enabled = V2RayRuntimeConfigBuilder.build(
+            config,
+            sniffingEnabled = false,
+            localDnsEnabled = true,
+            fakeDnsEnabled = true
+        ).configJson
+        assertContains(enabled, "\"fakedns\": [")
+        assertContains(enabled, "\"servers\": [\"fakedns\",\"1.1.1.1\",\"8.8.8.8\"]")
+        assertContains(enabled, "\"destOverride\": [\"fakedns\"]")
+        assertContains(enabled, "\"ipPool\": \"198.18.0.0/15\"")
+        assertContains(enabled, "\"ipPool\": \"fc00::/18\"")
+        assertContains(enabled, "\"ip\": [\"198.18.0.0/15\", \"fc00::/18\"], \"outboundTag\": \"proxy\"")
+        assertTrue(
+            enabled.indexOf("\"outboundTag\": \"proxy\"") <
+                enabled.indexOf("\"outboundTag\": \"direct\"")
+        )
+
+        val disabledWithoutLocalDns = V2RayRuntimeConfigBuilder.build(
+            config,
+            localDnsEnabled = false,
+            fakeDnsEnabled = true
+        ).configJson
+        assertFalse(disabledWithoutLocalDns.contains("fakedns"))
+        assertFalse(disabledWithoutLocalDns.contains("dns-out"))
+    }
+
+    @Test
     fun invalidDnsInputFallsBackOnlyToSafePublicDnsAddresses() {
         val runtime = V2RayRuntimeConfigBuilder.build(
             ImportedConfig(

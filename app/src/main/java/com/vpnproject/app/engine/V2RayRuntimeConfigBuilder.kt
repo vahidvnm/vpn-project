@@ -19,7 +19,9 @@ object V2RayRuntimeConfigBuilder {
         muxEnabled: Boolean = false,
         muxConcurrency: Int = DEFAULT_MUX_CONCURRENCY,
         logLevel: String = DEFAULT_LOG_LEVEL,
-        localHttpProxyPort: Int? = null
+        localHttpProxyPort: Int? = null,
+        localDnsEnabled: Boolean = true,
+        fakeDnsEnabled: Boolean = false
     ): V2RayRuntimeConfig {
         val prepared = prepareProfile(config)
         val fieldSummary = runtimeFieldSummary(prepared.profile)
@@ -32,7 +34,9 @@ object V2RayRuntimeConfigBuilder {
                 muxEnabled = muxEnabled,
                 muxConcurrency = muxConcurrency,
                 logLevel = logLevel,
-                localHttpProxyPort = localHttpProxyPort
+                localHttpProxyPort = localHttpProxyPort,
+                localDnsEnabled = localDnsEnabled,
+                fakeDnsEnabled = fakeDnsEnabled
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-import",
             localHttpProxyPort = localHttpProxyPort?.takeIf { it in MIN_LOCAL_HTTP_PROXY_PORT..MAX_LOCAL_HTTP_PROXY_PORT },
@@ -59,7 +63,9 @@ object V2RayRuntimeConfigBuilder {
                 muxEnabled = muxEnabled,
                 muxConcurrency = muxConcurrency,
                 logLevel = logLevel,
-                localHttpProxyPort = null
+                localHttpProxyPort = null,
+                localDnsEnabled = false,
+                fakeDnsEnabled = false
             ),
             profileName = prepared.profile.name ?: config.name ?: "${prepared.source.lowercase(java.util.Locale.US)}-real-delay",
             note = "Prepared ${prepared.source} ${prepared.profile.scheme.uppercase()} ${prepared.profile.address}:${prepared.profile.port} for Xray core real-delay probe without Android VPN/TUN.$fieldSummary",
@@ -293,16 +299,28 @@ object V2RayRuntimeConfigBuilder {
         muxEnabled: Boolean,
         muxConcurrency: Int,
         logLevel: String,
-        localHttpProxyPort: Int?
+        localHttpProxyPort: Int?,
+        localDnsEnabled: Boolean,
+        fakeDnsEnabled: Boolean
     ): String {
         val outbound = buildOutbound(profile, muxEnabled, muxConcurrency)
+        val useLocalDns = includeTunInbound && localDnsEnabled
+        val useFakeDns = useLocalDns && fakeDnsEnabled
         val safeDnsServers = VpnRoutingInputParser.parseDnsServers(dnsServers.joinToString("\n")).servers
             .ifEmpty { DEFAULT_DNS_SERVERS }
-        val dnsJson = safeDnsServers.joinToString(prefix = "[", postfix = "]") { it.json() }
+        val dnsServerList = buildList {
+            if (useFakeDns) add("fakedns")
+            addAll(safeDnsServers)
+        }
+        val dnsJson = dnsServerList.joinToString(prefix = "[", postfix = "]") { it.json() }
         val lanBypassJson = XrayRoutePolicy.LAN_BYPASS_CIDRS
             .joinToString(prefix = "[", postfix = "]") { it.json() }
-        val sniffingJson = if (sniffingEnabled) {
-            "\"sniffing\": { \"enabled\": true, \"destOverride\": [\"http\", \"tls\", \"quic\"] }"
+        val sniffingDestOverrides = buildList {
+            if (sniffingEnabled) addAll(listOf("http", "tls", "quic"))
+            if (useFakeDns) add("fakedns")
+        }
+        val sniffingJson = if (sniffingDestOverrides.isNotEmpty()) {
+            "\"sniffing\": { \"enabled\": true, \"destOverride\": ${sniffingDestOverrides.joinToString(prefix = "[", postfix = "]") { it.json() }} }"
         } else {
             "\"sniffing\": { \"enabled\": false }"
         }
@@ -336,6 +354,47 @@ object V2RayRuntimeConfigBuilder {
         } else {
             inboundBlocks.joinToString(prefix = "[\n", postfix = "\n]", separator = ",\n")
         }
+        val outboundBlocks = mutableListOf(outbound)
+        if (useLocalDns) {
+            outboundBlocks += """
+                { "tag": "dns-out", "protocol": "dns" }
+            """.trimIndent()
+        }
+        outboundBlocks += """
+            { "tag": "direct", "protocol": "freedom", "streamSettings": { "sockopt": { "domainStrategy": "UseIP" } } }
+        """.trimIndent()
+        outboundBlocks += """
+            { "tag": "block", "protocol": "blackhole" }
+        """.trimIndent()
+        val outbounds = outboundBlocks.joinToString(prefix = "[\n", postfix = "\n]", separator = ",\n")
+
+        val routingRules = mutableListOf<String>()
+        if (useLocalDns) {
+            routingRules += """
+                { "type": "field", "inboundTag": ["tun"], "network": "tcp,udp", "port": "53", "outboundTag": "dns-out" }
+            """.trimIndent()
+        }
+        if (useFakeDns) {
+            // Fake IPv6 answers fall inside the private-use range, so route the fake pools
+            // before the LAN-bypass rule rather than accidentally sending them direct.
+            routingRules += """
+                { "type": "field", "ip": ["198.18.0.0/15", "fc00::/18"], "outboundTag": "proxy" }
+            """.trimIndent()
+        }
+        routingRules += """
+            { "type": "field", "ip": $lanBypassJson, "outboundTag": "direct" }
+        """.trimIndent()
+        val rulesJson = routingRules.joinToString(prefix = "[\n", postfix = "\n]", separator = ",\n")
+        val fakeDnsConfig = if (useFakeDns) {
+            """
+                "fakedns": [
+                  { "ipPool": "198.18.0.0/15", "poolSize": 32768 },
+                  { "ipPool": "fc00::/18", "poolSize": 32768 }
+                ],
+            """.trimIndent()
+        } else {
+            ""
+        }
         val safeLogLevel = safeLogLevel(logLevel)
         return """
             {
@@ -346,17 +405,12 @@ object V2RayRuntimeConfigBuilder {
                 "system": { "statsOutboundUplink": true, "statsOutboundDownlink": true }
               },
               "inbounds": $inbounds,
-              "outbounds": [
-                $outbound,
-                { "tag": "direct", "protocol": "freedom", "streamSettings": { "sockopt": { "domainStrategy": "UseIP" } } },
-                { "tag": "block", "protocol": "blackhole" }
-              ],
+              "outbounds": $outbounds,
               "routing": {
                 "domainStrategy": "AsIs",
-                "rules": [
-                  { "type": "field", "ip": $lanBypassJson, "outboundTag": "direct" }
-                ]
+                "rules": $rulesJson
               },
+              $fakeDnsConfig
               "dns": { "servers": $dnsJson }
             }
         """.trimIndent()
