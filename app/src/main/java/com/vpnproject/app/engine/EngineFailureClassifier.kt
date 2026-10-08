@@ -21,7 +21,7 @@ enum class EngineFailureCategory(
     ),
     CONFIGURATION(
         label = "Profile or configuration",
-        suggestedAction = "Check the user-supplied profile and runtime compatibility. Keep credentials and raw configuration private."
+        suggestedAction = "Review the provider-supplied profile and required transport settings (TLS/REALITY where applicable); re-import a corrected config. Do not weaken encryption policy."
     ),
     NETWORK_RECOVERY(
         label = "Network recovery",
@@ -62,11 +62,15 @@ object EngineFailureClassifier {
             "rebind" in combined || "network recovery" in combined ->
                 EngineFailureCategory.NETWORK_RECOVERY
             "config is missing" in combined ||
+                "config error" in combined ||
                 "runtime config is empty" in combined ||
                 "unsupported transport" in combined ||
                 "invalid configuration" in combined ||
                 "invalid config" in combined ||
                 "failed to parse config" in combined ||
+                "failed to parse json config" in combined ||
+                "failed to build outbound config" in combined ||
+                "without tls or other encryption is prohibited" in combined ||
                 "runtime config failed" in combined ->
                 EngineFailureCategory.CONFIGURATION
             normalizedMessage.startsWith("xray startup failed:") ||

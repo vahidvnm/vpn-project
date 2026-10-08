@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -32,6 +33,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.Gravity
@@ -109,10 +111,6 @@ import com.google.zxing.integration.android.IntentIntegrator
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.Collections
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
 
 
 private object PearlPalette {
@@ -174,6 +172,7 @@ class MainActivity : Activity() {
     private lateinit var topProfileSummaryText: TextView
     private lateinit var primaryActionButton: PowerRingButton
     private lateinit var protectionBadge: TextView
+    private lateinit var protectionDetailsText: TextView
     private lateinit var liveStatsBadge: TextView
     private lateinit var homeProfileIconText: TextView
     private lateinit var homeProfileNameText: TextView
@@ -183,8 +182,6 @@ class MainActivity : Activity() {
     private lateinit var statDownText: TextView
     private lateinit var statUpText: TextView
     private lateinit var statEngineText: TextView
-    private lateinit var autoTestToggleButton: TextView
-    private lateinit var autoTestStatusText: TextView
     private var autoTestEnabled = false
     @Volatile
     private var autoTestInFlight = false
@@ -196,15 +193,12 @@ class MainActivity : Activity() {
     private var smartFallbackSessionId = 0
     private var smartFallbackSuppressFailureUntilMs = 0L
     private lateinit var favoriteActionButton: Button
-    private lateinit var locationTestStatusText: TextView
     private var locationSearchQuery = ""
     private var selectedLocationGroupFilter = LOCATION_FILTER_ALL
     private var selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
     private var selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
     private var locationRenderLimit = INITIAL_PROFILE_RENDER_ROWS
     private var locationRenderKey = ""
-    private val profileRowStatusViews = mutableMapOf<String, TextView>()
-    private val profileRowSubtitleViews = mutableMapOf<String, TextView>()
     private val xrayDescriptorCache = mutableMapOf<String, Pair<Long, V2RayLinkInspector.Descriptor?>>()
     private val profileLocationLabelCache = mutableMapOf<String, Pair<Long, LocationDisplayLabel>>()
     private val profileRuntimeCompatibilityCache = mutableMapOf<String, Pair<Long, ProfileRuntimeCompatibility>>()
@@ -216,7 +210,6 @@ class MainActivity : Activity() {
     private lateinit var profilesSection: LinearLayout
     private lateinit var toolsSection: LinearLayout
     private lateinit var advancedPanel: LinearLayout
-    private lateinit var advancedDiagnostics: TextView
     private lateinit var settingsConnectionSummaryText: TextView
     private lateinit var settingsAutoTestValueText: TextView
     private var advancedVisible = false
@@ -284,6 +277,7 @@ class MainActivity : Activity() {
     private val profileStore by lazy { SecureProfileStore(this) }
     private val connectivityManager by lazy { getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private var actionStatusHideRunnable: Runnable? = null
     private val appSettings by lazy { getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE) }
     private val routeHealthCache = RouteHealthCache()
 
@@ -323,11 +317,21 @@ class MainActivity : Activity() {
         content.addView(createTopBar())
         status = TextView(this).apply {
             text = "Ready. Import your own config, then connect."
-            textSize = 12f
+            textSize = 12.5f
             gravity = Gravity.CENTER
-            maxLines = 2
+            maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
-            setTextColor(PearlPalette.TEXT_MUTED)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            setTextColor(PearlPalette.INK_SOFT)
+            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, dp(2), 0, dp(6))
+            }
             visibility = View.GONE
         }
         content.addView(status)
@@ -363,7 +367,7 @@ class MainActivity : Activity() {
         val settingsCard = createCard()
         settingsCard.addView(sectionLabel("Settings"))
         settingsCard.addView(TextView(this).apply {
-            text = "Use top + to add configs. Queue tests run only when requested and cover every config in the selected group."
+            text = "Use + to import a config. Tests run per profile from its actions; VPN/TUN verification happens only when you connect."
             textSize = 13.5f
             gravity = Gravity.CENTER
             setTextColor(PearlPalette.TEXT_MUTED)
@@ -388,14 +392,16 @@ class MainActivity : Activity() {
         settingsCard.addView(settingsConnectionSummaryText)
         settingsAutoTestValueText = TextView(this).apply { text = if (autoTestEnabled) "ON" else "OFF" }
         settingsSmartFallbackValueText = TextView(this).apply { text = if (smartFallbackEnabled) "ON" else "OFF" }
-        settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") { showEngineStatus() })
-        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, selected configs run quick no-VPN latency after import/select", settingsAutoTestValueText) { toggleAutoTest() })
+        settingsCard.addView(settingsRow("↻", "Refresh status", "Update VPN state, traffic, and verification") {
+            showEngineStatus()
+        })
+        settingsCard.addView(settingsRow("✓", "Auto latency", "OFF by default. When ON, checks the selected profile after import/select", settingsAutoTestValueText) { toggleAutoTest() })
         settingsCard.addView(settingsRow("⇢", "Smart fallback", "OFF by default. If Connect fails, try a few nearby configs only", settingsSmartFallbackValueText) { toggleSmartFallback() })
-        settingsCard.addView(settingsRow("◷", "Test settings", "All configs in selected queue, Real delay URL, and row updates") { showTestSettingsSheet() })
-        settingsCard.addView(settingsRow("▦", "Subscriptions", "Groups, refresh all, load more, and search") { showSubscriptionSettingsSheet() })
+        settingsCard.addView(settingsRow("◷", "Test settings", "HTTPS target and options for per-profile tests") { showTestSettingsSheet() })
+        settingsCard.addView(settingsRow("▦", "Subscriptions", "Refresh saved subscription links") { showSubscriptionSettingsSheet() })
         settingsCard.addView(settingsRow("⇄", "Routing & DNS", "DNS, per-app bypass, kill switch, and Xray controls") { showRoutingSettingsSheet() })
-        settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status, safe report, and full technical log") { showDiagnosticsHubSheet() })
-        settingsCard.addView(settingsRow("⋯", "Advanced tools", "Technical tools and full diagnostics, hidden by default") { toggleAdvancedPanel() })
+        settingsCard.addView(settingsRow("▤", "Diagnostics / logs", "Status and safe report; sensitive details omitted") { showDiagnosticsHubSheet() })
+        settingsCard.addView(settingsRow("⋯", "Advanced tools", "Rare VPN setup tools, hidden until needed") { toggleAdvancedPanel() })
         advancedPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -405,21 +411,7 @@ class MainActivity : Activity() {
         advancedVisible = false
         advancedPanel.addView(sectionLabel("Advanced"))
         advancedPanel.addView(settingsHintText("Rare tools are grouped here so Settings stays clean. Diagnostics and routing have their own rows above."))
-        advancedDiagnostics = TextView(this).apply {
-            text = "Advanced diagnostics will appear here after refresh/probe."
-            textSize = 12.5f
-            gravity = Gravity.START
-            maxLines = 10
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(PearlPalette.INK_SOFT)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { showDiagnosticsLogSheet() }
-            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 16)
-        }
         advancedPanel.addView(settingsRow("▣", "Technical tools", "VPN permission, OpenVPN handoff, and bootstrap lab checks") { showTechnicalToolsSheet() })
-        advancedPanel.addView(settingsRow("▤", "Full diagnostics log", "Open the current technical log in a scrollable sheet") { showDiagnosticsLogSheet() })
         settingsCard.addView(advancedPanel)
         toolsSection.addView(settingsCard)
         content.addView(View(this).apply {
@@ -471,7 +463,6 @@ class MainActivity : Activity() {
         restoreLatestProfileMetadata()
         refreshProfileButtons()
         updateDashboardSummary()
-        refreshAutoTestSummary()
         showSection(AppSection.HOME)
         startLiveDashboardRefresh()
     }
@@ -487,6 +478,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        actionStatusHideRunnable?.let(mainHandler::removeCallbacks)
+        actionStatusHideRunnable = null
         pendingEngineStartHandoff?.let { engineOperationCoordinator.cancel(it.operationToken) }
         clearPendingEngineStartHandoff()
         // A permission/prepare callback must not start a service after this
@@ -513,10 +506,10 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
             setTextColor(PearlPalette.INK)
-            background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 22)
+            background = rippleRoundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 22)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(3).toFloat()
             setPadding(dp(14), 0, dp(14), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
                 setMargins(0, 0, dp(10), 0)
             }
             isClickable = true
@@ -534,11 +527,11 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTextColor(if (textValue == "+") PearlPalette.INK else PearlPalette.INK)
-        background = roundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 20)
+        background = rippleRoundedBackground(PearlPalette.GLASS, PearlPalette.HAIRLINE, radiusDp = 20)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) elevation = dp(6).toFloat()
         isClickable = true
         isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
             setMargins(0, 0, 0, 0)
         }
         setOnClickListener { onClick() }
@@ -627,27 +620,22 @@ class MainActivity : Activity() {
         setPadding(dp(9), dp(9), dp(7), dp(9))
         background = roundedBackground(PearlPalette.GLASS_SOFT, PearlPalette.HAIRLINE, radiusDp = 20)
         protectionBadge = TextView(this@MainActivity).apply {
-            text = "✓  Protected  ›"
+            text = "Protection"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(PearlPalette.INK)
             maxLines = 1
         }
         addView(protectionBadge)
-        listOf(
-            "◎  Real IP Hidden",
-            "▣  Encrypted Traffic",
-            "◌  No Logs",
-            "✦  Kill Switch Active"
-        ).forEach { row ->
-            addView(TextView(this@MainActivity).apply {
-                text = row
-                textSize = 9.5f
-                setTextColor(PearlPalette.TEXT_MUTED)
-                maxLines = 1
-                setPadding(0, dp(5), 0, 0)
-            })
+        protectionDetailsText = TextView(this@MainActivity).apply {
+            text = "Egress: not checked\nTunnel: not tested\nSecurity: config-based\nLockdown: not checked"
+            textSize = 9.5f
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(PearlPalette.TEXT_MUTED)
+            setPadding(0, dp(5), 0, 0)
         }
+        addView(protectionDetailsText)
     }
 
     private fun createSpeedCard(): LinearLayout = LinearLayout(this).apply {
@@ -840,7 +828,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(6), dp(6), dp(6), dp(6))
-        background = roundedBackground(PearlPalette.GLASS_HEAVY, PearlPalette.HAIRLINE, radiusDp = 24)
+        background = rippleRoundedBackground(PearlPalette.GLASS_HEAVY, PearlPalette.HAIRLINE, radiusDp = 24)
         isClickable = true
         isFocusable = true
         layoutParams = LinearLayout.LayoutParams(
@@ -919,7 +907,7 @@ class MainActivity : Activity() {
         maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
         setTextColor(PearlPalette.INK)
-        background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.CHAMPAGNE, radiusDp = 20)
+        background = rippleRoundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.CHAMPAGNE, radiusDp = 20)
         setPadding(dp(12), dp(10), dp(12), dp(10))
         layoutParams = LinearLayout.LayoutParams(
             compactSelectorWidth(),
@@ -931,81 +919,17 @@ class MainActivity : Activity() {
         isFocusable = true
     }
 
-    private fun createAutoTestCard(): LinearLayout = createCard().apply {
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(this@MainActivity).apply {
-                    text = "Smart auto test"
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(PearlPalette.INK)
-                })
-                autoTestStatusText = TextView(this@MainActivity).apply {
-                    text = "Ranks saved configs and selects the best reachable one"
-                    textSize = 11.5f
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(PearlPalette.TEXT_MUTED)
-                }
-                addView(autoTestStatusText)
-            })
-            autoTestToggleButton = TextView(this@MainActivity).apply {
-                text = "ON"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(PearlPalette.PEARL_WHITE)
-                background = roundedBackground(PearlPalette.INK, PearlPalette.BORDER, radiusDp = 18)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { toggleAutoTest() }
-            }
-            addView(autoTestToggleButton)
-            addView(TextView(this@MainActivity).apply {
-                text = "Rank"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(PearlPalette.INK)
-                background = roundedBackground(PearlPalette.CHAMPAGNE_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(dp(8), 0, 0, 0)
-                }
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { rankSavedProfilesAndSelectBest("manual") }
-            })
-        })
-    }
-
     private fun toggleAutoTest() {
         autoTestEnabled = !autoTestEnabled
         appSettings.edit().putBoolean(KEY_AUTO_TEST_ENABLED, autoTestEnabled).apply()
         updateAutoTestToggle()
         setAutoTestStatus(
-            if (autoTestEnabled) "Auto latency enabled: selected configs will run quick no-VPN latency."
-            else "Auto latency disabled. Queue tests stay manual; a requested batch covers the whole selected queue."
+            if (autoTestEnabled) "Auto latency enabled: the selected profile gets a quick no-VPN latency check."
+            else "Auto latency disabled. Manual checks start only from one selected profile."
         )
     }
 
     private fun updateAutoTestToggle() {
-        if (::autoTestToggleButton.isInitialized) {
-            autoTestToggleButton.text = if (autoTestEnabled) "ON" else "OFF"
-            autoTestToggleButton.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
-            autoTestToggleButton.background = roundedBackground(
-                fillColor = if (autoTestEnabled) PearlPalette.INK else PearlPalette.PEARL_MID,
-                strokeColor = if (autoTestEnabled) PearlPalette.BORDER else PearlPalette.HAIRLINE,
-                radiusDp = 18
-            )
-        }
         if (::settingsAutoTestValueText.isInitialized) {
             settingsAutoTestValueText.text = if (autoTestEnabled) "ON" else "OFF"
             settingsAutoTestValueText.setTextColor(if (autoTestEnabled) PearlPalette.PEARL_WHITE else PearlPalette.INK_SOFT)
@@ -1044,30 +968,26 @@ class MainActivity : Activity() {
     }
 
     private fun setActionStatus(message: String) {
-        if (::topProfileSummaryText.isInitialized) {
-            topProfileSummaryText.text = message.shortUi(72)
+        if (!::status.isInitialized) return
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { setActionStatus(message) }
+            return
         }
-        if (::locationTestStatusText.isInitialized) {
-            locationTestStatusText.text = message.shortUi(110)
-            locationTestStatusText.visibility = View.GONE
+
+        val visibleMessage = message.shortUi(160)
+        status.text = visibleMessage
+        status.visibility = View.VISIBLE
+        status.announceForAccessibility(visibleMessage)
+        actionStatusHideRunnable?.let(mainHandler::removeCallbacks)
+        val hideStatus = Runnable {
+            if (status.text?.toString() == visibleMessage) status.visibility = View.GONE
         }
-        status.text = message
-        status.visibility = View.GONE
+        actionStatusHideRunnable = hideStatus
+        mainHandler.postDelayed(hideStatus, ACTION_STATUS_VISIBLE_DURATION_MS)
     }
 
     private fun setAutoTestStatus(message: String) {
-        if (::autoTestStatusText.isInitialized) autoTestStatusText.text = message.shortUi(88)
         setActionStatus(message)
-    }
-
-    private fun refreshAutoTestSummary() {
-        if (!::autoTestStatusText.isInitialized || autoTestInFlight) return
-        autoTestStatusText.text = when {
-            !autoTestEnabled -> "Auto latency OFF"
-            selectedProfile?.lastVerifiedEpochMs != null -> selectedProfile?.lastVerifiedLabel()?.shortUi(88)
-                ?: "Last real latency saved for selected config"
-            else -> "Auto latency ON for selected config only (no VPN connect)"
-        }
     }
 
     private fun autoTestsShouldPauseForLiveVpn(): Boolean = isLiveState(currentHubStatus().state)
@@ -1088,12 +1008,7 @@ class MainActivity : Activity() {
         }, 450L)
     }
 
-    private fun maybeAutoRankBestProfile(reason: String) {
-        // Queue-wide ranking is never automatic; subscriptions can contain hundreds or thousands of configs.
-        // Use Locations > Queue tools only after the user explicitly requests a full-queue test.
-    }
-
-    private fun autoTestSelectedConfig(reason: String, testLabel: String = "Quick check") {
+    private fun autoTestSelectedConfig(testLabel: String = "Quick check") {
         if (autoTestsShouldPauseForLiveVpn()) {
             setAutoTestStatus("$testLabel paused while VPN is running")
             return
@@ -1114,9 +1029,8 @@ class MainActivity : Activity() {
         Thread {
             val summary = try {
                 probeConfigSummary(config)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 ConfigProbeSummary(
-                    report = "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}",
                     okCount = 0,
                     failedCount = 1,
                     bestLatencyMs = null,
@@ -1145,161 +1059,10 @@ class MainActivity : Activity() {
                     selectedProfileId = updatedProfile.id
                 }
                 setAutoTestStatus(message)
-                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = summary.report
                 refreshProfileButtons(syncVerified = false)
                 updateDashboardSummary()
             }
         }.start()
-    }
-
-    private fun rankSavedProfilesAndSelectBest(reason: String, autoSelect: Boolean = true) {
-        val savedProfiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
-            setAutoTestStatus("Could not load profiles for ping ranking: ${error.message ?: error.javaClass.simpleName}")
-            return
-        }
-        rankProfilesAndSelectBest(
-            inputProfiles = savedProfiles,
-            reason = reason,
-            autoSelect = autoSelect,
-            scopeLabel = "saved configs"
-        )
-    }
-
-    private fun rankProfilesAndSelectBest(
-        inputProfiles: List<VpnProfile>,
-        reason: String,
-        autoSelect: Boolean = true,
-        scopeLabel: String = "configs",
-        testLabel: String = "Quick check"
-    ) {
-        if (autoTestsShouldPauseForLiveVpn()) {
-            setAutoTestStatus("$testLabel paused while VPN is running")
-            return
-        }
-        if (autoTestInFlight) {
-            setAutoTestStatus("A latency test is already running")
-            return
-        }
-        val uniqueProfiles = inputProfiles.distinctBy { it.id }
-        if (uniqueProfiles.isEmpty()) {
-            setAutoTestStatus("$testLabel: add configs first")
-            return
-        }
-        val rankedInput = uniqueProfiles.sortedWith(profileRankingComparator())
-        autoTestInFlight = true
-        setAutoTestStatus("$testLabel testing ${rankedInput.size} ${scopeLabel.shortUi(32)} without connecting...")
-        val network = currentNetworkLabel()
-        Thread {
-            val total = rankedInput.size
-            val results = Collections.synchronizedList(mutableListOf<ProfileProbeResult>())
-            val started = AtomicInteger(0)
-            val finished = AtomicInteger(0)
-            val workerCount = minOf(MAX_PARALLEL_PING_TESTS, total).coerceAtLeast(1)
-            val executor = Executors.newFixedThreadPool(workerCount)
-            val latch = CountDownLatch(total)
-
-            rankedInput.forEach { profile ->
-                executor.execute {
-                    try {
-                        if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) return@execute
-                        val startedIndex = started.incrementAndGet()
-                        mainHandler.post {
-                            if (autoTestInFlight) {
-                                markProfileRowTesting(profile, testLabel)
-                                setAutoTestStatus("$testLabel ${finished.get()}/$total • testing $startedIndex/$total: ${compactProfileTitle(profile)}")
-                            }
-                        }
-                        val result = probeProfileForRanking(profile, network)
-                        results.add(result)
-                        val done = finished.incrementAndGet()
-                        val state = if (result.summary.reachable) {
-                            result.summary.bestLatencyMs?.let { "OK ${it}ms" } ?: "OK"
-                        } else {
-                            "failed"
-                        }
-                        mainHandler.post {
-                            if (autoTestInFlight) {
-                                updateProfileRowMetadata(result.profile)
-                                setAutoTestStatus("$testLabel $done/$total: ${compactProfileTitle(result.profile)} • $state")
-                            }
-                        }
-                    } finally {
-                        latch.countDown()
-                    }
-                }
-            }
-
-            latch.await()
-            executor.shutdownNow()
-
-            if (!autoTestInFlight) return@Thread
-            if (autoTestsShouldPauseForLiveVpn()) {
-                mainHandler.post {
-                    autoTestInFlight = false
-                    setAutoTestStatus("$testLabel paused while VPN is running")
-                    refreshAutoTestSummary()
-                }
-                return@Thread
-            }
-
-            val resultSnapshot = synchronized(results) { results.toList() }
-            val best = resultSnapshot.filter { it.summary.reachable }
-                .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
-                    .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE }
-                    .thenByDescending { it.profile.favorite })
-            val report = buildAutoRankingReport(resultSnapshot, best, reason)
-            val message = when {
-                best != null && autoSelect -> "$testLabel selected best: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                best != null -> "$testLabel best: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-                else -> "$testLabel found no reachable endpoints"
-            }
-            runOnUiThread {
-                autoTestInFlight = false
-                if (best != null && autoSelect) applyRankedProfileSelection(best)
-                setAutoTestStatus(message)
-                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = report
-                refreshProfileButtons(syncVerified = false)
-                updateDashboardSummary()
-                if (best != null && autoSelect) showSection(AppSection.HOME)
-            }
-        }.start()
-    }
-
-    private fun probeProfileForRanking(profile: VpnProfile, network: String?): ProfileProbeResult {
-        val config = loadProfileConfigQuiet(profile)
-        val summary = if (config == null) {
-            ConfigProbeSummary(
-                report = "Could not decrypt or parse ${profile.displayName}.",
-                okCount = 0,
-                failedCount = 1,
-                bestLatencyMs = null,
-                bestScore = null,
-                checkedAtEpochMs = System.currentTimeMillis()
-            )
-        } else {
-            runCatching { probeConfigSummary(config) }.getOrElse { error ->
-                ConfigProbeSummary(
-                    report = "Resolve/probe failed for ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}",
-                    okCount = 0,
-                    failedCount = 1,
-                    bestLatencyMs = null,
-                    bestScore = null,
-                    checkedAtEpochMs = System.currentTimeMillis()
-                )
-            }
-        }
-        val updatedProfile = runCatching {
-            profileStore.markTested(
-                profileId = profile.id,
-                testedAtEpochMs = summary.checkedAtEpochMs,
-                success = summary.reachable,
-                network = network,
-                latencyMs = summary.bestLatencyMs,
-                score = summary.bestScore,
-                testKind = TEST_KIND_QUICK
-            )
-        }.getOrNull() ?: profile
-        return ProfileProbeResult(updatedProfile, config, summary)
     }
 
     private fun probeConfigSummary(config: ImportedConfig): ConfigProbeSummary {
@@ -1314,7 +1077,6 @@ class MainActivity : Activity() {
         }.minWithOrNull(compareBy<Pair<Long, Int>> { it.second }.thenBy { it.first })
         val failedCount = report.lineSequence().count { it.contains(" failed", ignoreCase = true) }
         return ConfigProbeSummary(
-            report = report,
             okCount = okMatches.size,
             failedCount = failedCount,
             bestLatencyMs = best?.first,
@@ -1327,26 +1089,7 @@ class MainActivity : Activity() {
         summary.okCount > 0 -> "$prefix passed: ${summary.okCount} reachable endpoint${if (summary.okCount == 1) "" else "s"}" +
             summary.bestLatencyMs?.let { " • best ${it}ms" }.orEmpty()
         summary.failedCount > 0 -> "$prefix finished: ${summary.failedCount} failed probe${if (summary.failedCount == 1) "" else "s"}"
-        else -> "$prefix finished: see Settings diagnostics"
-    }
-
-    private fun applyRankedProfileSelection(result: ProfileProbeResult): Boolean {
-        val config = result.config ?: loadProfileConfig(result.profile) ?: return false
-        val refreshed = runCatching {
-            profileStore.markTested(
-                profileId = result.profile.id,
-                testedAtEpochMs = result.summary.checkedAtEpochMs,
-                success = result.summary.reachable,
-                network = result.profile.lastTestNetwork,
-                latencyMs = result.summary.bestLatencyMs,
-                score = result.summary.bestScore,
-                testKind = result.profile.lastTestKind ?: TEST_KIND_QUICK
-            )
-        }.getOrNull() ?: result.profile
-        importedConfig = config
-        selectedProfileId = refreshed.id
-        selectedProfile = refreshed
-        return true
+        else -> "$prefix finished: no supported endpoints were available to check"
     }
 
     private fun loadProfileConfigQuiet(profile: VpnProfile): ImportedConfig? {
@@ -1362,75 +1105,6 @@ class MainActivity : Activity() {
         val linkedSubscriptionIds = groups.flatMap { it.profileIds }.toSet()
         return storedProfiles.filter { profile ->
             !profile.id.startsWith(SUBSCRIPTION_PROFILE_PREFIX) || profile.id in linkedSubscriptionIds
-        }
-    }
-
-    private fun currentVisibleProfilesForTesting(limit: Int = Int.MAX_VALUE): List<VpnProfile> {
-        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
-        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-        val allProfiles = activeLocationProfiles(storedProfiles, groups)
-        normalizeLocationGroupFilter(groups)
-        val query = locationSearchQuery.trim()
-        val filtered = if (query.isBlank()) allProfiles else allProfiles.filter { matchesLocationSearch(it, query) }
-        val scoped = profilesForLocationFilter(filtered, groups)
-        val activeIds = allProfiles.map { it.id }.toSet()
-        val anchor = selectedProfile?.takeIf { it.id in activeIds }
-            ?: runCatching { profileStore.latestProfile() }.getOrNull()?.takeIf { it.id in activeIds }
-        return (listOfNotNull(anchor) + scoped)
-            .distinctBy { it.id }
-            .sortedWith(profileRankingComparator())
-            .take(limit)
-    }
-
-    private fun showLatencyTestSheet(
-        anchorProfile: VpnProfile?,
-        candidates: List<VpnProfile>,
-        title: String
-    ) {
-        val uniqueCandidates = (listOfNotNull(anchorProfile) + candidates)
-            .distinctBy { it.id }
-            .sortedWith(profileRankingComparator())
-        val target = anchorProfile ?: uniqueCandidates.firstOrNull()
-        showBottomSheet(
-            title = title,
-            subtitle = "Quick tests do not start VPN. They measure endpoint latency before connecting."
-        ) { dialog ->
-            addView(TextView(this@MainActivity).apply {
-                text = "Quick check is a fast endpoint probe. Real delay starts a temporary Xray core without Android VPN. Connect still performs final VPN/TUN verification."
-                textSize = 12f
-                setTextColor(PearlPalette.TEXT_MUTED)
-                setPadding(dp(4), dp(8), dp(4), dp(4))
-            })
-            if (target != null) {
-                addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint reachability for ${compactProfileTitle(target).shortUi(24)}") {
-                    dialog.dismiss()
-                    runPingTestForProfile(target)
-                })
-                addView(bottomSheetActionRow("✓", "Real delay", "Xray-core proxy delay for ${compactProfileTitle(target).shortUi(24)} before VPN connect") {
-                    dialog.dismiss()
-                    runRealDelayForProfile(target)
-                })
-            } else {
-                addView(TextView(this@MainActivity).apply {
-                    text = "No saved config is available to test yet. Use + to add a config or subscription."
-                    textSize = 13f
-                    gravity = Gravity.CENTER
-                    setTextColor(PearlPalette.TEXT_MUTED)
-                    setPadding(dp(10), dp(14), dp(10), dp(14))
-                })
-            }
-            if (uniqueCandidates.size > 1) {
-                val count = uniqueCandidates.size
-                addView(bottomSheetActionRow("★", "Ping-rank this list", "Quick-check $count configs and select the lowest-ping reachable one; this is not a download-speed test") {
-                    dialog.dismiss()
-                    rankProfilesAndSelectBest(
-                        inputProfiles = uniqueCandidates,
-                        reason = "test sheet",
-                        autoSelect = true,
-                        scopeLabel = "visible configs"
-                    )
-                })
-            }
         }
     }
 
@@ -1450,7 +1124,7 @@ class MainActivity : Activity() {
 
     private fun runQuickLatencyTestForProfile(profile: VpnProfile, label: String = "Quick check") {
         if (!selectProfileForTest(profile)) return
-        autoTestSelectedConfig("manual-${label.lowercase(java.util.Locale.US).replace(" ", "-")}", testLabel = label)
+        autoTestSelectedConfig(testLabel = label)
     }
 
     private fun measureRealDelaySafely(config: ImportedConfig): XrayRealDelayResult = try {
@@ -1504,164 +1178,11 @@ class MainActivity : Activity() {
                     selectedProfileId = updated.id
                 }
                 setAutoTestStatus(if (result.reachable) "Real delay OK: ${result.latencyMs}ms" else result.detail.shortUi(90))
-                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = result.detail
                 refreshProfileButtons(syncVerified = false)
                 updateDashboardSummary()
             }
         }.start()
     }
-
-    private fun runRealDelayForLocationFilter(filter: String) {
-        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
-        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-        val allProfiles = activeLocationProfiles(storedProfiles, groups)
-        selectedLocationGroupFilter = filter
-        normalizeLocationGroupFilter(groups)
-        saveLocationViewPrefs()
-        val scoped = profilesForLocationFilter(allProfiles, groups, filter)
-            .distinctBy { it.id }
-            .sortedWith(profileRankingComparator())
-        val scope = locationFilterLabel(groups)
-        refreshProfileButtons(syncVerified = false)
-        if (scoped.isEmpty()) {
-            setActionStatus("No configs in $scope to test.")
-            return
-        }
-        if (autoTestsShouldPauseForLiveVpn()) {
-            setAutoTestStatus("Real delay paused while VPN is running")
-            return
-        }
-        if (autoTestInFlight) {
-            setAutoTestStatus("A test is already running")
-            return
-        }
-        val candidates = scoped
-        autoTestInFlight = true
-        setAutoTestStatus("Real delay testing all ${candidates.size} configs in ${scope.shortUi(24)} with Xray core, one at a time...")
-        val network = currentNetworkLabel()
-        Thread {
-            val results = mutableListOf<ProfileProbeResult>()
-            for ((index, profile) in candidates.withIndex()) {
-                if (!autoTestInFlight || autoTestsShouldPauseForLiveVpn()) break
-                mainHandler.post {
-                    if (autoTestInFlight) {
-                        markProfileRowTesting(profile, "Real delay")
-                        setAutoTestStatus("Real delay ${index + 1}/${candidates.size}: ${compactProfileTitle(profile)}")
-                    }
-                }
-                val config = loadProfileConfigQuiet(profile)
-                val delayResult = config?.let(::measureRealDelaySafely)
-                val summary = ConfigProbeSummary(
-                    report = delayResult?.detail ?: "Could not decrypt or parse ${profile.displayName}.",
-                    okCount = if (delayResult?.reachable == true) 1 else 0,
-                    failedCount = if (delayResult?.reachable == true) 0 else 1,
-                    bestLatencyMs = delayResult?.latencyMs,
-                    bestScore = delayResult?.latencyMs?.let { com.vpnproject.app.core.HealthScorer.score(it) },
-                    checkedAtEpochMs = System.currentTimeMillis()
-                )
-                val updatedProfile = runCatching {
-                    profileStore.markTested(
-                        profileId = profile.id,
-                        testedAtEpochMs = summary.checkedAtEpochMs,
-                        success = summary.reachable,
-                        network = network,
-                        latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore,
-                        testKind = TEST_KIND_REAL
-                    )
-                }.getOrNull() ?: profile
-                results += ProfileProbeResult(updatedProfile, config, summary)
-                val done = index + 1
-                val state = if (summary.reachable) summary.bestLatencyMs?.let { "OK ${it}ms" } ?: "OK" else "failed"
-                mainHandler.post {
-                    if (autoTestInFlight) {
-                        updateProfileRowMetadata(updatedProfile)
-                        setAutoTestStatus("Real delay $done/${candidates.size}: ${compactProfileTitle(updatedProfile)} • $state")
-                    }
-                }
-            }
-            val best = results.filter { it.summary.reachable }
-                .minWithOrNull(compareBy<ProfileProbeResult> { it.summary.bestScore ?: Int.MAX_VALUE }
-                    .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE })
-            val stoppedEarly = results.size < candidates.size
-            val pausedForVpn = autoTestsShouldPauseForLiveVpn()
-            val report = buildAutoRankingReport(results, best, "real delay $scope") +
-                if (stoppedEarly) "\nStopped after ${results.size}/${candidates.size} configs; remaining configs were not tested." else ""
-            runOnUiThread {
-                autoTestInFlight = false
-                setAutoTestStatus(when {
-                    pausedForVpn -> "Real delay paused after ${results.size}/${candidates.size}; VPN is running"
-                    stoppedEarly -> "Real delay stopped after ${results.size}/${candidates.size} configs"
-                    best != null -> "Real delay best: ${compactProfileTitle(best.profile)} • ${best.summary.bestLatencyMs}ms"
-                    else -> "Real delay found no reachable configs"
-                })
-                if (::advancedDiagnostics.isInitialized) advancedDiagnostics.text = report
-                refreshProfileButtons(syncVerified = false)
-                updateDashboardSummary()
-            }
-        }.start()
-    }
-
-    private fun runRealLatencyTestForProfile(profile: VpnProfile) {
-        val hubBeforeSelection = currentHubStatus()
-        val selectedBefore = selectedProfileId
-        val activeBefore = trackedConnectionProfileId
-        val sameActiveProfile = activeBefore == profile.id || (activeBefore == null && selectedBefore == profile.id)
-        if (isLiveState(hubBeforeSelection.state) && !sameActiveProfile) {
-            status.text = "Stop the current VPN first, then run real latency for ${compactProfileTitle(profile)}."
-            return
-        }
-        if (!selectProfileForTest(profile)) return
-        val hub = currentHubStatus()
-        if (sameActiveProfile && hub.state == VpnHubConnectionState.CONNECTED && hub.verified) {
-            recordVerifiedProfileIfNeeded(hub)
-            status.text = "Real latency verified: ${hub.latencyMs?.let { "${it}ms" } ?: "connected"}${hub.activeEngine?.let { " • ${engineLabel(it)}" }.orEmpty()}"
-            refreshProfileButtons(syncVerified = false)
-            updateDashboardSummary()
-            return
-        }
-        if (sameActiveProfile && isLiveState(hub.state)) {
-            status.text = "Real latency test is already running for ${compactProfileTitle(profile)}. Wait for verification to finish."
-            showSection(AppSection.HOME)
-            return
-        }
-        if (autoTestInFlight) autoTestInFlight = false
-        status.text = "Starting real latency test for ${compactProfileTitle(profile)}. Android will verify after the tunnel connects."
-        requestVpnPermission(PendingVpnAction.IMPORTED_ENGINE)
-    }
-
-    private fun buildAutoRankingReport(
-        results: List<ProfileProbeResult>,
-        best: ProfileProbeResult?,
-        reason: String
-    ): String {
-        val sorted = results.sortedWith(profileProbeResultComparator())
-        val lines = mutableListOf<String>()
-        lines += "Ping ranking (${sorted.size} config${if (sorted.size == 1) "" else "s"}, reason: $reason)."
-        lines += currentNetworkDiagnosticNote()
-        lines += "Note: Quick check is a fast no-VPN endpoint probe. Real delay uses a temporary Xray core before VPN. Full VPN/TUN verification happens only when you connect."
-        if (best != null) {
-            lines += "Best now: ${compactProfileTitle(best.profile)}${best.summary.bestLatencyMs?.let { " • ${it}ms" }.orEmpty()}"
-        }
-        sorted.forEachIndexed { index, result ->
-            val summary = result.summary
-            val state = if (summary.reachable) {
-                "OK${summary.bestLatencyMs?.let { " ${it}ms" }.orEmpty()}${summary.bestScore?.let { " score $it" }.orEmpty()}"
-            } else {
-                "failed"
-            }
-            val selected = if (result.profile.id == best?.profile?.id) " ← best" else ""
-            lines += "${index + 1}. ${compactProfileTitle(result.profile)} — $state$selected"
-        }
-        return lines.joinToString("\n")
-    }
-
-    private fun profileProbeResultComparator(): Comparator<ProfileProbeResult> =
-        compareByDescending<ProfileProbeResult> { it.summary.reachable }
-            .thenBy { it.summary.bestScore ?: Int.MAX_VALUE }
-            .thenBy { it.summary.bestLatencyMs ?: Long.MAX_VALUE }
-            .thenByDescending { it.profile.favorite }
-            .thenByDescending { it.profile.lastVerifiedEpochMs ?: 0L }
 
     private fun profileRankingComparator(network: String? = currentNetworkLabel()): Comparator<VpnProfile> {
         val nowEpochMs = System.currentTimeMillis()
@@ -1734,12 +1255,12 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(PearlPalette.INK)
-            background = roundedBackground(
+            background = rippleRoundedBackground(
                 fillColor = if (locationSearchQuery.isBlank()) PearlPalette.PEARL_WHITE else PearlPalette.CHAMPAGNE_SOFT,
                 strokeColor = PearlPalette.HAIRLINE,
                 radiusDp = 18
             )
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                 setMargins(dp(3), 0, dp(3), 0)
             }
             isClickable = true
@@ -1755,12 +1276,13 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
                 includeFontPadding = false
                 setTextColor(PearlPalette.TEXT_MUTED)
-                background = roundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 18)
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+                background = rippleRoundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 18)
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                     setMargins(dp(2), 0, 0, 0)
                 }
                 isClickable = true
                 isFocusable = true
+                contentDescription = "Clear location search"
                 setOnClickListener {
                     locationSearchQuery = ""
                     refreshProfileButtons(syncVerified = false)
@@ -1840,7 +1362,7 @@ class MainActivity : Activity() {
         includeFontPadding = false
         setLineSpacing(0f, 0.92f)
         setTextColor(PearlPalette.INK)
-        background = roundedBackground(PearlPalette.TRANSPARENT, PearlPalette.TRANSPARENT, radiusDp = 24)
+        background = rippleRoundedBackground(PearlPalette.TRANSPARENT, PearlPalette.TRANSPARENT, radiusDp = 24)
         setPadding(dp(4), dp(5), dp(4), dp(5))
         layoutParams = LinearLayout.LayoutParams(
             0,
@@ -1890,21 +1412,6 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun floatingTestButton(compact: Boolean = false, onClick: () -> Unit): TextView = TextView(this).apply {
-        text = "◷"
-        textSize = if (compact) 17f else 19f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        setTextColor(PearlPalette.PEARL_WHITE)
-        background = roundedBackground(PearlPalette.INK, PearlPalette.BORDER, radiusDp = if (compact) 17 else 20)
-        elevation = dp(2).toFloat()
-        isClickable = true
-        isFocusable = true
-        setOnClickListener { onClick() }
-        contentDescription = "Test latency"
-    }
-
     private fun settingsRow(
         icon: String,
         title: String,
@@ -1916,7 +1423,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_VERTICAL
         layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(10), dp(9), dp(10), dp(9))
-        background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 20)
+        background = rippleRoundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 20)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1986,10 +1493,10 @@ class MainActivity : Activity() {
     private fun showTestSettingsSheet() {
         showBottomSheet(
             title = "Test settings",
-            subtitle = "Run a test only when you ask; queue batches have no profile-count cap."
+            subtitle = "Per-profile checks only; no queue-wide probing."
         ) { dialog ->
             addView(settingsHintText(
-                "Quick check tests every config in the selected queue, with at most $MAX_PARALLEL_PING_TESTS probes running at once. Real delay tests every config one at a time and may take a long time. Neither is a full-phone VPN/TUN verification."
+                "Quick check and Real delay are started from one profile's actions. They do not start Android VPN or prove the app-to-TUN path. Connect separately to verify that path."
             ))
             addView(bottomSheetActionRow("URL", "Real delay URL", realDelayVerifyUrls().joinToString(", ") { it.hostLabel() }.shortUi(62)) {
                 dialog.dismiss()
@@ -2013,33 +1520,13 @@ class MainActivity : Activity() {
             title = "Subscriptions",
             subtitle = "${groups.size} group${if (groups.size == 1) "" else "s"} • ${subscriptionIds.size} saved subscription configs"
         ) { dialog ->
-            addView(settingsHintText("Subscriptions are user/provider-provided and stored encrypted. Large lists are rendered progressively. Last tab, runtime filter, and sort are remembered; search is session-only."))
-            addView(bottomSheetActionRow("+", "Add subscription URL", "Use the main + flow and compact import picker") {
-                dialog.dismiss()
-                promptAddSubscriptionGroup()
-            })
+            addView(settingsHintText("Subscription links are provider-supplied and stored encrypted. Add links from +; use Locations to search groups and manage individual configs."))
             addView(bottomSheetActionRow("↻", "Refresh all subscriptions", "Update every saved refreshable URL") {
                 dialog.dismiss()
                 refreshAllSubscriptionGroups()
             })
-            addView(bottomSheetActionRow("▦", "Open Locations", "Manage tabs, Queue tools, Load more, and search") {
-                dialog.dismiss()
-                showSection(AppSection.PROFILES)
-            })
-            addView(bottomSheetActionRow("⌕", "Search configs", "Filter country, operator, transport, or host") {
-                dialog.dismiss()
-                showSection(AppSection.PROFILES)
-                showLocationSearchSheet()
-            })
-            addView(bottomSheetActionRow("↺", "Reset Locations view", "Back to All configs, Recommended sort, no active search") {
-                dialog.dismiss()
-                resetLocationViewPrefs(clearSearch = true)
-                refreshProfileButtons(syncVerified = false)
-                setActionStatus("Locations view reset to All + Recommended. Search cleared.")
-                showSection(AppSection.PROFILES)
-            })
             if (groups.isEmpty() && storedProfiles.isEmpty()) {
-                addView(settingsHintText("No configs yet. Add a subscription URL, paste configs, or import a file from +."))
+                addView(settingsHintText("No subscription groups yet. Use + to add a provider subscription or import a config."))
             }
         }
     }
@@ -2254,26 +1741,26 @@ class MainActivity : Activity() {
 
     private fun showDiagnosticsHubSheet() {
         val hub = currentHubStatus()
+        val failureCategory = hub.failureCategory ?: lastOperationFailureCategory
         showBottomSheet(
             title = "Diagnostics / logs",
-            subtitle = "Safe summaries only; secrets are not copied."
+            subtitle = "Safe summaries only; server addresses, profile IDs, and raw errors are omitted."
         ) { dialog ->
-            addView(settingsHintText("${hub.title}: ${hub.detail.shortUi(90)}"))
+            addView(settingsHintText(buildString {
+                append("Status: ${hub.title}. Verification: ${if (hub.verified) "yes" else "no"}.")
+                failureCategory?.let { append(" Cause category: ${it.label}.") }
+            }))
             addView(bottomSheetActionRow("↻", "Refresh status", "Update VPN state, traffic, and verification") {
                 dialog.dismiss()
                 showEngineStatus()
             })
-            addView(bottomSheetActionRow("▤", "Open diagnostics log", "Full technical output in a scrollable sheet") {
+            addView(bottomSheetActionRow("▤", "Open diagnostics summary", "Safe technical details in a scrollable sheet") {
                 dialog.dismiss()
                 showDiagnosticsLogSheet()
             })
-            addView(bottomSheetActionRow("⧉", "Copy safe report", "Counts, selected profile, status, and engine diagnostics") {
+            addView(bottomSheetActionRow("⧉", "Copy safe report", "Counts and failure category; no endpoints, IDs, or raw config") {
                 dialog.dismiss()
                 copySafeDiagnosticsReport()
-            })
-            addView(bottomSheetActionRow("☰", "Saved profiles report", "Human-readable local profile summary") {
-                dialog.dismiss()
-                showSavedProfiles()
             })
         }
     }
@@ -2472,8 +1959,7 @@ class MainActivity : Activity() {
             appendLine("Selected profile name and ID: omitted")
             appendLine("Profiles: ${storedProfiles.size}")
             appendLine("Subscription groups: ${groups.size}")
-            appendLine("Queue tests: user-started; all configs in the selected group are included")
-            appendLine("Quick-check parallel workers: $MAX_PARALLEL_PING_TESTS")
+            appendLine("Profile tests: user-started; one selected profile at a time")
             appendLine("Smart fallback: ${smartFallbackEnabled} (max $MAX_SMART_FALLBACK_ATTEMPTS)")
             appendLine("Configured real-delay URL count: ${realDelayVerifyUrls().size}")
             appendLine("Configured VPN DNS server count: ${vpnDnsServers().size}")
@@ -2527,6 +2013,23 @@ class MainActivity : Activity() {
         cornerRadius = dp(radiusDp).toFloat()
         setColor(fillColor)
         setStroke(dp(1), strokeColor)
+    }
+
+    private fun rippleRoundedBackground(
+        fillColor: Int,
+        strokeColor: Int,
+        radiusDp: Int = 18
+    ): RippleDrawable {
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(Color.argb(26, 16, 16, 20)),
+            roundedBackground(fillColor, strokeColor, radiusDp),
+            mask
+        )
     }
 
     private fun showSection(section: AppSection) {
@@ -2595,9 +2098,6 @@ class MainActivity : Activity() {
         recordVerifiedProfileIfNeeded(hub)
         recordConnectionFailureIfNeeded(hub)
         updateDashboardSummary()
-        if (::advancedDiagnostics.isInitialized && advancedVisible && ::toolsSection.isInitialized && toolsSection.visibility == View.VISIBLE) {
-            advancedDiagnostics.text = engineDiagnosticsText(engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO), engineAdapters.snapshot(VpnEngineId.XRAY_CORE))
-        }
     }
 
     private fun isLiveState(state: VpnHubConnectionState): Boolean = when (state) {
@@ -2794,7 +2294,7 @@ class MainActivity : Activity() {
             VpnHubConnectionState.FAILED -> {
                 val hasProfile = importedConfig != null || selectedProfile != null || runCatching { profileStore.latestProfile() }.getOrNull() != null
                 if (!hasProfile) {
-                    status.text = "No profile selected. Use the top + to add a config first."
+                    setActionStatus("No profile selected. Use the top + to add a config first.")
                     showSection(AppSection.PROFILES)
                 } else {
                     pauseAutoTestsForConnection("Auto test paused while connecting")
@@ -2892,12 +2392,12 @@ class MainActivity : Activity() {
 
         if (::protectionBadge.isInitialized) {
             val protectionText = when (hub.state) {
-                VpnHubConnectionState.CONNECTED -> if (hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) "✓  Proxy checked  ›" else "✓  Protected  ›"
+                VpnHubConnectionState.CONNECTED -> if (hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS) "Proxy checked" else "Connected"
                 VpnHubConnectionState.CONNECTING,
-                VpnHubConnectionState.RUNNING_UNVERIFIED -> "✓  Checking  ›"
-                VpnHubConnectionState.FAILED -> "!  Failed  ›"
+                VpnHubConnectionState.RUNNING_UNVERIFIED -> "Checking"
+                VpnHubConnectionState.FAILED -> "Failed"
                 VpnHubConnectionState.IDLE,
-                VpnHubConnectionState.STOPPED -> "✓  Offline  ›"
+                VpnHubConnectionState.STOPPED -> "Offline"
             }
             val protectionColor = when (hub.state) {
                 VpnHubConnectionState.CONNECTED -> PearlPalette.INK
@@ -2910,6 +2410,23 @@ class MainActivity : Activity() {
             protectionBadge.text = protectionText
             protectionBadge.setTextColor(protectionColor)
         }
+        if (::protectionDetailsText.isInitialized) {
+            val tunnelVerified = hub.verified &&
+                hub.verificationScope == com.vpnproject.app.engine.VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS
+            val proxyEgressVerified = hub.verified &&
+                hub.verificationScope == com.vpnproject.app.engine.VerificationScope.XRAY_PROXY_EGRESS
+            val egressLine = when {
+                tunnelVerified -> "Egress: verified"
+                proxyEgressVerified -> "Proxy egress: checked"
+                else -> "Egress: not checked"
+            }
+            val tunnelLine = when {
+                tunnelVerified -> "Tunnel: verified"
+                proxyEgressVerified -> "App TUN: untested"
+                else -> "Tunnel: not tested"
+            }
+            protectionDetailsText.text = "$egressLine\n$tunnelLine\nSecurity: config-based\nLockdown: not checked"
+        }
         if (::liveStatsBadge.isInitialized) {
             liveStatsBadge.text = if (active) "$down / $up" else "0 B"
             liveStatsBadge.setTextColor(if (active) PearlPalette.INK else PearlPalette.TEXT_MUTED)
@@ -2919,7 +2436,6 @@ class MainActivity : Activity() {
         updateSelectedProfileSummary()
         updateFasterSuggestion(hub)
         updateProfileActionButtons()
-        refreshAutoTestSummary()
     }
 
     private fun dashboardTitleFor(hub: com.vpnproject.app.engine.VpnHubStatus): String = when (hub.state) {
@@ -3099,7 +2615,7 @@ class MainActivity : Activity() {
             }
         fasterSuggestionButton.visibility = View.VISIBLE
         fasterSuggestionButton.text = result
-        fasterSuggestionButton.setOnClickListener { status.text = result }
+        fasterSuggestionButton.setOnClickListener { setActionStatus(result) }
         return true
     }
 
@@ -3115,13 +2631,13 @@ class MainActivity : Activity() {
         if (trackedConnectionProfileId == pendingId && active) {
             fasterSuggestionButton.text = "Connecting lower-ping config… ${pendingFasterSwitchText.orEmpty().shortUi(44)}"
             fasterSuggestionButton.setOnClickListener {
-                status.text = "Connecting lower-ping config. Waiting for verification."
+                setActionStatus("Connecting lower-ping config. Waiting for verification.")
                 scheduleFasterSwitchRefreshes()
             }
         } else if (active) {
             fasterSuggestionButton.text = "Switch pending: stopping current tunnel… ${pendingFasterSwitchText.orEmpty().shortUi(42)}"
             fasterSuggestionButton.setOnClickListener {
-                status.text = "Stopping current tunnel first. Wait until Home shows Ready, then tap Connect lower-ping config."
+                setActionStatus("Stopping current tunnel first. Wait until Home shows Ready, then tap Connect lower-ping config.")
                 scheduleFasterSwitchRefreshes()
             }
         } else {
@@ -3187,7 +2703,7 @@ class MainActivity : Activity() {
         }
         fasterSwitchResultText = message
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
-        status.text = message
+        setActionStatus(message)
         clearPendingFasterSwitch()
     }
 
@@ -3196,7 +2712,7 @@ class MainActivity : Activity() {
         val message = "Lower-ping option failed: ${compactProfileTitle(profile).shortUi(20)} • ${reason.shortUi(44)}"
         fasterSwitchResultText = message
         fasterSwitchResultUntilMs = System.currentTimeMillis() + FASTER_SWITCH_RESULT_MS
-        status.text = message
+        setActionStatus(message)
         clearPendingFasterSwitch()
     }
 
@@ -3307,7 +2823,7 @@ class MainActivity : Activity() {
                 setPendingFasterSwitch(suggestion)
                 stopImportedEngines()
                 loadProfile(suggestion.profile)
-                status.text = "Lower-ping config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Wait for stop, then tap Connect lower-ping config."
+                setActionStatus("Lower-ping config selected: ${compactProfileTitle(suggestion.profile)} • ${suggestion.signal.label} ${latency}ms. Wait for stop, then tap Connect lower-ping config.")
                 scheduleFasterSwitchRefreshes()
                 updateDashboardSummary()
             })
@@ -4054,6 +3570,16 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 showProfileRuntimeDetailsSheet(profile)
             })
+            addView(bottomSheetActionRow("◷", "Quick check", "Fast endpoint check; does not start VPN") {
+                dialog.dismiss()
+                runPingTestForProfile(profile)
+            })
+            if (compatibility.connectReady && profile.kind in setOf(VpnProfileKind.XRAY, VpnProfileKind.SING_BOX, VpnProfileKind.CLASH)) {
+                addView(bottomSheetActionRow("✓", "Real delay", "Temporary Xray proxy check before Android VPN") {
+                    dialog.dismiss()
+                    runRealDelayForProfile(profile)
+                })
+            }
             addView(bottomSheetActionRow("↗", "Share / export", "Original text or file, plus QR when it fits") {
                 dialog.dismiss()
                 showProfileShareSheet(profile)
@@ -4326,17 +3852,11 @@ class MainActivity : Activity() {
                     })
                 }
             })
-            addView(settingsHintText("No secrets are shown here. Quick check is no-VPN; Real delay starts temporary Xray; full VPN verification happens only after Connect."))
+            addView(settingsHintText("No secrets are shown here. Per-profile tests are in Actions; neither proves the app-to-TUN path. Connect separately to verify that path."))
             addView(bottomSheetActionRow("✓", "Select", "Use this config on Home") {
                 dialog.dismiss()
                 loadProfile(profile)
             })
-            if (compatibility.connectReady && profile.kind in setOf(VpnProfileKind.XRAY, VpnProfileKind.SING_BOX, VpnProfileKind.CLASH)) {
-                addView(bottomSheetActionRow("◷", "Real delay", "Run Xray-core proxy delay before VPN connect") {
-                    dialog.dismiss()
-                    runRealDelayForProfile(profile)
-                })
-            }
             addView(bottomSheetActionRow("‹", "Back", "Return to profile actions") {
                 dialog.dismiss()
                 showProfileActionsSheet(profile)
@@ -4484,7 +4004,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(10), dp(9), dp(10), dp(9))
-            background = roundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
+            background = rippleRoundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -4545,7 +4065,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
-            background = roundedBackground(
+            background = rippleRoundedBackground(
                 fillColor = if (profile.id == selectedProfileId) PearlPalette.CHAMPAGNE_SOFT else PearlPalette.PEARL_GHOST,
                 strokeColor = if (profile.id == selectedProfileId) PearlPalette.BORDER else PearlPalette.HAIRLINE,
                 radiusDp = if (compact) 16 else 20
@@ -4586,7 +4106,6 @@ class MainActivity : Activity() {
                     ellipsize = TextUtils.TruncateAt.END
                     setTextColor(PearlPalette.TEXT_MUTED)
                 }
-                profileRowSubtitleViews[profile.id] = subtitleView
                 addView(subtitleView)
             })
             val statusView = TextView(this@MainActivity).apply {
@@ -4602,7 +4121,6 @@ class MainActivity : Activity() {
                     setMargins(dp(6), 0, dp(4), 0)
                 }
             }
-            profileRowStatusViews[profile.id] = statusView
             addView(statusView)
             addView(TextView(this@MainActivity).apply {
                 text = if (profile.id == selectedProfileId) "✓" else "⋯"
@@ -4611,7 +4129,9 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
                 includeFontPadding = false
                 setTextColor(if (profile.id == selectedProfileId) PearlPalette.INK else PearlPalette.TEXT_FAINT)
-                layoutParams = LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.MATCH_PARENT)
+                background = rippleRoundedBackground(PearlPalette.PEARL_WHITE, PearlPalette.HAIRLINE, radiusDp = 14)
+                layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.MATCH_PARENT)
+                contentDescription = if (profile.id == selectedProfileId) "Selected profile actions" else "Profile actions"
                 setOnClickListener { onActions() }
             })
             isClickable = true
@@ -4622,29 +4142,6 @@ class MainActivity : Activity() {
                 true
             }
         }
-
-    private fun markProfileRowTesting(profile: VpnProfile, label: String) {
-        profileRowSubtitleViews[profile.id]?.text = "${label.shortUi(18)} running…"
-        profileRowStatusViews[profile.id]?.let { statusView ->
-            statusView.text = "…"
-            statusView.setTextColor(PearlPalette.ACCENT_BLUE)
-            statusView.background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.ACCENT_LILAC, radiusDp = 12)
-        }
-    }
-
-    private fun updateProfileRowMetadata(profile: VpnProfile) {
-        profileRowSubtitleViews[profile.id]?.text = profileRowSubtitle(profile)
-        profileRowStatusViews[profile.id]?.let { statusView ->
-            statusView.text = profileStatusLabel(profile)
-            statusView.setTextColor(profileStatusTextColor(profile))
-            statusView.background = roundedBackground(
-                profileStatusFillColor(profile),
-                profileStatusStrokeColor(profile),
-                radiusDp = 12
-            )
-        }
-        if (selectedProfileId == profile.id) selectedProfile = profile
-    }
 
     private fun updateProfileActionButtons() {
         if (!::favoriteActionButton.isInitialized) return
@@ -4789,7 +4286,7 @@ class MainActivity : Activity() {
         val profile = runCatching { profileStore.latestProfile() }.getOrNull() ?: return
         selectedProfile = profile
         selectedProfileId = profile.id
-        status.text = "Latest saved profile selected. Tap Connect to start, or choose another profile below."
+        setActionStatus("Latest saved profile selected. Tap Connect to start, or choose another profile below.")
     }
 
     private fun formatBytes(bytes: Long): String {
@@ -4854,7 +4351,7 @@ class MainActivity : Activity() {
                     runVpnAction(action, profileId, operationToken)
                 } else {
                     operationToken?.let { engineOperationCoordinator.cancel(it) }
-                    status.text = "VPN permission was not granted."
+                    setActionStatus("VPN permission was not granted.")
                 }
             }
             IMPORT_CONFIG_REQUEST -> {
@@ -4867,7 +4364,7 @@ class MainActivity : Activity() {
                 if (resultCode == RESULT_OK && selectedUris.isNotEmpty()) {
                     importConfigFiles(selectedUris)
                 } else {
-                    status.text = "No config selected."
+                    setActionStatus("No config selected.")
                 }
             }
             IMPORT_QR_IMAGE_REQUEST -> {
@@ -4888,7 +4385,7 @@ class MainActivity : Activity() {
                 if (resultCode == RESULT_OK && uri != null) {
                     writePendingOpenVpnConfig(uri)
                 } else {
-                    status.text = "OpenVPN export was cancelled."
+                    setActionStatus("OpenVPN export was cancelled.")
                 }
             }
         }
@@ -4930,7 +4427,7 @@ class MainActivity : Activity() {
         operationToken: EngineOperationToken? = null
     ) {
         when (action) {
-            PendingVpnAction.NONE -> status.text = "VPN permission is granted."
+            PendingVpnAction.NONE -> setActionStatus("VPN permission is granted.")
             PendingVpnAction.BOOTSTRAP -> startBootstrapVpnService()
             PendingVpnAction.IMPORTED_ENGINE -> prepareAndStartImportedEngine(
                 requestedProfileId = requestedProfileId,
@@ -4944,7 +4441,7 @@ class MainActivity : Activity() {
             action = AutoVpnService.ACTION_START
         }
         startForegroundServiceCompat(intent)
-        status.text = "Starting TUN bootstrap VPN. It captures IPv4 and IPv6 but drops packets until an engine is integrated. Use Stop to return to normal networking."
+        setActionStatus("Starting TUN bootstrap VPN. It captures IPv4 and IPv6 but drops packets until an engine is integrated. Use Stop to return to normal networking.")
     }
 
     private fun stopBootstrapVpn() {
@@ -4952,28 +4449,28 @@ class MainActivity : Activity() {
             action = AutoVpnService.ACTION_STOP
         }
         startService(intent)
-        status.text = "Stop requested for bootstrap VPN."
+        setActionStatus("Stop requested for bootstrap VPN.")
     }
 
     private fun prepareAndSaveOpenVpnConfig() {
         val config = importedConfig
         if (config == null) {
-            status.text = "Import an OpenVPN config first."
+            setActionStatus("Import an OpenVPN config first.")
             return
         }
         if (config.kind != ConfigKind.OPENVPN) {
-            status.text = "This action is for OpenVPN configs. Imported config is ${config.kind}."
+            setActionStatus("This action is for OpenVPN configs. Imported config is ${config.kind}.")
             return
         }
 
-        status.text = "Preparing pinned OpenVPN config. For Iran, official OpenVPN TCP/443 profiles are usually more useful than WireGuard UDP."
+        setActionStatus("Preparing pinned OpenVPN config. For Iran, official OpenVPN TCP/443 profiles are usually more useful than WireGuard UDP.")
         Thread {
             val result = runCatching { runtimeConfigPreparer.prepareOpenVpn(config) }
             runOnUiThread {
                 result.fold(
                     onSuccess = { selection -> promptSaveOpenVpnConfig(selection, config) },
                     onFailure = { error ->
-                        status.text = "OpenVPN pinned config failed: ${error.message ?: error.javaClass.simpleName}"
+                        setActionStatus("OpenVPN pinned config failed: ${error.message ?: error.javaClass.simpleName}")
                     }
                 )
             }
@@ -4988,23 +4485,23 @@ class MainActivity : Activity() {
             type = "application/x-openvpn-profile"
             putExtra(Intent.EXTRA_TITLE, pendingOpenVpnConfigName)
         }
-        status.text = "Prepared OpenVPN handoff config.\n${selection.note}\n\nSave it, then open/import it in an official OpenVPN-compatible Android client while internal OpenVPN engine licensing is pending."
+        setActionStatus("Prepared OpenVPN handoff config.\n${selection.note}\n\nSave it, then open/import it in an official OpenVPN-compatible Android client while internal OpenVPN engine licensing is pending.")
         startActivityForResult(intent, EXPORT_OPENVPN_REQUEST)
     }
 
     private fun writePendingOpenVpnConfig(uri: Uri) {
         val text = pendingOpenVpnConfigText
         if (text == null) {
-            status.text = "No prepared OpenVPN config is waiting to be saved."
+            setActionStatus("No prepared OpenVPN config is waiting to be saved.")
             return
         }
         try {
             contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
                 writer.write(text)
             } ?: throw ConfigParseException("Could not open selected output file.")
-            status.text = "Pinned OpenVPN config saved as $pendingOpenVpnConfigName. Import it in an OpenVPN client and prefer TCP/443 profiles when available."
+            setActionStatus("Pinned OpenVPN config saved as $pendingOpenVpnConfigName. Import it in an OpenVPN client and prefer TCP/443 profiles when available.")
         } catch (e: Exception) {
-            status.text = "OpenVPN export failed: ${e.message ?: e.javaClass.simpleName}"
+            setActionStatus("OpenVPN export failed: ${e.message ?: e.javaClass.simpleName}")
         } finally {
             pendingOpenVpnConfigText = null
         }
@@ -5032,7 +4529,7 @@ class MainActivity : Activity() {
         if (config == null) {
             engineOperationCoordinator.fail(requestToken)
             lastOperationFailureCategory = EngineFailureCategory.CONFIGURATION
-            status.text = "${EngineFailureCategory.CONFIGURATION.label}: Import or pick a saved VPN profile first."
+            setActionStatus("${EngineFailureCategory.CONFIGURATION.label}: Import or pick a saved VPN profile first.")
             updateDashboardSummary()
             return
         }
@@ -5052,7 +4549,7 @@ class MainActivity : Activity() {
                 if (adapter == null) {
                     engineOperationCoordinator.fail(requestToken)
                     lastOperationFailureCategory = EngineFailureCategory.ENGINE_START
-                    status.text = "${EngineFailureCategory.ENGINE_START.label}: No runnable in-app engine is registered for ${route.adapterId.displayName}."
+                    setActionStatus("${EngineFailureCategory.ENGINE_START.label}: No runnable in-app engine is registered for ${route.adapterId.displayName}.")
                 } else {
                     val request = EnginePreparationRequest(
                         config = config,
@@ -5071,11 +4568,11 @@ class MainActivity : Activity() {
             }
             EngineExecutionMode.EXTERNAL_HANDOFF -> {
                 engineOperationCoordinator.fail(requestToken)
-                status.text = "OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now."
+                setActionStatus("OpenVPN is not embedded yet. Use Save pinned OpenVPN TCP config and import it in an OpenVPN client for now.")
             }
             EngineExecutionMode.UNAVAILABLE -> {
                 engineOperationCoordinator.fail(requestToken)
-                status.text = route.description
+                setActionStatus(route.description)
             }
         }
     }
@@ -5087,7 +4584,7 @@ class MainActivity : Activity() {
         operationToken: EngineOperationToken
     ) {
         val engineName = EngineRegistry.engine(route.runtimeEngineId).displayName
-        status.text = "Preparing $engineName runtime config..."
+        setActionStatus("Preparing $engineName runtime config...")
         hubStatusTitle.text = "Preparing"
         hubStatusDetail.text = when (route.executionMode) {
             EngineExecutionMode.MAPPED_TO_XRAY -> "${route.adapterId.displayName} is preparing a supported-subset mapping to Xray."
@@ -5115,7 +4612,7 @@ class MainActivity : Activity() {
                                 deadlineUptimeMs = SystemClock.uptimeMillis() + ENGINE_HANDOFF_TIMEOUT_MS
                             )
                             pendingEngineStartHandoff = pending
-                            status.text = "Stopping the previous engine before starting $engineName."
+                            setActionStatus("Stopping the previous engine before starting $engineName.")
                             hubStatusTitle.text = "Switching engines"
                             hubStatusDetail.text = "Waiting for ${stopTargets.joinToString { EngineRegistry.engine(it).displayName }} to report stopped."
                             val stopFailure = stopTargets
@@ -5134,7 +4631,7 @@ class MainActivity : Activity() {
                         val message = "$engineName runtime config failed: ${error.message ?: error.javaClass.simpleName}"
                         val category = EngineFailureClassifier.classifyFailure(message, error.message)
                         lastOperationFailureCategory = category
-                        status.text = "${category.label}: $message\n${category.suggestedAction}"
+                        setActionStatus("${category.label}: $message\n${category.suggestedAction}")
                         hubStatusTitle.text = if (route.runtimeEngineId == VpnEngineId.XRAY_CORE) "Needs mapper" else "Connection failed"
                         hubStatusDetail.text = "${category.label}. ${category.suggestedAction}"
                         maybeStartSmartFallback(message)
@@ -5154,7 +4651,7 @@ class MainActivity : Activity() {
         val startResult = runCatching { engineAdapters.start(prepared) }
         if (startResult.isSuccess) {
             if (!engineOperationCoordinator.markStartRequested(operationToken, baselineStatus)) return
-            status.text = "Starting $engineName engine. Verification will refresh automatically."
+            setActionStatus("Starting $engineName engine. Verification will refresh automatically.")
             hubStatusTitle.text = "Connecting"
             hubStatusDetail.text = "$engineName engine is starting. ${prepared.note}"
             scheduleEngineStatusRefreshes()
@@ -5164,7 +4661,7 @@ class MainActivity : Activity() {
             val message = "$engineName start failed: ${error?.message ?: error?.javaClass?.simpleName ?: "unknown error"}"
             val category = EngineFailureClassifier.classifyFailure(message, error?.message)
             lastOperationFailureCategory = category
-            status.text = "${category.label}: $message\n${category.suggestedAction}"
+            setActionStatus("${category.label}: $message\n${category.suggestedAction}")
             hubStatusTitle.text = "Connection failed"
             hubStatusDetail.text = "${category.label}. ${category.suggestedAction}"
             maybeStartSmartFallback(message)
@@ -5185,7 +4682,7 @@ class MainActivity : Activity() {
                 mainHandler.removeCallbacks(engineHandoffPollRunnable)
                 val message = "The previous engine did not stop cleanly; ${pending.engineName} was not started."
                 lastOperationFailureCategory = EngineFailureCategory.STOP_OPERATION
-                status.text = "${EngineFailureCategory.STOP_OPERATION.label}: $message"
+                setActionStatus("${EngineFailureCategory.STOP_OPERATION.label}: $message")
                 hubStatusTitle.text = "Connection failed"
                 hubStatusDetail.text = message
                 updateDashboardSummary()
@@ -5212,7 +4709,7 @@ class MainActivity : Activity() {
             "Could not request the previous engine to stop; ${pending.engineName} was not started. ${failure?.message ?: failure?.javaClass?.simpleName ?: "Unknown error."}"
         }
         lastOperationFailureCategory = EngineFailureCategory.STOP_OPERATION
-        status.text = "${EngineFailureCategory.STOP_OPERATION.label}: $message"
+        setActionStatus("${EngineFailureCategory.STOP_OPERATION.label}: $message")
         hubStatusTitle.text = "Connection failed"
         hubStatusDetail.text = message
         updateDashboardSummary()
@@ -5239,7 +4736,7 @@ class MainActivity : Activity() {
         pendingVpnOperationToken = null
         clearSmartFallbackSession()
         engineAdapters.stopAll()
-        status.text = "Disconnect requested for active engines."
+        setActionStatus("Disconnect requested for active engines.")
         lastRecordedVerificationKey = null
         lastRecordedFailureKey = null
         hubStatusTitle.text = "Disconnecting"
@@ -5273,7 +4770,7 @@ class MainActivity : Activity() {
             com.vpnproject.app.engine.VerificationScope.WIREGUARD_TUNNEL_TRAFFIC_AND_EGRESS -> "Tunnel traffic and public egress checked"
             com.vpnproject.app.engine.VerificationScope.NONE -> if (hub.verified) "Verified, scope unspecified" else "Not verified"
         }
-        status.text = "Latest status: ${hub.title}. Evidence: $verificationEvidence."
+        setActionStatus("Latest status: ${hub.title}. Evidence: $verificationEvidence.")
         if (::settingsConnectionSummaryText.isInitialized) {
             val parts = listOfNotNull(
                 hub.title,
@@ -5283,20 +4780,17 @@ class MainActivity : Activity() {
             )
             settingsConnectionSummaryText.text = parts.joinToString(" • ")
         }
-        if (::advancedDiagnostics.isInitialized) {
-            advancedDiagnostics.text = engineDiagnosticsText(wg, xray)
-        }
     }
 
     private fun showDiagnosticsLogSheet() {
-        val log = if (::advancedDiagnostics.isInitialized) {
-            advancedDiagnostics.text?.toString().orEmpty().ifBlank { "No diagnostics yet." }
-        } else {
-            "No diagnostics yet."
-        }
+        val log = engineDiagnosticsText(
+            wireGuard = engineAdapters.snapshot(VpnEngineId.WIREGUARD_GO),
+            xray = engineAdapters.snapshot(VpnEngineId.XRAY_CORE),
+            safeForSharing = true
+        )
         showBottomSheet(
-            title = "Diagnostics log",
-            subtitle = "Technical details for troubleshooting."
+            title = "Diagnostics summary",
+            subtitle = "Addresses, profile IDs, and raw error text are omitted."
         ) { dialog ->
             addView(ScrollView(this@MainActivity).apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -5542,9 +5036,6 @@ class MainActivity : Activity() {
                     if (skippedClipboard > 0) append(" • $skippedClipboard clipboard-only skipped")
                     if (failures.isNotEmpty()) append(" • ${failures.size} failed")
                 })
-                if (failures.isNotEmpty() && ::advancedDiagnostics.isInitialized) {
-                    advancedDiagnostics.text = "Subscription refresh failures:\n" + failures.joinToString("\n")
-                }
             }
         }.start()
     }
@@ -5609,7 +5100,7 @@ class MainActivity : Activity() {
             subtitle = "${preview.totalCount} configs detected. Choose how many to save now."
         ) { dialog ->
             addView(TextView(this@MainActivity).apply {
-                text = "Import fewer configs for a lighter phone list, or import all when you want the full provider queue. Queue tests stay user-started and test every saved config."
+                text = "Import fewer configs for a lighter phone list, or import all when you need the full provider list. Tests are started per profile, not across the entire queue."
                 textSize = 12.5f
                 setTextColor(PearlPalette.TEXT_MUTED)
                 setPadding(dp(8), dp(10), dp(8), dp(6))
@@ -5718,7 +5209,6 @@ class MainActivity : Activity() {
             sync.transportSummary.statusSuffix() +
             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
         showSection(AppSection.PROFILES)
-        maybeAutoRankBestProfile("subscription")
     }
 
     private fun handleSubscriptionSyncFailure(error: Throwable) {
@@ -5783,7 +5273,6 @@ class MainActivity : Activity() {
                             sync.transportSummary.statusSuffix() +
                             if (sync.skippedCount > 0) ", ${sync.skippedCount} skipped." else ".")
                         showSection(AppSection.PROFILES)
-                        maybeAutoRankBestProfile("clipboard subscription")
                     },
                     onFailure = { error ->
                         setActionStatus("Clipboard subscription import failed: ${error.message ?: error.javaClass.simpleName}")
@@ -6088,7 +5577,7 @@ class MainActivity : Activity() {
 
     private fun importConfig(uri: Uri) {
         val generation = ++fileImportGeneration
-        status.text = "Reading and parsing selected config..."
+        setActionStatus("Reading and parsing selected config...")
         Thread({
             val result = runCatching { readConfigFile(uri) }
             runOnUiThread {
@@ -6096,7 +5585,7 @@ class MainActivity : Activity() {
                 result.fold(
                     onSuccess = { file -> importConfigText(file.text, file.name, file.config) },
                     onFailure = { error ->
-                        status.text = "Import failed: ${error.message ?: error.javaClass.simpleName}"
+                        setActionStatus("Import failed: ${error.message ?: error.javaClass.simpleName}")
                     }
                 )
             }
@@ -6137,7 +5626,7 @@ class MainActivity : Activity() {
             .orEmpty()
 
         if (clipText.isBlank()) {
-            status.text = "Clipboard is empty. Copy a V2Ray/Xray link, subscription URL, or advanced fallback config first."
+            setActionStatus("Clipboard is empty. Copy a V2Ray/Xray link, subscription URL, or advanced fallback config first.")
             return
         }
 
@@ -6226,36 +5715,15 @@ class MainActivity : Activity() {
             val config = preParsedConfig ?: ConfigImporter.parse(text, name)
             importedConfig = config
             val savedProfileLine = saveImportedProfile(config, importedProfileDisplayName(config, text, name))
-            val endpointLines = config.endpoints.joinToString("\n") { endpoint ->
-                "• ${endpoint.protocol}  ${endpoint.host}:${endpoint.port}" +
-                    (endpoint.verifyHost?.let { "  verify: $it" } ?: "")
-            }
-            val warnings = if (config.warnings.isEmpty()) "" else
-                "\n\nWarnings:\n" + config.warnings.joinToString("\n") { "• $it" }
-            val nextStep = when (config.kind) {
-                ConfigKind.WIREGUARD ->
-                    "\n\nNext: WireGuard is kept as an advanced fallback only; if UDP is blocked, import a V2Ray/Xray profile instead."
-                ConfigKind.OPENVPN ->
-                    "\n\nNext: OpenVPN is an advanced handoff path; save a pinned TCP config and import it in an OpenVPN-compatible client if you explicitly need it."
-                ConfigKind.V2RAY ->
-                    "\n\nNext: tap Connect. Advanced endpoint probe is optional."
-                ConfigKind.SING_BOX ->
-                    "\n\nNext: tap Connect to try the first Xray-compatible sing-box outbound. Unsupported sing-box features stay saved for diagnostics until the embedded sing-box engine lands."
-                ConfigKind.CLASH ->
-                    "\n\nNext: tap Connect to try the first Xray-compatible Clash proxy. Unsupported Clash features stay saved for diagnostics until the full mapper lands."
-                else -> ""
-            }
-            status.text = "Imported ${config.kind} config${name?.let { " ($it)" } ?: ""}.\n" +
-                "Endpoints found: ${config.endpoints.size}\n$endpointLines" +
-                savedProfileLine +
-                "\n\nOpenVPN auth-user-pass line: ${if (config.hasAuthUserPass) "yes" else "not detected"}" +
-                nextStep +
-                warnings
+            val saveState = if (savedProfileLine.startsWith("\n\nSaved local profile:")) "saved" else "not saved"
+            val warningCount = config.warnings.size
+            val warningSummary = if (warningCount > 0) " • $warningCount warning${if (warningCount == 1) "" else "s"}" else ""
+            setActionStatus("Imported ${config.kind}; ${config.endpoints.size} endpoint(s) found; profile $saveState$warningSummary. Connect when ready.")
             showSection(AppSection.HOME)
             maybeAutoTestSelectedConfig("import")
         } catch (e: Exception) {
             importedConfig = null
-            status.text = "Import failed: ${e.message ?: e.javaClass.simpleName}"
+            setActionStatus("Import failed: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -6292,7 +5760,7 @@ class MainActivity : Activity() {
     private fun promptRenameSelectedProfile() {
         val profile = selectedProfile
         if (profile == null) {
-            status.text = "No selected profile to rename. Pick a profile first."
+            setActionStatus("No selected profile to rename. Pick a profile first.")
             showSection(AppSection.PROFILES)
             return
         }
@@ -6317,12 +5785,12 @@ class MainActivity : Activity() {
     private fun renameSelectedProfile(newName: String) {
         val current = selectedProfile
         if (current == null) {
-            status.text = "No selected profile to rename."
+            setActionStatus("No selected profile to rename.")
             return
         }
         val trimmed = newName.trim()
         if (trimmed.isBlank()) {
-            status.text = "Profile name cannot be empty."
+            setActionStatus("Profile name cannot be empty.")
             showSection(AppSection.PROFILES)
             return
         }
@@ -6332,11 +5800,11 @@ class MainActivity : Activity() {
                 selectedProfileId = selectedProfile?.id
                 refreshProfileButtons()
                 updateDashboardSummary()
-                status.text = "Renamed profile to ${selectedProfile?.displayName ?: trimmed}."
+                setActionStatus("Renamed profile to ${selectedProfile?.displayName ?: trimmed}.")
                 showSection(AppSection.PROFILES)
             },
             onFailure = { error ->
-                status.text = "Could not rename profile ${current.displayName}: ${error.message ?: error.javaClass.simpleName}"
+                setActionStatus("Could not rename profile ${current.displayName}: ${error.message ?: error.javaClass.simpleName}")
             }
         )
     }
@@ -6344,7 +5812,7 @@ class MainActivity : Activity() {
     private fun toggleSelectedFavorite() {
         val current = selectedProfile
         if (current == null) {
-            status.text = "No selected profile to favorite. Pick a profile first."
+            setActionStatus("No selected profile to favorite. Pick a profile first.")
             showSection(AppSection.PROFILES)
             return
         }
@@ -6355,15 +5823,15 @@ class MainActivity : Activity() {
                 selectedProfileId = selectedProfile?.id
                 refreshProfileButtons()
                 updateDashboardSummary()
-                status.text = if (newFavorite) {
+                setActionStatus(if (newFavorite) {
                     "Marked ${selectedProfile?.displayName ?: current.displayName} as favorite."
                 } else {
                     "Removed favorite mark from ${selectedProfile?.displayName ?: current.displayName}."
-                }
+                })
                 showSection(AppSection.PROFILES)
             },
             onFailure = { error ->
-                status.text = "Could not update favorite for ${current.displayName}: ${error.message ?: error.javaClass.simpleName}"
+                setActionStatus("Could not update favorite for ${current.displayName}: ${error.message ?: error.javaClass.simpleName}")
             }
         )
     }
@@ -6371,7 +5839,7 @@ class MainActivity : Activity() {
     private fun confirmDeleteSelectedProfile() {
         val profile = selectedProfile
         if (profile == null) {
-            status.text = "No selected profile to delete. Pick a profile first."
+            setActionStatus("No selected profile to delete. Pick a profile first.")
             showSection(AppSection.PROFILES)
             return
         }
@@ -6394,43 +5862,22 @@ class MainActivity : Activity() {
                 }
                 refreshProfileButtons()
                 updateDashboardSummary()
-                status.text = if (selectedProfile == null) {
+                setActionStatus(if (selectedProfile == null) {
                     "Deleted profile ${profile.displayName}. No saved profiles remain."
                 } else {
                     "Deleted profile ${profile.displayName}. Latest remaining profile is selected."
-                }
+                })
                 showSection(AppSection.PROFILES)
             },
             onFailure = { error ->
-                status.text = "Could not delete profile ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}"
+                setActionStatus("Could not delete profile ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}")
             }
         )
-    }
-
-    private fun showSavedProfiles() {
-        showSection(AppSection.PROFILES)
-        refreshProfileButtons()
-        val profiles = runCatching { profileStore.listProfiles() }.getOrElse { error ->
-            status.text = "Could not load saved profiles: ${error.message ?: error.javaClass.simpleName}"
-            return
-        }
-        if (profiles.isEmpty()) {
-            status.text = "No saved profiles yet. Use the top + to add one."
-            return
-        }
-        status.text = "Saved VPN Hub profiles:\n" + profiles.joinToString("\n") { profile ->
-            val marker = if (profile.id == selectedProfileId) "*" else "•"
-            val route = EngineRegistry.routeFor(profile.kind)
-            val runtime = EngineRegistry.engineFor(profile.kind)
-            "$marker ${profile.summary()} — ${route.pathLabel(runtime)}"
-        } + "\n\nTap a profile button, then Resolve/Connect. Profile secrets are stored encrypted with Android Keystore."
     }
 
     private fun refreshProfileButtons(syncVerified: Boolean = true) {
         if (!::profileListContainer.isInitialized) return
         if (syncVerified) recordVerifiedProfileIfNeeded(currentHubStatus(), refreshProfiles = false)
-        profileRowStatusViews.clear()
-        profileRowSubtitleViews.clear()
         profileListContainer.removeAllViews()
         val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
         val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
@@ -6545,7 +5992,7 @@ class MainActivity : Activity() {
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         setTextColor(PearlPalette.ACCENT_BLUE)
-        background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
+        background = rippleRoundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
         setPadding(dp(10), dp(11), dp(10), dp(11))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -6676,32 +6123,6 @@ class MainActivity : Activity() {
             ?: "Subscription"
     }
 
-    private fun testLocationFilter(filter: String, label: String = "Quick check") {
-        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
-        val groups = runCatching { profileStore.listSubscriptionGroups() }.getOrDefault(emptyList())
-        val allProfiles = activeLocationProfiles(storedProfiles, groups)
-        selectedLocationGroupFilter = filter
-        normalizeLocationGroupFilter(groups)
-        saveLocationViewPrefs()
-        val scoped = profilesForLocationFilter(allProfiles, groups, filter)
-            .distinctBy { it.id }
-            .sortedWith(profileRankingComparator())
-        val scope = locationFilterLabel(groups)
-        refreshProfileButtons(syncVerified = false)
-        if (scoped.isEmpty()) {
-            setActionStatus("No configs in $scope to test.")
-            return
-        }
-        setActionStatus("$label: testing all ${scoped.size} configs in $scope. Search/runtime filters do not hide configs from this user-started batch.")
-        rankProfilesAndSelectBest(
-            inputProfiles = scoped,
-            reason = "queue tools $scope $label",
-            autoSelect = false,
-            scopeLabel = scope.shortUi(28),
-            testLabel = label
-        )
-    }
-
     private fun refreshSubscriptionGroupButtons(
         groups: List<SubscriptionGroup>,
         allProfiles: List<VpnProfile>,
@@ -6766,16 +6187,21 @@ class MainActivity : Activity() {
                 addView(tabRow)
             })
             addView(queueMenuButton {
-                showQueueToolsSheet(groups, activeGroup, scope)
+                showQueueToolsSheet(activeGroup, scope)
             })
         })
         if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL || selectedLocationSortMode != LOCATION_SORT_RECOMMENDED) {
             subscriptionGroupContainer.addView(TextView(this).apply {
-                text = "Runtime: ${locationRuntimeFilterLabel()} • Sort: ${locationSortLabel()} • ${scoped.size}/${groupedScoped.size} in ${scope.shortUi(18)} • tap reset"
+                text = "Runtime: ${locationRuntimeFilterLabel()} • Sort: ${locationSortLabel()} • ${scoped.size}/${groupedScoped.size} in ${scope.shortUi(18)} • tap to reset"
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(PearlPalette.TEXT_MUTED)
-                setPadding(dp(8), dp(2), dp(8), dp(2))
+                background = rippleRoundedBackground(PearlPalette.PEARL_GHOST, PearlPalette.HAIRLINE, radiusDp = 14)
+                minHeight = dp(48)
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Reset runtime filter and sort"
                 setOnClickListener {
                     selectedLocationRuntimeFilter = LOCATION_RUNTIME_ALL
                     selectedLocationSortMode = LOCATION_SORT_RECOMMENDED
@@ -6803,8 +6229,8 @@ class MainActivity : Activity() {
         maxLines = 1
         includeFontPadding = false
         setTextColor(PearlPalette.ACCENT_BLUE)
-        background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 17)
-        layoutParams = LinearLayout.LayoutParams(dp(36), dp(34)).apply {
+        background = rippleRoundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 17)
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
             setMargins(dp(5), 0, 0, 0)
         }
         isClickable = true
@@ -6814,17 +6240,12 @@ class MainActivity : Activity() {
     }
 
     private fun showQueueToolsSheet(
-        groups: List<SubscriptionGroup>,
         activeGroup: SubscriptionGroup?,
         scope: String
     ) {
-        val storedProfiles = runCatching { profileStore.listProfiles() }.getOrDefault(emptyList())
-        val allProfiles = activeLocationProfiles(storedProfiles, groups)
-        val queueProfiles = profilesForLocationFilter(allProfiles, groups, selectedLocationGroupFilter).distinctBy { it.id }
-        val queueCount = queueProfiles.size
         showBottomSheet(
             title = "Queue tools",
-            subtitle = "$scope • $queueCount saved configs • each test runs the full queue; search and runtime filters do not reduce it"
+            subtitle = "$scope • Filters and subscription management; test one profile at a time from its actions."
         ) { dialog ->
             addView(bottomSheetActionRow("◎", "Runtime filter", locationRuntimeFilterDescription()) {
                 dialog.dismiss()
@@ -6833,14 +6254,6 @@ class MainActivity : Activity() {
             addView(bottomSheetActionRow("↕", "Sort", locationSortDescription()) {
                 dialog.dismiss()
                 showLocationSortSheet()
-            })
-            addView(bottomSheetActionRow("◷", "Quick check all", "Fast endpoint reachability for all $queueCount configs in this queue") {
-                dialog.dismiss()
-                testLocationFilter(selectedLocationGroupFilter, label = "Quick check")
-            })
-            addView(bottomSheetActionRow("✓", "Real delay all", "Xray-core delay for all $queueCount configs, one at a time; this can take a while") {
-                dialog.dismiss()
-                runRealDelayForLocationFilter(selectedLocationGroupFilter)
             })
             if (activeGroup != null) {
                 val total = subscriptionTotalCount(activeGroup)
@@ -6854,11 +6267,9 @@ class MainActivity : Activity() {
                         loadMoreSubscriptionGroup(activeGroup)
                     })
                 }
-            }
-            if (groups.isNotEmpty()) {
-                addView(bottomSheetActionRow("↻", if (activeGroup == null) "Refresh all subscriptions" else "Refresh ${activeGroup.displayName.cleanProfileLabel().shortUi(24)}", if (activeGroup == null) "Update all saved subscription URLs" else "Update only the selected subscription queue") {
+                addView(bottomSheetActionRow("↻", "Refresh ${activeGroup.displayName.cleanProfileLabel().shortUi(24)}", "Update only the selected subscription") {
                     dialog.dismiss()
-                    if (activeGroup == null) refreshAllSubscriptionGroups() else refreshSubscriptionGroup(activeGroup)
+                    refreshSubscriptionGroup(activeGroup)
                 })
             }
             addView(bottomSheetActionRow("⌕", "Search", "Filter country, operator, or host") {
@@ -6939,13 +6350,13 @@ class MainActivity : Activity() {
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setTextColor(if (selected) PearlPalette.ACCENT_BLUE else PearlPalette.INK)
-        background = roundedBackground(
+        background = rippleRoundedBackground(
             fillColor = if (selected) PearlPalette.ACCENT_SOFT else PearlPalette.PEARL_WHITE,
             strokeColor = if (selected) PearlPalette.ACCENT_LILAC else PearlPalette.HAIRLINE,
             radiusDp = 18
         )
         setPadding(dp(12), dp(8), dp(12), dp(8))
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
             setMargins(dp(3), 0, dp(3), 0)
         }
         isClickable = true
@@ -6959,7 +6370,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
+            background = rippleRoundedBackground(PearlPalette.ACCENT_SOFT, PearlPalette.HAIRLINE, radiusDp = 18)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -7025,14 +6436,6 @@ class MainActivity : Activity() {
                 }
                 return@showBottomSheet
             }
-            addView(bottomSheetActionRow("◷", "Quick check all", "Test all ${profiles.size} configs in this subscription folder") {
-                dialog.dismiss()
-                testLocationFilter(group.id, label = "Quick check")
-            })
-            addView(bottomSheetActionRow("✓", "Real delay all", "Test all ${profiles.size} configs one at a time; this can take a while") {
-                dialog.dismiss()
-                runRealDelayForLocationFilter(group.id)
-            })
             addView(bottomSheetActionRow("↗", "Share / export group", "Text bundle, V2Ray subscription, or provider URL") {
                 dialog.dismiss()
                 showSubscriptionGroupShareSheet(group)
@@ -7100,11 +6503,11 @@ class MainActivity : Activity() {
 
     private fun loadLatestProfile() {
         val profile = runCatching { profileStore.latestProfile() }.getOrElse { error ->
-            status.text = "Could not load latest profile metadata: ${error.message ?: error.javaClass.simpleName}"
+            setActionStatus("Could not load latest profile metadata: ${error.message ?: error.javaClass.simpleName}")
             return
         }
         if (profile == null) {
-            status.text = "No saved profile found. Use the top + to add one."
+            setActionStatus("No saved profile found. Use the top + to add one.")
             return
         }
         loadProfile(profile)
@@ -7116,8 +6519,7 @@ class MainActivity : Activity() {
         selectedProfileId = profile.id
         selectedProfile = profile
         refreshProfileButtons()
-        status.text = "Selected profile: ${profile.displayName}. Tap Connect to start."
-        refreshAutoTestSummary()
+        setActionStatus("Saved profile selected. Tap Connect to start.")
         showSection(AppSection.HOME)
         maybeAutoTestSelectedConfig("select")
     }
@@ -7133,73 +6535,20 @@ class MainActivity : Activity() {
     }
 
     private fun loadProfileConfig(profile: VpnProfile): ImportedConfig? {
-        val raw = runCatching { profileStore.loadRawConfig(profile.id) }.getOrElse { error ->
-            status.text = "Could not decrypt profile ${profile.displayName}: ${error.message ?: error.javaClass.simpleName}"
+        val raw = runCatching { profileStore.loadRawConfig(profile.id) }.getOrElse {
+            setActionStatus("Could not decrypt this saved profile. Re-import it from your provider.")
             return null
         }
         if (raw.isNullOrBlank()) {
-            status.text = "Saved profile ${profile.displayName} has no decryptable config. Import it again."
+            setActionStatus("Saved profile is empty or unreadable. Re-import it from your provider.")
             return null
         }
         return try {
             ConfigImporter.parse(raw, profile.name)
-        } catch (e: Exception) {
-            status.text = "Saved profile ${profile.displayName} could not be parsed: ${e.message ?: e.javaClass.simpleName}"
+        } catch (_: Exception) {
+            setActionStatus("Saved profile format is invalid or unsupported. Check the provider-supplied config.")
             null
         }
-    }
-
-    private fun resolveAndProbeImportedConfig() {
-        val profile = selectedProfile ?: runCatching { profileStore.latestProfile() }.getOrNull()
-        val config = importedConfig ?: profile?.let { loadProfileConfig(it) }
-        if (config == null) {
-            status.text = "Import a V2Ray/Xray config first, or explicitly import WireGuard/OpenVPN as advanced fallbacks."
-            return
-        }
-
-        showSection(AppSection.TOOLS)
-        setAdvancedVisible(true)
-        status.text = "Running advanced endpoint diagnostics..."
-        advancedDiagnostics.text = "Resolving endpoints with DNS-over-HTTPS and probing candidates. If DoH is blocked, V2Ray/TCP endpoints can also be direct-probed without pinning."
-        val network = currentNetworkLabel()
-        Thread {
-            val summary = try {
-                probeConfigSummary(config)
-            } catch (e: Exception) {
-                ConfigProbeSummary(
-                    report = "Resolve/probe failed: ${e.message ?: e.javaClass.simpleName}",
-                    okCount = 0,
-                    failedCount = 1,
-                    bestLatencyMs = null,
-                    bestScore = null,
-                    checkedAtEpochMs = System.currentTimeMillis()
-                )
-            }
-            val updatedProfile = profile?.let { testedProfile ->
-                runCatching {
-                    profileStore.markTested(
-                        profileId = testedProfile.id,
-                        testedAtEpochMs = summary.checkedAtEpochMs,
-                        success = summary.reachable,
-                        network = network,
-                        latencyMs = summary.bestLatencyMs,
-                        score = summary.bestScore,
-                        testKind = TEST_KIND_QUICK
-                    )
-                }.getOrNull()
-            }
-            runOnUiThread {
-                if (updatedProfile != null && (selectedProfileId == null || selectedProfileId == updatedProfile.id)) {
-                    selectedProfile = updatedProfile
-                    selectedProfileId = updatedProfile.id
-                }
-                advancedDiagnostics.text = summary.report
-                status.text = "Advanced diagnostics completed. See Settings > Advanced."
-                refreshProfileButtons(syncVerified = false)
-                updateDashboardSummary()
-                refreshAutoTestSummary()
-            }
-        }.start()
     }
 
     private fun buildResolveAndProbeReport(config: ImportedConfig): String {
@@ -7543,7 +6892,6 @@ class MainActivity : Activity() {
     )
 
     private data class ConfigProbeSummary(
-        val report: String,
         val okCount: Int,
         val failedCount: Int,
         val bestLatencyMs: Long?,
@@ -7552,12 +6900,6 @@ class MainActivity : Activity() {
     ) {
         val reachable: Boolean get() = okCount > 0
     }
-
-    private data class ProfileProbeResult(
-        val profile: VpnProfile,
-        val config: ImportedConfig?,
-        val summary: ConfigProbeSummary
-    )
 
     private enum class AppSection {
         HOME,
@@ -7594,10 +6936,10 @@ class MainActivity : Activity() {
         const val FASTER_SUGGESTION_MIN_GAIN_MS = 250L
         const val FASTER_SUGGESTION_RATIO_PERCENT = 80L
         const val FASTER_SWITCH_RESULT_MS = 15_000L
+        const val ACTION_STATUS_VISIBLE_DURATION_MS = 5_000L
         const val MAX_REAL_DELAY_URLS = 4
         const val MAX_VPN_DNS_SERVERS = 4
         const val MAX_BYPASS_PACKAGES = 64
-        const val MAX_PARALLEL_PING_TESTS = 6
         const val SUBSCRIPTION_PROFILE_PREFIX = "sub-profile-"
         const val MAX_SUBSCRIPTION_LINKS = 80
         const val SUBSCRIPTION_LOAD_MORE_STEP = 80

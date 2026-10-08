@@ -39,6 +39,12 @@ class EngineFailureClassifierTest {
             EngineFailureClassifier.classifyFailure("Embedded Xray runtime config failed: unsupported transport.")
         )
         assertEquals(
+            EngineFailureCategory.CONFIGURATION,
+            EngineFailureClassifier.classifyFailure(
+                "Xray startup failed: VLESS without TLS or other encryption is prohibited."
+            )
+        )
+        assertEquals(
             EngineFailureCategory.ENGINE_START,
             EngineFailureClassifier.classifyFailure("WireGuard GoBackend start failed: backend unavailable.")
         )
