@@ -521,7 +521,7 @@ class V2RayRuntimeConfigBuilderTest {
             fakeDnsEnabled = true
         ).configJson
         assertContains(enabled, "\"fakedns\": [")
-        assertContains(enabled, "\"servers\": [\"fakedns\",\"1.1.1.1\",\"8.8.8.8\"]")
+        assertContains(enabled, "\"servers\": [\"fakedns\", \"1.1.1.1\", \"8.8.8.8\"]")
         assertContains(enabled, "\"destOverride\": [\"fakedns\"]")
         assertContains(enabled, "\"ipPool\": \"198.18.0.0/15\"")
         assertContains(enabled, "\"ipPool\": \"fc00::/18\"")
