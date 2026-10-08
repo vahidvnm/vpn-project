@@ -14,6 +14,12 @@ This project embeds or downloads the following third-party components during And
 - Purpose: user-initiated live QR scanning and decoding/encoding QR payloads.
 - License: Apache-2.0 according to the upstream project metadata; confirm transitive dependency notices during release preparation.
 
+## AndroidX Core
+
+- Artifact: `androidx.core:core:1.15.0`.
+- Purpose: provides `ContextCompat`, used by the ZXing capture activity at runtime.
+- License: Apache-2.0 according to the Google Maven artifact metadata.
+
 ## AndroidLibXrayLite / Xray core
 
 - Artifact: `libv2ray.aar`

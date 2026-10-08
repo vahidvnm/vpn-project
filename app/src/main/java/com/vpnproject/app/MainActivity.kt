@@ -3,7 +3,9 @@ package com.vpnproject.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -4326,7 +4328,7 @@ class MainActivity : Activity() {
         return heading + formatEngine("WireGuard", wireGuard) + "\n" + formatEngine("Xray", xray)
     }
 
-    @Deprecated("Deprecated in Android framework, acceptable for this no-AndroidX skeleton.")
+    @Deprecated("Legacy callback retained for scanner integration and document pickers.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val qrScanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
@@ -4388,6 +4390,27 @@ class MainActivity : Activity() {
                     setActionStatus("OpenVPN export was cancelled.")
                 }
             }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != CAMERA_PERMISSION_REQUEST || Manifest.permission.CAMERA !in permissions) return
+
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            setActionStatus("Camera access granted. Opening QR scanner.")
+            launchQrCodeScanner()
+        } else {
+            val message = if (shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+                "Camera permission was denied. Allow it to scan QR codes."
+            } else {
+                "Camera permission is blocked. Enable it in Android app settings to scan QR codes."
+            }
+            setActionStatus(message)
         }
     }
 
@@ -4868,6 +4891,20 @@ class MainActivity : Activity() {
     }
 
     private fun startQrCodeScan() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            val permissionRequestedBefore = appSettings.getBoolean(KEY_CAMERA_PERMISSION_REQUESTED, false)
+            if (permissionRequestedBefore && !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+                showCameraPermissionSettingsDialog()
+            } else {
+                appSettings.edit().putBoolean(KEY_CAMERA_PERMISSION_REQUESTED, true).apply()
+                requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            }
+            return
+        }
+        launchQrCodeScanner()
+    }
+
+    private fun launchQrCodeScanner() {
         runCatching {
             IntentIntegrator(this).apply {
                 setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
@@ -4878,6 +4915,21 @@ class MainActivity : Activity() {
         }.onFailure { error ->
             setActionStatus("Could not open the QR scanner: ${error.message ?: error.javaClass.simpleName}")
         }
+    }
+
+    private fun showCameraPermissionSettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Camera permission needed")
+            .setMessage("Allow camera access in Android app settings to scan a QR code.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Open settings") { _, _ ->
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                }
+                runCatching { startActivity(intent) }
+                    .onFailure { setActionStatus("Could not open app settings. Enable Camera permission manually.") }
+            }
+            .show()
     }
 
     private fun openQrImagePicker() {
@@ -6919,6 +6971,7 @@ class MainActivity : Activity() {
         const val EXPORT_OPENVPN_REQUEST = 1003
         const val IMPORT_QR_IMAGE_REQUEST = 1004
         const val EXPORT_CONFIG_REQUEST = 1005
+        const val CAMERA_PERMISSION_REQUEST = 1006
         const val MAX_IPS_PER_ENDPOINT = 4
         const val MAX_ERRORS_PER_ENDPOINT = 3
         const val INITIAL_PROFILE_RENDER_ROWS = 160
@@ -6964,6 +7017,7 @@ class MainActivity : Activity() {
         const val TEST_KIND_VERIFIED = "verified"
         const val SETTINGS_PREFS_NAME = "vpn_project_settings"
         const val KEY_AUTO_TEST_ENABLED = "auto_test_enabled"
+        const val KEY_CAMERA_PERMISSION_REQUESTED = "camera_permission_requested"
         const val KEY_SMART_FALLBACK_ENABLED = "smart_fallback_enabled"
         const val KEY_REAL_DELAY_URLS = "real_delay_urls"
         const val KEY_VPN_DNS_SERVERS = "vpn_dns_servers"
