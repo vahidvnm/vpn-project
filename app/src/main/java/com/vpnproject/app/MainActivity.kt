@@ -100,6 +100,7 @@ import com.vpnproject.app.engine.TrafficRateSample
 import com.vpnproject.app.profile.FasterSwitchRecommendationPolicy
 import com.vpnproject.app.profile.SecureProfileStore
 import com.vpnproject.app.profile.SubscriptionGroup
+import com.vpnproject.app.profile.SubscriptionProfilePreviewPolicy
 import com.vpnproject.app.profile.VpnProfile
 import com.vpnproject.app.profile.VpnProfileKind
 import com.vpnproject.app.profile.VpnProfileEndpoint
@@ -172,6 +173,7 @@ class MainActivity : Activity() {
     private lateinit var connectionStatsText: TextView
     private lateinit var selectedProfileText: TextView
     private lateinit var topProfileSummaryText: TextView
+    private lateinit var topBarContainer: LinearLayout
     private lateinit var primaryActionButton: PowerRingButton
     private lateinit var protectionBadge: TextView
     private lateinit var protectionDetailsText: TextView
@@ -316,7 +318,8 @@ class MainActivity : Activity() {
             )
         }
 
-        content.addView(createTopBar())
+        topBarContainer = createTopBar()
+        content.addView(topBarContainer)
         status = TextView(this).apply {
             text = "Ready. Import your own config, then connect."
             textSize = 12.5f
@@ -1259,6 +1262,8 @@ class MainActivity : Activity() {
         }
         return compareBy<VpnProfile> { profileRecommendationBucket(it, network) }
             .thenBy { noImprovementPenalty(it) }
+            .thenByDescending { it.useCount }
+            .thenByDescending { it.lastUsedEpochMs ?: 0L }
             .thenBy { profileLatencySortValue(it, network) }
             .thenBy { profileRankingState(it, network)?.score ?: it.lastTestScore ?: Int.MAX_VALUE }
             .thenByDescending { it.favorite }
@@ -2157,6 +2162,9 @@ class MainActivity : Activity() {
 
     private fun showSection(section: AppSection) {
         if (!::homeSection.isInitialized) return
+        if (::topBarContainer.isInitialized) {
+            topBarContainer.visibility = if (section == AppSection.PROFILES) View.GONE else View.VISIBLE
+        }
         homeSection.visibility = if (section == AppSection.HOME) View.VISIBLE else View.GONE
         profilesSection.visibility = if (section == AppSection.PROFILES) View.VISIBLE else View.GONE
         toolsSection.visibility = if (section == AppSection.TOOLS) View.VISIBLE else View.GONE
@@ -3651,23 +3659,113 @@ class MainActivity : Activity() {
         }
 
         val subscriptionProfileIds = groups.flatMap { it.profileIds }.toSet()
-        addSheetSection("Recommended", profiles.filter { profileHasGoodLatencySignal(it) }.sortedWith(profileRankingComparator()).take(MAX_RECOMMENDED_PROFILES))
+        val profilesById = profiles.associateBy { it.id }
+        val importedProfiles = profiles.filterNot { it.id in subscriptionProfileIds }
+        addSheetSection(
+            "Recommended",
+            importedProfiles.filter { profileHasGoodLatencySignal(it) }
+                .sortedWith(profileRankingComparator())
+                .take(MAX_RECOMMENDED_PROFILES)
+        )
         if (groups.isNotEmpty()) {
             container.addView(createLocationSectionLabel("Subscription profiles", groups.size))
-            groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach { group ->
-                val groupCount = subscriptionProfiles(group).size
-                container.addView(bottomSheetActionRow("▦", group.displayName.cleanProfileLabel().shortUi(26), "$groupCount configs • open grouped list") {
-                    dialog.dismiss()
-                    showSubscriptionGroupProfilesSheet(group)
-                })
+            val groupProfiles = groups.associate { group ->
+                group.id to group.profileIds.mapNotNull(profilesById::get)
             }
+            val groupPreviews = mutableMapOf<String, SubscriptionProfilePreviewPolicy.Preview>()
+            fun previewFor(group: SubscriptionGroup): SubscriptionProfilePreviewPolicy.Preview =
+                groupPreviews.getOrPut(group.id) {
+                    subscriptionProfilePreview(groupProfiles[group.id].orEmpty())
+                }
+
+            var expandedGroupId = selectedLocationGroupFilter
+                .takeIf { selected -> groups.any { it.id == selected } }
+                ?: groups.firstOrNull()?.id
+            val groupRows = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            fun renderGroups() {
+                groupRows.removeAllViews()
+                groups.take(MAX_SUBSCRIPTION_GROUP_BUTTONS).forEach groupLoop@{ group ->
+                    val profilesInGroup = groupProfiles[group.id].orEmpty()
+                    val expanded = expandedGroupId == group.id
+                    val preview = if (expanded) previewFor(group) else null
+                    val modeLabel = when {
+                        preview == null -> "tap to preview"
+                        preview.hasSavedResults -> "${preview.profiles.size} best from saved results"
+                        else -> "${preview.profiles.size} random • frequent configs favored"
+                    }
+                    groupRows.addView(bottomSheetActionRow(
+                        "▦",
+                        group.displayName.cleanProfileLabel().shortUi(26),
+                        "${profilesInGroup.size} configs • $modeLabel"
+                    ) {
+                        expandedGroupId = if (expanded) null else group.id
+                        renderGroups()
+                    })
+                    if (!expanded) return@groupLoop
+                    val currentPreview = preview ?: return@groupLoop
+
+                    if (profilesInGroup.isEmpty()) {
+                        groupRows.addView(TextView(this@MainActivity).apply {
+                            text = "No configs are saved here yet. Refresh this subscription to load its profiles."
+                            textSize = 12f
+                            gravity = Gravity.CENTER
+                            setTextColor(PearlPalette.TEXT_MUTED)
+                            setPadding(dp(10), dp(8), dp(10), dp(8))
+                        })
+                        groupRows.addView(bottomSheetActionRow("↗", "Open group details", "Share, refresh, or manage this subscription") {
+                            dialog.dismiss()
+                            showSubscriptionGroupProfilesSheet(group)
+                        })
+                        return@groupLoop
+                    }
+
+                    groupRows.addView(TextView(this@MainActivity).apply {
+                        text = if (currentPreview.hasSavedResults) {
+                            "Ranked from saved per-profile results; frequently used configs get priority."
+                        } else {
+                            "Random preview; configs used more often are more likely to appear."
+                        }
+                        textSize = 11.5f
+                        gravity = Gravity.CENTER
+                        setTextColor(PearlPalette.TEXT_MUTED)
+                        setPadding(dp(10), dp(5), dp(10), dp(5))
+                    })
+                    currentPreview.profiles.forEach { profile ->
+                        groupRows.addView(profileListRow(
+                            profile = profile,
+                            compact = true,
+                            onSelect = {
+                                dialog.dismiss()
+                                loadProfile(profile)
+                            },
+                            onActions = {
+                                dialog.dismiss()
+                                showProfileActionsSheet(profile)
+                            }
+                        ))
+                    }
+                    groupRows.addView(bottomSheetActionRow(
+                        "↗",
+                        "Open full group",
+                        "Browse all configs, search, share, or refresh"
+                    ) {
+                        dialog.dismiss()
+                        showSubscriptionGroupProfilesSheet(group)
+                    })
+                }
+            }
+            container.addView(groupRows)
+            renderGroups()
         }
         if (groups.isEmpty()) {
-            addSheetSection("Imported configs", profiles.filter { it.id !in subscriptionProfileIds }.sortedWith(profileRankingComparator()))
+            addSheetSection("Imported configs", importedProfiles.sortedWith(profileRankingComparator()))
         }
-        if (profiles.size > shown) {
+        if (groups.isEmpty() && profiles.size > shown) {
             container.addView(TextView(this@MainActivity).apply {
-                text = "Subscription configs are separated into tabs. Use Locations search for a specific config."
+                text = "Use Locations search for a specific country, operator, or host."
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTextColor(PearlPalette.TEXT_MUTED)
@@ -4681,6 +4779,13 @@ class MainActivity : Activity() {
             selectedProfile = requestedProfile
             selectedProfileId = requestedProfile.id
             importedConfig = config
+        }
+        val profileIdForUse = requestedProfile?.id ?: selectedProfileId
+        if (!isSmartFallbackAttempt && profileIdForUse != null) {
+            runCatching { profileStore.markUsed(profileIdForUse) }
+                .getOrNull()
+                ?.takeIf { it.id == selectedProfileId }
+                ?.let { selectedProfile = it }
         }
         if (!isSmartFallbackAttempt) beginSmartFallbackSession()
         lastRecordedVerificationKey = null
@@ -6364,6 +6469,7 @@ class MainActivity : Activity() {
             addView(queueMenuButton {
                 showQueueToolsSheet(activeGroup, scope)
             })
+            addView(headerIconButton("+") { showAddConfigMenu() })
         })
         if (selectedLocationRuntimeFilter != LOCATION_RUNTIME_ALL || selectedLocationSortMode != LOCATION_SORT_RECOMMENDED) {
             subscriptionGroupContainer.addView(TextView(this).apply {
@@ -6590,11 +6696,23 @@ class MainActivity : Activity() {
     private fun subscriptionProfiles(group: SubscriptionGroup): List<VpnProfile> =
         group.profileIds.mapNotNull { id -> profileStore.profile(id) }
 
+    private fun subscriptionProfilePreview(profiles: List<VpnProfile>): SubscriptionProfilePreviewPolicy.Preview =
+        SubscriptionProfilePreviewPolicy.select(
+            profiles = profiles,
+            limit = MAX_GROUP_PROFILE_PREVIEW,
+            rankingComparator = profileRankingComparator()
+        )
+
     private fun showSubscriptionGroupProfilesSheet(group: SubscriptionGroup) {
-        val profiles = subscriptionProfiles(group).sortedWith(profileRankingComparator())
+        val profiles = subscriptionProfiles(group)
+        val preview = subscriptionProfilePreview(profiles)
         showBottomSheet(
             title = group.displayName.cleanProfileLabel().shortUi(32),
-            subtitle = "${profiles.size} configs in this subscription profile"
+            subtitle = if (preview.hasSavedResults) {
+                "${preview.profiles.size} best of ${profiles.size} • saved per-profile results"
+            } else {
+                "${preview.profiles.size} random of ${profiles.size} • frequent configs favored"
+            }
         ) { dialog ->
             if (profiles.isEmpty()) {
                 addView(TextView(this@MainActivity).apply {
@@ -6621,7 +6739,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(0, dp(4), 0, 0)
             }
-            profiles.take(MAX_GROUP_PROFILE_PREVIEW).forEach { profile ->
+            preview.profiles.forEach { profile ->
                 listContainer.addView(profileListRow(
                     profile = profile,
                     compact = true,
@@ -6635,9 +6753,13 @@ class MainActivity : Activity() {
                     }
                 ))
             }
-            if (profiles.size > MAX_GROUP_PROFILE_PREVIEW) {
+            if (profiles.size > preview.profiles.size) {
                 listContainer.addView(TextView(this@MainActivity).apply {
-                    text = "Showing ${MAX_GROUP_PROFILE_PREVIEW} best of ${profiles.size}. Use Locations search for a specific country/operator."
+                    text = if (preview.hasSavedResults) {
+                        "Showing ${preview.profiles.size} best of ${profiles.size} from saved individual results. Use Locations search for a specific config."
+                    } else {
+                        "Showing ${preview.profiles.size} random of ${profiles.size}; configs you use more often are favored."
+                    }
                     textSize = 12f
                     gravity = Gravity.CENTER
                     setTextColor(PearlPalette.TEXT_MUTED)
@@ -7103,7 +7225,7 @@ class MainActivity : Activity() {
         const val MAX_PROFILE_BUTTONS = 2_000
         const val MAX_PROFILE_SHEET_CHOICES = 40
         const val MAX_SUBSCRIPTION_GROUP_BUTTONS = 20
-        const val MAX_GROUP_PROFILE_PREVIEW = 16
+        const val MAX_GROUP_PROFILE_PREVIEW = SubscriptionProfilePreviewPolicy.DEFAULT_LIMIT
         const val MAX_RECOMMENDED_PROFILES = 5
         const val MAX_SMART_FALLBACK_ATTEMPTS = 3
         const val MAX_SMART_FALLBACK_CANDIDATES = 24

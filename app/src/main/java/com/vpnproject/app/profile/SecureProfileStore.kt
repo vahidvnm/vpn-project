@@ -50,7 +50,9 @@ class SecureProfileStore(context: Context) {
                 lastTestScore = existing?.lastTestScore,
                 lastTestNetwork = existing?.lastTestNetwork,
                 testNetworkHistory = existing?.testNetworkHistory,
-                favorite = existing?.favorite ?: generated.favorite
+                favorite = existing?.favorite ?: generated.favorite,
+                useCount = existing?.useCount ?: generated.useCount,
+                lastUsedEpochMs = existing?.lastUsedEpochMs
             )
         }
         prefs.edit().apply {
@@ -60,6 +62,9 @@ class SecureProfileStore(context: Context) {
             putLong(key(profile.id, FIELD_CREATED), profile.createdAtEpochMs)
             putLong(key(profile.id, FIELD_UPDATED), profile.updatedAtEpochMs)
             putBoolean(key(profile.id, FIELD_FAVORITE), profile.favorite)
+            putLong(key(profile.id, FIELD_USE_COUNT), profile.useCount.coerceAtLeast(0L))
+            profile.lastUsedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_USED), it) }
+                ?: remove(key(profile.id, FIELD_LAST_USED))
             profile.lastVerifiedEpochMs?.let { putLong(key(profile.id, FIELD_LAST_VERIFIED), it) }
                 ?: remove(key(profile.id, FIELD_LAST_VERIFIED))
             profile.lastVerifiedNetwork?.let { putString(key(profile.id, FIELD_LAST_VERIFIED_NETWORK), it) }
@@ -255,6 +260,18 @@ class SecureProfileStore(context: Context) {
         return loadProfileMetadata(profileId)
     }
 
+    /** Records an explicit user-started connection attempt for profile ranking. */
+    fun markUsed(profileId: String, usedAtEpochMs: Long = System.currentTimeMillis()): VpnProfile? {
+        val profile = loadProfileMetadata(profileId) ?: return null
+        val nextUseCount = if (profile.useCount < Long.MAX_VALUE) profile.useCount + 1L else Long.MAX_VALUE
+        prefs.edit()
+            .putLong(key(profileId, FIELD_USE_COUNT), nextUseCount)
+            .putLong(key(profileId, FIELD_LAST_USED), usedAtEpochMs)
+            .putString(KEY_LAST_PROFILE_ID, profileId)
+            .apply()
+        return loadProfileMetadata(profileId)
+    }
+
     fun deleteProfile(profileId: String) {
         val remaining = profileIds().filterNot { it == profileId }
         prefs.edit().apply {
@@ -264,6 +281,8 @@ class SecureProfileStore(context: Context) {
             remove(key(profileId, FIELD_CREATED))
             remove(key(profileId, FIELD_UPDATED))
             remove(key(profileId, FIELD_FAVORITE))
+            remove(key(profileId, FIELD_USE_COUNT))
+            remove(key(profileId, FIELD_LAST_USED))
             remove(key(profileId, FIELD_LAST_VERIFIED))
             remove(key(profileId, FIELD_LAST_VERIFIED_NETWORK))
             remove(key(profileId, FIELD_LAST_VERIFIED_LATENCY))
@@ -288,6 +307,8 @@ class SecureProfileStore(context: Context) {
             ?: VpnProfileKind.UNKNOWN
         val created = prefs.getLong(key(id, FIELD_CREATED), 0L).takeIf { it > 0L } ?: return null
         val updated = prefs.getLong(key(id, FIELD_UPDATED), created)
+        val useCount = prefs.getLong(key(id, FIELD_USE_COUNT), 0L).coerceAtLeast(0L)
+        val lastUsed = prefs.getLong(key(id, FIELD_LAST_USED), 0L).takeIf { it > 0L }
         val lastVerified = prefs.getLong(key(id, FIELD_LAST_VERIFIED), 0L).takeIf { it > 0L }
         val lastVerifiedLatency = prefs.getLong(key(id, FIELD_LAST_VERIFIED_LATENCY), -1L).takeIf { it >= 0L }
         val lastTested = prefs.getLong(key(id, FIELD_LAST_TESTED), 0L).takeIf { it > 0L }
@@ -311,7 +332,9 @@ class SecureProfileStore(context: Context) {
             lastTestScore = lastTestScore,
             lastTestNetwork = prefs.getString(key(id, FIELD_LAST_TEST_NETWORK), null),
             testNetworkHistory = prefs.getString(key(id, FIELD_TEST_NETWORK_HISTORY), null),
-            favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false)
+            favorite = prefs.getBoolean(key(id, FIELD_FAVORITE), false),
+            useCount = useCount,
+            lastUsedEpochMs = lastUsed
         )
     }
 
@@ -458,6 +481,8 @@ class SecureProfileStore(context: Context) {
         const val FIELD_CREATED = "created_at"
         const val FIELD_UPDATED = "updated_at"
         const val FIELD_FAVORITE = "favorite"
+        const val FIELD_USE_COUNT = "use_count"
+        const val FIELD_LAST_USED = "last_used_at"
         const val FIELD_LAST_VERIFIED = "last_verified_at"
         const val FIELD_LAST_VERIFIED_NETWORK = "last_verified_network"
         const val FIELD_LAST_VERIFIED_LATENCY = "last_verified_latency_ms"

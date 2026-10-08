@@ -31,7 +31,9 @@ data class VpnProfile(
     val lastTestScore: Int? = null,
     val lastTestNetwork: String? = null,
     val testNetworkHistory: String? = null,
-    val favorite: Boolean = false
+    val favorite: Boolean = false,
+    val useCount: Long = 0L,
+    val lastUsedEpochMs: Long? = null
 ) {
     val displayName: String get() = name.ifBlank { kind.displayName }
 
