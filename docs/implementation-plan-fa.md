@@ -17,7 +17,7 @@
 | TUN و Android | سرویس Xray/WireGuard واقعی و مسیر مجوز/سرویس foreground وجود دارد. `AutoVpnService` فقط TUN آزمایشی می‌سازد و packetها را drop می‌کند. | Always-on/lockdown فقط راهنمای Android است، نه kill switch اختصاصی اثبات‌شده؛ IPv6، DNS leak، bypass اپ‌ها و رفتار توقف سرویس باید روی گوشی آزموده شوند. |
 | Verify و UI | Xray proxy-egress، IP عمومی، بررسی DNS best-effort و traffic counters از core قابل نمایش‌اند. WireGuard معیار verifier جدا دارد. | `XRAY_PROXY_EGRESS` معادل تأیید app-to-TUN یا DNS-leak authoritative نیست. رفتار طولانی‌مدت و چنددستگاهی نهایی نشده است. |
 | پروفایل و تست | raw config/subscription URL با Android Keystore + AES-GCM ذخیره می‌شود؛ UI روشن/تیرهٔ سفید/مشکی با accent محدود، آیکون سیستم VPN و traffic حفظ می‌شوند. Quick check و Real delay فقط با اقدام روشن کاربر و برای یک پروفایل انتخاب‌شده در هر نوبت اجرا می‌شوند؛ آزمون‌ها سنجهٔ سرعت یا پهنای‌باند نیستند. | redaction سراسری، سیاست backup، persistence واقعی per-network، آزمون دستگاهی ورودی/اشتراک و پوشش کامل lifecycle هنوز نیازمند بازبینی‌اند. |
-| Build و انتشار | Gradle Wrapper نسخهٔ 8.13 با checksum توزیع، CI متکی بر همان wrapper، کامپایل با API 36 و Xray AAR با نسخه و SHA-256 ثابت تنظیم شده‌اند؛ ABI فعلی `arm64-v8a` است. | اجرای CI پس از این تغییر، نام و مجوز پروژه، اسناد معماری/امنیت/provider، release signing، پشتیبانی ABI و بررسی نهایی مجوز Xray/LGPL همچنان باز هستند. |
+| Build و انتشار | Gradle Wrapper نسخهٔ 8.14.6 با checksum توزیع، CI متکی بر همان wrapper، کامپایل با API 36 و Xray AAR با نسخه و SHA-256 ثابت تنظیم شده‌اند؛ ABI فعلی `arm64-v8a` است. | اجرای CI پس از این تغییر، نام و مجوز پروژه، اسناد معماری/امنیت/provider، release signing، پشتیبانی ABI و بررسی نهایی مجوز Xray/LGPL همچنان باز هستند. |
 
 ## قواعد ثابت برای همهٔ مراحل
 
@@ -158,7 +158,7 @@
 - [ ] تکمیل `ARCHITECTURE.md`, `SECURITY.md`, `PROVIDERS.md` و privacy policy.
 - [ ] بازبینی license و noticeهای AndroidLibXrayLite/Xray (یادداشت فعلی LGPL-3.0 است)، WireGuard و تمام dependencyها؛ تعیین نحوهٔ ارائهٔ notice/source متناظر قبل از انتشار.
 - [x] افزودن Gradle Wrapper قابل‌تکرار و checksum توزیع؛ گردش‌کار CI از همان wrapper استفاده می‌کند و فایل Wrapper آن با آزمون شناخته‌شدهٔ سازوکار اجرا بررسی می‌شود.
-- [x] ارتقای زنجیرهٔ ساخت به AGP 8.11.1، Kotlin Gradle Plugin 2.2.21، Gradle 8.13 و SDK سطح 36؛ targetSdk فعلاً 35 می‌ماند تا رفتار Android 16 و edge-to-edge جداگانه بازبینی شود.
+- [x] ارتقای زنجیرهٔ ساخت به AGP 8.11.1، Kotlin Gradle Plugin 2.2.21، Gradle 8.14.6 و SDK سطح 36؛ targetSdk فعلاً 35 می‌ماند تا رفتار Android 16 و edge-to-edge جداگانه بازبینی شود.
 - [ ] نسخه‌بندی، release build، signing key خارج repo/CI secrets، checksum و دستورالعمل امضای کاربر.
 - [ ] تصمیم پشتیبانی ABI: اکنون فقط `arm64-v8a`; دستگاه‌های دیگر باید با پیام درست unsupported باشند یا ABIهای مجاز/قابل‌ساخت اضافه شوند.
 - [ ] pin کردن action/toolchainها و ثبت provenance/hash dependencyهای دانلودی؛ checksum فعلی Xray حفظ شود.

@@ -24,7 +24,7 @@ A successful build or unit test is not evidence of operation on a particular dev
 
 ## Build
 
-Requirements: JDK 17, Android SDK Platform 36, and SDK Build Tools 35.0.0 (the default for the selected Android Gradle Plugin). The Gradle Wrapper pins Gradle 8.13 and verifies the distribution checksum.
+Requirements: JDK 17, Android SDK Platform 36, and SDK Build Tools 35.0.0 (the default for the selected Android Gradle Plugin). The Gradle Wrapper pins Gradle 8.14.6 and verifies the distribution checksum.
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:assembleDebug

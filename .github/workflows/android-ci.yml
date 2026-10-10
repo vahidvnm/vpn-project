@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     name: Build debug APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -55,7 +55,7 @@ jobs:
 
       - name: Upload Gradle log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-ci-gradle-log
           path: gradle-build.log
@@ -63,7 +63,7 @@ jobs:
           retention-days: 7
 
       - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vpn-project-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk

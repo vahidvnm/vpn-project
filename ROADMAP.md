@@ -664,7 +664,7 @@ Phone -> Underlay -> Provider endpoint -> Internet
 
 - Android حداقل نسخه 8.0 / API 26 برای شروع انتخاب شد.
 - پکیج موقت پروژه `com.vpnproject.app` است تا بعداً بعد از انتخاب نام محصول تغییر کند.
-- CI اولیه با GitHub Actions باقی مانده است؛ اکنون Gradle Wrapper نسخهٔ ۸٫۱۳ با checksum توزیع و SDK سطح ۳۶ تنظیم شده‌اند. گردش‌کار ساخت پس از این ارتقا هنوز باید اجرا و تأیید شود.
+- CI اولیه با GitHub Actions باقی مانده است؛ اکنون Gradle Wrapper نسخهٔ ۸٫۱۴٫۶ با checksum توزیع و SDK سطح ۳۶ تنظیم شده‌اند. گردش‌کار ساخت پس از این ارتقا هنوز باید اجرا و تأیید شود.
 - UI فعلاً ساده و بدون Compose است تا build سریع و پایدار شود؛ Compose در فاز UX اضافه می‌شود.
 - Resolver فعلاً فقط public IPv4/A record را از DoH می‌پذیرد؛ IPv6 و DNSهای غیرعمومی تا زمان طراحی کامل route policy کنار گذاشته می‌شوند.
 - Health probe فعلی برای TCP قابل اتکاتر است؛ برای WireGuard/OpenVPN UDP باید در فاز engine، handshake واقعی معیار موفقیت باشد.
