@@ -161,7 +161,8 @@
 - [x] ارتقای زنجیرهٔ ساخت به AGP 8.11.1، Kotlin Gradle Plugin 2.2.21، Gradle 8.14.6 و SDK سطح 36؛ targetSdk فعلاً 35 می‌ماند تا رفتار Android 16 و edge-to-edge جداگانه بازبینی شود.
 - [ ] نسخه‌بندی، release build، signing key خارج repo/CI secrets، checksum و دستورالعمل امضای کاربر.
 - [ ] تصمیم پشتیبانی ABI: اکنون فقط `arm64-v8a`; دستگاه‌های دیگر باید با پیام درست unsupported باشند یا ABIهای مجاز/قابل‌ساخت اضافه شوند.
-- [ ] pin کردن action/toolchainها و ثبت provenance/hash dependencyهای دانلودی؛ checksum فعلی Xray حفظ شود.
+- [x] اقدام‌های مستقیم GitHub با SHA کامل commit ثابت شدند و Dependabot برای بررسی هفتگی نسخه‌ها تنظیم شد؛ نسخه/‏SHA-256 موتور Xray و checksum توزیع Gradle نیز ثابت‌اند.
+- [ ] ثبت provenance و تکمیل کنترل hash تمام dependencyهای انتقالی؛ hardeningهای فعلی جای بازبینی مجوز و منبع همهٔ کتابخانه‌ها را نمی‌گیرند.
 - [ ] اجرای CI کامل روی push/PR و Android instrumentation/device matrix؛ debug build فعلی به‌تنهایی release gate نیست.
 - [ ] بررسی سیاست فروشگاه/توزیع مستقیم و آماده‌کردن notices/privacy disclosures؛ تصمیم flavorهای direct APK/F-Droid/Play را فقط با توجه به مجوز و policy بگیریم.
 
