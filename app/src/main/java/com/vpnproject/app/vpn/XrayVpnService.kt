@@ -916,15 +916,22 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             updateStatus(EngineState.STOPPING, message)
             thread
         }
-        joinUninterruptibly(pendingStart)
+        ServiceThreadJoiner.await(pendingStart)
         stopCoreOnly()
         synchronized(lifecycleLock) {
-            updateStatus(EngineState.STOPPED, message)
+            if (pendingStart?.isAlive == true) {
+                updateStatus(
+                    EngineState.FAILED,
+                    "$message Xray startup worker did not exit within ${ServiceThreadJoiner.DEFAULT_TIMEOUT_MS} ms; cleanup was attempted best-effort."
+                )
+            } else {
+                updateStatus(EngineState.STOPPED, message)
+            }
         }
         stopForegroundCompat()
     }
 
-    private fun invalidatePendingStart() {
+    private fun invalidatePendingStart(): Boolean {
         val pendingStart = synchronized(lifecycleLock) {
             lifecycleGeneration.incrementAndGet()
             val thread = startThread
@@ -932,20 +939,7 @@ class XrayVpnService : VpnService(), CoreCallbackHandler {
             startThread = null
             thread
         }
-        joinUninterruptibly(pendingStart)
-    }
-
-    private fun joinUninterruptibly(thread: Thread?) {
-        if (thread == null || thread === Thread.currentThread()) return
-        var interrupted = false
-        while (thread.isAlive) {
-            try {
-                thread.join()
-            } catch (_: InterruptedException) {
-                interrupted = true
-            }
-        }
-        if (interrupted) Thread.currentThread().interrupt()
+        return ServiceThreadJoiner.await(pendingStart)
     }
 
     private fun stopForegroundCompat() {

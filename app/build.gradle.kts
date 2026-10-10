@@ -74,7 +74,7 @@ tasks.configureEach {
 
 android {
     namespace = "com.vpnproject.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.vpnproject.app"

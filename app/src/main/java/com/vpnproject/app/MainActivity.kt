@@ -6851,7 +6851,7 @@ class MainActivity : Activity() {
 
     private fun buildResolveAndProbeReport(config: ImportedConfig): String {
         val lines = mutableListOf<String>()
-        val networkKey = NetworkKey(NetworkType.UNKNOWN, "manual-ui")
+        val networkKey = currentNetworkKey()
         lines += "Endpoint test results for ${config.kind}${config.name?.let { " ($it)" } ?: ""}:"
         lines += currentNetworkDiagnosticNote()
         config.warnings.take(8).forEach { warning -> lines += "Import note: $warning" }
@@ -6906,6 +6906,25 @@ class MainActivity : Activity() {
             transports.ifEmpty { listOf("unknown") }.joinToString("+")
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun currentNetworkKey(): NetworkKey {
+        return try {
+            val activeNetwork = connectivityManager.activeNetwork
+                ?: return NetworkKey(NetworkType.UNKNOWN, "no-active-network")
+            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+            val type = when {
+                capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> NetworkType.WIFI
+                capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> NetworkType.MOBILE
+                capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> NetworkType.OTHER
+                else -> NetworkType.UNKNOWN
+            }
+            val handle = activeNetwork.networkHandle
+            val identifier = if (handle != 0L) "android-network-$handle" else "unknown-network"
+            NetworkKey(type, identifier)
+        } catch (_: Exception) {
+            NetworkKey(NetworkType.UNKNOWN, "unavailable-network")
         }
     }
 

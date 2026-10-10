@@ -158,7 +158,15 @@ class WireGuardVpnService : GoBackend.VpnService() {
             try {
                 if (!isCurrentLifecycle(generation)) return@Thread
                 stopVerification()
-                stopRebindAndJoin()
+                val previousRebindWorker = requestRebindStop()
+                if (!ServiceThreadJoiner.await(previousRebindWorker)) {
+                    val message = "A previous WireGuard network rebind did not stop in time; the new tunnel was not started."
+                    if (updateStatusIfCurrent(generation, EngineState.FAILED, message, note)) {
+                        startForegroundNotificationIfCurrent(generation, message)
+                        stopSelfResult(startId)
+                    }
+                    return@Thread
+                }
                 if (!isCurrentLifecycle(generation)) return@Thread
                 stopExistingTunnelForRestart()
                 if (!isCurrentLifecycle(generation)) return@Thread
@@ -550,27 +558,42 @@ class WireGuardVpnService : GoBackend.VpnService() {
             updateStatus(EngineState.STOPPING, "Stopping WireGuard engine…")
             thread
         }
-        joinUninterruptibly(pendingStart)
+        ServiceThreadJoiner.await(pendingStart)
         stopVerification()
-        stopRebindAndJoin()
+        val pendingRebind = requestRebindStop()
+        ServiceThreadJoiner.await(pendingRebind)
         unregisterNetworkCallback()
+
         val existing = synchronized(lifecycleLock) { Triple(backend, tunnel, currentConfig) }
-        var stopError: Exception? = null
+        var stopError: Throwable? = null
         val goBackend = existing.first
         val tunnelHandle = existing.second
         if (goBackend != null && tunnelHandle != null) {
             runCatching { goBackend.setState(tunnelHandle, Tunnel.State.DOWN, null) }
-                .onFailure { stopError = it as? Exception }
+                .onSuccess { state ->
+                    if (state != Tunnel.State.DOWN) {
+                        stopError = IllegalStateException("WireGuard returned $state while stopping.")
+                    }
+                }
+                .onFailure { stopError = it }
         }
+
         synchronized(lifecycleLock) {
             backend = null
             tunnel = null
             currentConfig = null
             lastRebindRequestedAtElapsedMs = 0L
-            if (stopError == null) {
+            val lifecycleWorkerStillActive = pendingStart?.isAlive == true || pendingRebind?.isAlive == true
+            val failure = buildList {
+                stopError?.let { add("WireGuard stop failed: ${it.message ?: it.javaClass.simpleName}") }
+                if (lifecycleWorkerStillActive) {
+                    add("A lifecycle worker did not exit within ${ServiceThreadJoiner.DEFAULT_TIMEOUT_MS} ms; cleanup was attempted best-effort.")
+                }
+            }.joinToString(" ")
+            if (failure.isBlank()) {
                 updateStatus(EngineState.STOPPED, "WireGuard engine stopped.")
             } else {
-                updateStatus(EngineState.FAILED, "WireGuard stop failed: ${stopError?.message ?: stopError?.javaClass?.simpleName}")
+                updateStatus(EngineState.FAILED, failure)
             }
         }
     }
@@ -582,26 +605,11 @@ class WireGuardVpnService : GoBackend.VpnService() {
         verificationThread = null
     }
 
-    private fun stopRebindAndJoin() {
-        rebindRunning.set(false)
+    private fun requestRebindStop(): Thread? {
         pendingRebindReason.set(null)
         val thread = rebindThread
-        rebindThread = null
-        thread?.interrupt()
-        joinUninterruptibly(thread)
-    }
-
-    private fun joinUninterruptibly(thread: Thread?) {
-        if (thread == null || thread === Thread.currentThread()) return
-        var interrupted = false
-        while (thread.isAlive) {
-            try {
-                thread.join()
-            } catch (_: InterruptedException) {
-                interrupted = true
-            }
-        }
-        if (interrupted) Thread.currentThread().interrupt()
+        if (thread == null) rebindRunning.set(false) else thread.interrupt()
+        return thread
     }
 
     private fun registerNetworkCallback() {

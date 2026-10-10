@@ -16,13 +16,13 @@
 | OpenVPN | parser، آماده‌سازی/pinning و handoff به کلاینت خارجی وجود دارد. | engine داخلی، تصمیم مجوز/وابستگی و تست عملی handoff روی کانفیگ مجاز باقی است. |
 | TUN و Android | سرویس Xray/WireGuard واقعی و مسیر مجوز/سرویس foreground وجود دارد. `AutoVpnService` فقط TUN آزمایشی می‌سازد و packetها را drop می‌کند. | Always-on/lockdown فقط راهنمای Android است، نه kill switch اختصاصی اثبات‌شده؛ IPv6، DNS leak، bypass اپ‌ها و رفتار توقف سرویس باید روی گوشی آزموده شوند. |
 | Verify و UI | Xray proxy-egress، IP عمومی، بررسی DNS best-effort و traffic counters از core قابل نمایش‌اند. WireGuard معیار verifier جدا دارد. | `XRAY_PROXY_EGRESS` معادل تأیید app-to-TUN یا DNS-leak authoritative نیست. رفتار طولانی‌مدت و چنددستگاهی نهایی نشده است. |
-| پروفایل و تست | raw config/subscription URL با Android Keystore + AES-GCM ذخیره می‌شود؛ UI روشن/تیرهٔ سفید/مشکی با accent محدود، آیکون سیستم VPN و traffic حفظ می‌شوند. Quick check و Real delay صف فقط با اقدام کاربر شروع می‌شوند و همهٔ پروفایل‌های ذخیره‌شده در محدودهٔ انتخاب‌شده را می‌پوشانند؛ هم‌زمانی Quick check محدود و Real delay ترتیبی است. | redaction سراسری، سیاست backup، persistence واقعی per-network، آزمون دستگاهی ورودی/اشتراک و پوشش کامل lifecycle هنوز نیازمند بازبینی‌اند. |
-| Build و انتشار | CI، unit tests و debug APK build موجودند؛ Xray AAR با نسخه و SHA-256 pin می‌شود؛ ABI فعلی `arm64-v8a` است. | نام و مجوز پروژه، اسناد معماری/امنیت/provider، Gradle wrapper، release signing، پشتیبانی ABI و بررسی نهایی مجوز Xray/LGPL مشخص/تکمیل نشده‌اند. |
+| پروفایل و تست | raw config/subscription URL با Android Keystore + AES-GCM ذخیره می‌شود؛ UI روشن/تیرهٔ سفید/مشکی با accent محدود، آیکون سیستم VPN و traffic حفظ می‌شوند. Quick check و Real delay فقط با اقدام روشن کاربر و برای یک پروفایل انتخاب‌شده در هر نوبت اجرا می‌شوند؛ آزمون‌ها سنجهٔ سرعت یا پهنای‌باند نیستند. | redaction سراسری، سیاست backup، persistence واقعی per-network، آزمون دستگاهی ورودی/اشتراک و پوشش کامل lifecycle هنوز نیازمند بازبینی‌اند. |
+| Build و انتشار | Gradle Wrapper نسخهٔ 8.13 با checksum توزیع، CI متکی بر همان wrapper، کامپایل با API 36 و Xray AAR با نسخه و SHA-256 ثابت تنظیم شده‌اند؛ ABI فعلی `arm64-v8a` است. | اجرای CI پس از این تغییر، نام و مجوز پروژه، اسناد معماری/امنیت/provider، release signing، پشتیبانی ABI و بررسی نهایی مجوز Xray/LGPL همچنان باز هستند. |
 
 ## قواعد ثابت برای همهٔ مراحل
 
 1. فقط کانفیگ رسمی/مجاز provider یا کانفیگی که کاربر خودش paste/import کرده؛ هیچ pool عمومی، استخراج مخفی، generator کنارگذاشته‌شده یا ارسال credential به backend اضافه نشود.
-2. Quick/Real/Connect verification فقط با اقدام روشن کاربر آغاز شود. هیچ probe در startup، بازشدن صفحه، تغییر شبکه یا مرتب‌سازی/recommendation اجرا نشود. Quick check و Real delay همهٔ پروفایل‌های ذخیره‌شده در صف انتخاب‌شده را آزمایش کنند؛ سقف تعداد کانفیگ ممنوع است و فقط هم‌زمانی Quick check می‌تواند محدود باشد (Real delay ترتیبی است).
+2. Quick check، Real delay و Connect verification فقط با اقدام روشن کاربر آغاز شوند؛ ترجیح خودکارِ latency نیز فقط پس از روشن‌کردن صریح آن توسط کاربر مجاز است و پیش‌فرض خاموش می‌ماند. هر آزمون فقط روی پروفایل انتخاب‌شده اجرا شود؛ از آزمون گروهی، صفی یا خودکارِ چند پروفایل استفاده نشود. نمایش چند گزینه قبل یا بعد از آزمون به‌تنهایی مجوز آزمون گروهی نیست. آزمون‌ها سنجهٔ سرعت یا پهنای‌باند نیستند. هیچ probe در startup، بازشدن صفحه، تغییر شبکه یا مرتب‌سازی/recommendation اجرا نشود.
 3. Smart fallback فقط پس از لمس Connect و با فعال‌سازی قبلی کاربر مجاز است؛ حداکثر candidate محدود، بدون queue-wide scan. Recommendation و sorting از دادهٔ ذخیره‌شده استفاده کنند و probe تازه نسازند.
 4. تا وقتی شواهد scope مربوط را نداریم، از عبارت «ترافیک کل گوشی تأیید شد» استفاده نکنیم. وضعیت proxy-egress، tunnel-running، app-to-TUN و DNS-leak هرکدام جدا باشند.
 5. UI فعلی، جریان import → start → verify، آیکون VPN و نمایش traffic حفظ شود؛ بازطراحی سفید/مشکی و accent محدود به خواست کاربر نیاز دارد.
@@ -101,6 +101,7 @@
 - [x] هنگام تعویض engine، adapter قبلی stop می‌شود و start جدید تا status ترمینال همان service منتظر می‌ماند؛ stop ناموفق یا timeout fail-closed است و engine جدید را شروع نمی‌کند.
 - [x] `activeConnectionProfileId` mutable از Activity حذف شد؛ `trackedConnectionProfileId` فقط از `requestedProfileId` coordinator خوانده می‌شود و دیگر state دوم نگه نمی‌دارد.
 - [x] smoke instrumentation tests برای dispatch واقعی ACTION_STOP در Xray/WireGuard، با کانفیگ خالی و بدون ایجاد TUN، اضافه شدند؛ اجرا/تأیید نشده‌اند.
+- [x] انتظار برای پایان workerهای شروع/تغییرشبکه در سرویس‌های Xray و WireGuard به دو ثانیه محدود شد؛ در صورت پایان‌نیافتن، وضعیت شکستِ پاک‌سازی بهترین‌تلاش گزارش می‌شود. آزمون خالص Kotlin نوشته شده، اما هنوز اجرا نشده است.
 - [ ] افزودن تست‌های crash/revoke و switch barrier روی Android؛ اجرای instrumentation suite و تأیید مسیر روی emulator/device.
 
 **معیار پایان:** adapterهای Xray/WireGuard و coordinator مسیر مشترک lifecycle/query داشته باشند؛ reconciliation پیاده‌شده با instrumentation/device test تأیید شود و generation/profile state از Activity بیرون بماند.
@@ -113,7 +114,7 @@
 - [ ] Xray علاوه بر reverify فعلی، شرایطی را که core باید restart شود از خطای صرف verification جدا کند؛ timeout/backoff/cancel امن داشته باشد.
 - [ ] WireGuard: `Tunnel.State.UP` با handshake peer یکی نیست؛ telemetry قابل‌دسترسِ peer/handshake مشخص و در صورت امکان اضافه شود.
 - [ ] reconnect WireGuard با restart/backoff و انتخاب endpoint/IP جایگزین فقط از config کاربر؛ هیچ candidate جدیدی خودکار probe نشود مگر در جریان Connect یا test صریح مجاز.
-- [ ] network identity فعلی فقط `cellular/wifi/vpn/ethernet` را می‌شناسد؛ اگر per-network learning لازم شد، persistence و حریم خصوصی طراحی شود، بدون برداشت location/شناسهٔ حساس بی‌دلیل.
+- [ ] کلید حافظهٔ فعلی نتیجهٔ آزمون از نوع شبکه و شناسهٔ موقت Android network handle ساخته می‌شود و فقط در حافظهٔ همان فرایند می‌ماند؛ این شناسه پس از قطع/بازسازی شبکه پایدار نیست. اگر یادگیری پایدار per-network لازم شد، پیش از افزودن ذخیره‌سازی، حریم خصوصی و حذف شناسه‌های حساس طراحی شود.
 - [ ] last-good و نتیجهٔ verification/test به تفکیک شبکهٔ قابل‌شناسایی، زمان و engine پایدار شود؛ `VpnProfile` فعلاً latest network/time را دارد، نه تاریخچهٔ کامل verified برای هر شبکه.
 - [ ] route ladder محدود طراحی شود: آخرین مسیر موفق همان شبکه، config انتخابی کاربر، DNS fallback مجاز و pinning فقط وقتی protocol-safe است؛ Smart fallback فعلی حداکثر چند profile نزدیک را پس از Connect امتحان می‌کند و معادل ladder کامل نیست.
 - [ ] timeout/backoff/cancel در تلاش‌های Connect یکنواخت شود؛ queue ping دستی از قبل سقف و worker موازی دارد و نباید با connect retry بی‌محدودیت اشتباه شود.
@@ -139,7 +140,7 @@
 
 - [x] افزودن کانفیگ از اسکن زندهٔ QR، تصویر QR، کلیپ‌بورد، فایل تکی/چندتایی و پیوند subscription؛ انتخاب چندفایلی تا ۲٬۰۰۰ فایل، ۲ مگابایت برای هر فایل و ۶۴ مگابایت برای کل batch؛ تشخیص payload مشترک بین ورودی QR و کلیپ‌بورد. انتخاب مستقیم پوشه پیاده نشده است.
 - [x] نگه‌داشتن پروفایل‌های دستی در زبانهٔ Imported در کنار All و گروه‌های subscription.
-- [x] شروع دستی Quick check و Real delay برای همهٔ پروفایل‌های ذخیره‌شده در محدودهٔ انتخاب‌شده، بدون سقف تعداد تست؛ هم‌زمانی Quick check محدود و Real delay ترتیبی است.
+- [x] Quick check و Real delay دستی فقط برای یک پروفایل انتخاب‌شده در هر نوبت؛ شروع آزمون نیازمند اقدام روشن کاربر است و هیچ اسکن گروهی اجرا نمی‌شود.
 - [x] اشتراک‌گذاری تکی و گروهی به‌صورت متن، فایل ذخیره‌شونده، QR برای کانفیگ تکی تا ۱٬۸۰۰ بایت، بستهٔ متنی، اشتراک Base64 سازگار V2Ray/Xray و پیوند اصلی provider در صورت وجود؛ هر خروجی حاوی credential پشت تأیید و هشدار صریح است.
 - [ ] آزمون روی گوشی برای مجوز/لغو دوربین، QRهای واقعی، انتخاب چند فایل و مسیرهای دریافت/اشتراک خروجی؛ build و آزمون‌های خودکار این تغییرات هنوز اجرا نشده‌اند.
 
@@ -149,14 +150,15 @@
 - [ ] تکمیل empty/error states، accessibility و polish نهایی Settings/Locations بدون بازطراحی خلاف تم فعلی.
 - [ ] profile lifecycle نهایی: انتخاب پایدار، تگ‌های اختیاری، favorite، rename/delete، import/export امن و مدیریت واضح پروفایل‌های خراب/قدیمی.
 - [ ] Advanced diagnostics فنی بماند؛ Quick check، Real delay و full VPN verification جدا نمایش داده شوند.
-- [ ] هر sort/recommendation از دادهٔ موجود استفاده کند؛ صف بزرگ فقط با اقدام دستی کاربر آزمایش شود و هیچ سقف تعدادِ کانفیگ، موردی را از آزمون در صف انتخاب‌شده حذف نکند. سقف import/بارگذاری subscription و هم‌زمانی اجرا جدا و شفاف بماند.
+- [ ] هر sort/recommendation فقط از دادهٔ موجود استفاده کند و probe تازه نسازد؛ آزمون شبکه فقط پس از اقدام روشن کاربر و برای پروفایل انتخاب‌شده اجرا شود، نه برای یک صف یا گروه. محدودیت import/بارگذاری subscription جدا و شفاف بماند.
 
 ### مرحلهٔ 8 — license، ساخت و آمادگی انتشار — release blocker
 
 - [ ] انتخاب نام محصول و license پروژه.
 - [ ] تکمیل `ARCHITECTURE.md`, `SECURITY.md`, `PROVIDERS.md` و privacy policy.
 - [ ] بازبینی license و noticeهای AndroidLibXrayLite/Xray (یادداشت فعلی LGPL-3.0 است)، WireGuard و تمام dependencyها؛ تعیین نحوهٔ ارائهٔ notice/source متناظر قبل از انتشار.
-- [ ] افزودن Gradle wrapper قابل‌تکرار و checksum distribution؛ CI از همان wrapper استفاده کند.
+- [x] افزودن Gradle Wrapper قابل‌تکرار و checksum توزیع؛ گردش‌کار CI از همان wrapper استفاده می‌کند و فایل Wrapper آن با آزمون شناخته‌شدهٔ سازوکار اجرا بررسی می‌شود.
+- [x] ارتقای زنجیرهٔ ساخت به AGP 8.11.1، Kotlin Gradle Plugin 2.2.21، Gradle 8.13 و SDK سطح 36؛ targetSdk فعلاً 35 می‌ماند تا رفتار Android 16 و edge-to-edge جداگانه بازبینی شود.
 - [ ] نسخه‌بندی، release build، signing key خارج repo/CI secrets، checksum و دستورالعمل امضای کاربر.
 - [ ] تصمیم پشتیبانی ABI: اکنون فقط `arm64-v8a`; دستگاه‌های دیگر باید با پیام درست unsupported باشند یا ABIهای مجاز/قابل‌ساخت اضافه شوند.
 - [ ] pin کردن action/toolchainها و ثبت provenance/hash dependencyهای دانلودی؛ checksum فعلی Xray حفظ شود.

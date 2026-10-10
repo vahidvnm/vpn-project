@@ -1,6 +1,7 @@
 package com.vpnproject.app.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -11,6 +12,25 @@ class RouteHealthCacheTest {
         assertEquals(2050, HealthScorer.score(latencyMs = 50, recentFailureCount = 2, wasLastGood = false))
         assertEquals(0, HealthScorer.score(latencyMs = 50, recentFailureCount = 0, wasLastGood = true))
         assertNull(HealthScorer.score(latencyMs = null))
+    }
+
+    @Test
+    fun doesNotReuseHealthForAnotherNetworkHandle() {
+        val cache = RouteHealthCache()
+        val endpoint = EndpointCandidate("vpn.example", 443, VpnProtocol.OPENVPN_TCP)
+        val currentNetwork = NetworkKey(NetworkType.WIFI, "android-network-101")
+        val differentNetwork = NetworkKey(NetworkType.WIFI, "android-network-202")
+        val result = HealthResult(
+            candidate = endpoint.copy(host = "8.8.8.8", source = CandidateSource.DNS_OVER_HTTPS),
+            reachable = true,
+            latencyMs = 80,
+            checkedAtEpochMs = 1_000L
+        )
+
+        cache.record(endpoint, currentNetwork, result)
+
+        assertNotNull(cache.stateFor(endpoint, currentNetwork))
+        assertNull(cache.stateFor(endpoint, differentNetwork))
     }
 
     @Test

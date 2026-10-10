@@ -1,18 +1,41 @@
 # VPN Project
 
-Android multi-protocol VPN hub and auto-connector, developed Iran-first but designed to work as a general Bring-Your-Own-Config VPN orchestrator.
+An Android VPN hub for user-provided configurations. The app does not sell VPN access, operate a VPN exit service, or provide accounts or configurations.
 
-The app is designed around **Bring Your Own Account / Config** and a multi-engine VPN-hub model:
+## Runtime support
 
-- import user-owned OpenVPN, WireGuard, or V2Ray/Xray configs from a file, the clipboard, or a user-provided subscription URL,
-- manage multiple local profiles, subscription groups, and engines behind one app,
-- resolve and pin real public IP addresses only when protocol-safe,
-- test healthy routes manually from Queue tools with capped quick ping or real VPN latency,
-- connect through Android `VpnService`,
-- avoid sending user VPN credentials to any project backend.
+- Embedded Xray supports a documented subset of V2Ray/Xray profiles.
+- WireGuard uses the Android GoBackend.
+- OpenVPN is currently an external-client handoff; there is no embedded OpenVPN engine.
+- sing-box and Clash inputs are parsed and mapped to Xray only when their features are compatible. They are not native sing-box or Clash runtimes.
 
-Current status: **Phase 5 manual queue testing and Settings polish in progress**. The app can import OpenVPN/WireGuard configs and common V2Ray/Xray share links, experimental sing-box JSON configs, and Clash/Clash.Meta-style YAML configs from a file, the Android clipboard, or a user-provided subscription URL, save encrypted local profiles and encrypted subscription groups, select/rename/favorite/delete saved profiles, remember the last verified profile, show a cool white/black pearl-monochrome visual dashboard with a softened connect hero and tiny per-page accent colors, compact in-page location/config selector with short labels, cleaned Home surface without unfinished protocol/quick-action blocks, bottom-sheet config/add menus with long-press actions, a simplified Locations page with the old brand/search/queue headers removed, a tiny selected-config status pill plus the top + kept, queue actions moved into a small inline 3-dot menu beside the tabs, and the list starting directly after tabs, manual Queue tools that group Quick check, Xray-core Real delay, refresh, and search in one 3-dot menu, capped batch testing only on explicit user action, optional no-VPN Auto latency for the selected config only (default OFF), optional Smart fallback after failed Connect (default OFF, capped to a few nearby configs, no queue-wide testing), latency numbers shown on config rows and no-VPN test results labeled separately from full VPN verification, connection failures recorded back onto profiles, last-test metadata, parallel capped ping-ranking for faster large subscription queues without scanning huge subscriptions automatically, floating custom glass-island three-item bottom navigation with safer status-bar spacing, a simplified v2rayNG-inspired Settings screen with top-+ add flow, Test settings, Subscriptions, Routing/DNS, Diagnostics, a cleaned/collapsed Advanced tools area, editable VPN DNS, basic app-bypass routing, Advanced Xray Sniffing/Mux/log-level controls, post-connect Xray public egress IP and best-effort DNS route checks through a local loopback Xray proxy, compact advanced tool rows, hidden/scrollable diagnostics, clipboard subscription import, product-style subscription bottom sheets, subscription groups surfaced as All/subscription tabs above Locations (older/imported configs are kept separate from subscription counts), with a single Queue tools menu for the selected All/subscription tab (Quick check is a capped no-VPN endpoint probe, Real delay is a capped temporary-Xray-core proxy probe, and refresh targets the selected queue or all subscriptions), subscription tabs/counts focused on active subscription queues while older/imported configs are kept out of the subscription count, and large queues capped/searchable instead of flooding one mixed list, foreground Xray keepalive/stop-with-task hardening plus network-change re-verification, Android-safe escaped provider-name cleanup, queue-wide automatic tests disabled for large-subscription safety, and live Xray traffic counters, keep longer DNS/probe/engine details under Advanced diagnostics/tools, start WireGuard Android GoBackend with a pinned runtime config, and start an embedded Xray core from imported V2Ray/Xray links with hardened runtime mapping for REALITY, gRPC, WebSocket/TLS, TCP HTTP camouflage, HTTPUpgrade, and XHTTP/SplitHTTP aliases, plus safe row labels/import summaries that surface non-secret transport names like Reality and HTTPUpgrade, shorter subscription profile titles derived from safe fragments, share-link extraction from JSON/YAML-style wrapper text, initial Hiddify/v2rayNG/NekoBox/Clash subscription-wrapper URL detection from clipboard, experimental sing-box JSON outbound import with nested transport/TLS/REALITY mapper hardening and Clash/Clash.Meta YAML proxy import/subscription splitting with nested `ws-opts`/`grpc-opts`/`reality-opts` mapper hardening and compact import-size picker for large subscriptions, user-controlled progressive loaded-list rendering for large queues, progressive Load more caps, short lightweight runtime compatibility badges/details on profile rows, an on-demand exact Runtime details sheet in profile actions, Queue tools runtime filters for `Only Xray-ready` / `Needs attention`, Queue tools sorting (`Recommended`, `Newest`, `Latency`, `Runtime-ready first`), remembered Locations tab/runtime/sort preferences with session-only search, country/city/operator-style compact location row labels, network-aware fresh/old Quick/Real/Verified latency labels, small per-network result memory, Real/Verified-only faster-tested switch suggestions with improvement feedback, and sorting, and Xray-compatible runtime mapping for supported vless/vmess/trojan/ss entries, grouping/search/no-VPN diagnostics for unsupported features, clearer import diagnostics for unsupported Clash/sing-box types, missing credentials, unsupported transports, and incomplete REALITY fields, a unit-tested Xray transport matrix, and clearer pre-start errors for unsupported UDP transports or incomplete REALITY links. Phone testing confirmed WireGuard/UDP is often filtered in Iran and public DoH may be blocked/reset, so the practical MVP direction is now an Xray/V2Ray-first BYO-config VPN hub, with OpenVPN TCP handoff and WireGuard kept as secondary engines. Latest phone testing confirmed the embedded Xray path can establish the Android VPN and verify end-to-end proxy egress with a user-owned V2Ray config (`httpupgrade/none`, repeated verified results, traffic stats moving). The debug APK is currently filtered to arm64-v8a to keep the embedded Xray build size manageable for real phone testing. See [`ROADMAP.md`](ROADMAP.md) for the live plan.
+Only configurations the user is authorized to use should be imported. Credentials and raw configurations are kept on-device; the project has no service backend to receive them.
 
-## CI
+## Test and verification scope
 
-GitHub Actions builds the debug APK on pushes to `main` and `arena/**` branches.
+- Optional automatic latency checks are off by default and apply only to the selected profile.
+- A manual Quick check measures supported endpoint reachability. It does not authenticate a VPN session or measure speed or bandwidth.
+- A manual Real delay runs a temporary Xray proxy check without Android VPN/TUN. It is not a full-device VPN test and does not measure speed or bandwidth.
+- Tests are started for one selected profile at a time. The app does not run background or queue-wide profile tests.
+- Smart fallback is separate from testing: it is off by default and, only after an explicit Connect, may try up to three nearby profiles if the user has enabled it.
+- An Xray proxy-egress verification does not prove that ordinary Android app traffic crossed the TUN. DNS-route checks are best-effort, not authoritative DNS-leak tests.
+
+A successful build or unit test is not evidence of operation on a particular device, network, or censorship environment. No connection or censorship-circumvention guarantee is made. Device-level testing requires an authorized profile and an explicit user action.
+
+## Build
+
+Requirements: JDK 17, Android SDK Platform 36, and SDK Build Tools 35.0.0 (the default for the selected Android Gradle Plugin). The Gradle Wrapper pins Gradle 8.13 and verifies the distribution checksum.
+
+```bash
+./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+
+The current debug build targets Android API 35, compiles against API 36, and packages `arm64-v8a`. The target API remains at 35 pending a separate Android 16 behavior and edge-to-edge review.
+
+The build downloads the pinned Xray AAR and verifies its SHA-256 before use. Do not commit imported VPN configurations, credentials, local SDK settings, or signing keys.
+
+## Continuous integration
+
+GitHub Actions validates the Gradle Wrapper, runs unit tests, and assembles a debug APK on pushes to `main` and `arena/**`, pull requests, or a manual workflow dispatch. The workflow does not run device-level VPN or profile tests.
+
+See [`ROADMAP.md`](ROADMAP.md) and [`docs/implementation-plan-fa.md`](docs/implementation-plan-fa.md) for the live project status and outstanding work.
